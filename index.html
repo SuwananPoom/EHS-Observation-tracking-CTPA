@@ -2504,13 +2504,18 @@ function App() {
     __ctpaLastWrite = Date.now();
     try {
       localStorage.setItem(SKEY, JSON.stringify(d));
-    } catch (e) {}
+    } catch (e) {
+      try { setT({ msg: "⚠ Local storage full — only cloud sync active.", type: "err" }); setTimeout(function(){ setT(null); }, 5000); } catch (_) {}
+    }
     if (cloudOn()) {
       cloudSave(d).then(function (ok) {
         if (!ok) {
           try { setT({ msg: "⚠ Cloud save failed — saved on this device only. Check connection.", type: "err" }); setTimeout(function(){ setT(null); }, 5000); } catch (e) {}
           if (window.Sentry) { try { window.Sentry.captureMessage("cloudSave failed"); } catch (e) {} }
         }
+      }).catch(function (err) {
+        try { setT({ msg: "⚠ Network error — data saved locally only.", type: "err" }); setTimeout(function(){ setT(null); }, 5000); } catch (e) {}
+        if (window.Sentry) { try { window.Sentry.captureException(err); } catch (e) {} }
       });
     }
   }, []);
@@ -2661,8 +2666,8 @@ function App() {
     var nx = obs.map(function (o) {
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, {
         status: ns,
-        closed:   ns === "CLOSED" ? td() : o.closed,
-        closedBy: ns === "CLOSED" ? (ctpaUser() || "Manager") : ""
+        closed:   ns === "CLOSED" ? (o.status === "CLOSED" ? o.closed : td()) : o.closed,
+        closedBy: ns === "CLOSED" ? (o.status === "CLOSED" ? o.closedBy : (ctpaUser() || "Manager")) : ""
       }) : o;
     });
     ps(nx);
@@ -2852,7 +2857,7 @@ function App() {
     var nx;
     if (edit) {
       nx = obs.map(function (o) {
-        return o.id === edit.id ? _objectSpread(_objectSpread({}, fclean), {}, {
+        return o.id === edit.id ? _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
           id: edit.id,
           pb: fBef,
           pa: fAft
