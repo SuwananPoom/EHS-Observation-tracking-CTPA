@@ -29,6 +29,7 @@
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -560,6 +561,65 @@ function exportCSV(rows) {
   a.download = "EHS_" + td() + ".csv";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* ── EXCEL (.xlsx) EXPORT ── */
+function exportExcel(rows) {
+  if (typeof XLSX === "undefined") {
+    alert("SheetJS library not loaded. Please check your internet connection.");
+    return;
+  }
+
+  var headers = [
+    "ID", "Date", "Week", "Zone / Area", "Company",
+    "Category", "Finding Source", "OBS Type", "Risk Level", "Status",
+    "Raised By", "Due Date", "Closed Date", "Closed By",
+    "Description", "Corrective Action",
+    "Before Photos", "After Photos"
+  ];
+
+  var dataRows = rows.map(function(o) {
+    var befCount = (o.pb || []).length;
+    var aftCount = (o.pa || []).length;
+    return [
+      o.id,
+      o.date,
+      o.week || "",
+      o.zone || "",
+      o.company || "",
+      o.cat || "",
+      o.fc || "",
+      (OBS_TYPE[o.obsType] || { label: "" }).label,
+      (RISK[o.risk]         || { label: "" }).label,
+      (STATUS[o.status]     || { label: "" }).label,
+      o.by       || "",
+      o.due      || "",
+      o.closed   || "",
+      o.closedBy || "",
+      o.desc     || "",
+      o.rect     || "",
+      befCount > 0 ? befCount + " photo(s)" : "No photos",
+      aftCount > 0 ? aftCount + " photo(s)" : "No photos"
+    ];
+  });
+
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet([headers].concat(dataRows));
+
+  /* column widths (characters) */
+  ws["!cols"] = [
+    { wch: 10 }, { wch: 12 }, { wch: 6  }, { wch: 28 }, { wch: 15 },
+    { wch: 32 }, { wch: 38 }, { wch: 18 }, { wch: 12 }, { wch: 14 },
+    { wch: 16 }, { wch: 13 }, { wch: 13 }, { wch: 22 },
+    { wch: 60 }, { wch: 60 },
+    { wch: 14 }, { wch: 14 }
+  ];
+
+  /* freeze header row */
+  ws["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft" };
+
+  XLSX.utils.book_append_sheet(wb, ws, "Observations");
+  XLSX.writeFile(wb, "EHS_Observations_" + td() + ".xlsx");
 }
 
 /* ── PRINT (uses data-URI to avoid nested escaping) ── */
@@ -4415,6 +4475,18 @@ function App() {
       gap: 7
     }
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: function onClick() { return exportExcel(filt); },
+    style: {
+      fontSize: 11,
+      padding: "6px 14px",
+      borderRadius: 8,
+      border: "1.5px solid #217346",
+      background: "#E6F4EA",
+      color: "#217346",
+      fontWeight: 700,
+      cursor: "pointer"
+    }
+  }, "\u2B07 Excel"), /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return exportCSV(filt);
     },
