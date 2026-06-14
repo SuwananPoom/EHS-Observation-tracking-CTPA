@@ -2661,6 +2661,7 @@ function App() {
       by: item.by,
       due: item.due,
       closed: item.closed || "",
+      closedBy: item.closedBy || "",
       week: item.week || "",
       obsType: item.obsType || "UNSAFE_ACT"
     });
@@ -5120,9 +5121,11 @@ function App() {
   }, "Status"), /*#__PURE__*/React.createElement("select", {
     value: form.status,
     onChange: function onChange(e) {
+      var ns = e.target.value;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, {
-          status: e.target.value
+          status:   ns,
+          closedBy: ns === "CLOSED" ? (p.closedBy || ctpaUser() || "") : (ns !== "CLOSED" ? "" : p.closedBy)
         });
       });
     },
@@ -5189,6 +5192,21 @@ function App() {
         });
       });
     },
+    style: iSt
+  })), form.status === "CLOSED" && /*#__PURE__*/React.createElement("div", {
+    style: { marginBottom: 16 }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: lSt
+  }, "Closed By"), /*#__PURE__*/React.createElement("input", {
+    type: "text",
+    value: form.closedBy || "",
+    onChange: function onChange(e) {
+      var v = e.target.value;
+      return setForm(function (p) {
+        return _objectSpread(_objectSpread({}, p), {}, { closedBy: v });
+      });
+    },
+    placeholder: "Name of person who closed this observation",
     style: iSt
   })), /*#__PURE__*/React.createElement(PhotoBlock, {
     item: {
