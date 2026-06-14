@@ -378,16 +378,25 @@ var HRA = ["Electrical Safety (HRA)", "Energy Isolation (HRA)", "Working from He
 var OTH = ["Fire Protection", "PPE", "Equipment Safety", "Emergency Preparedness", "Access and Egress", "Signage & Barricade", "Housekeeping", "Material Storage", "Scaffold", "Hot Work", "Health & Hygiene", "Documentation", "Other"];
 var ALL_CATS = [].concat(HRA, OTH);
 var FCATS = ["Daily Site Inspection (PMC)", "Daily Site Inspection (GC : Subcon)", "Weekly Site Inspection (Owner : GC)", "Customer Site Walk", "HRA Audit", "Subcontractor Performance Evaluation"];
-var ZONES = ["Lower Roof", "Roof Deck / LRF Rooms", "1F - Data Hall", "1F - Generator Area", "1F - Utility Rooms", "2F - Data Hall", "2F - MEP Yard", "2F - Utility Rooms", "Site Office", "Canteen", "Rebar Yard"];
-
 /* ===== Two-tier location: Floor -> Area ===== */
-var FLOORS = ["1F", "2F", "LRF", "External"];
+var FLOORS = ["External", "LRF", "1F", "2F", "Other"];
 var FLOOR_AREAS = {
-  "1F": ["Data Hall", "Fan Wall", "Generator / MEP Yard", "Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
-  "2F": ["Data Hall", "Fan Wall", "Generator / MEP Yard", "Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
-  "LRF": ["Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
-  "External": ["Site Office", "Site Road", "Canteen", "Rebar Yard", "Dormitory", "Other"]
+  "External": ["Site Office", "Site Road", "Canteen", "Rebar Yard", "Dormitory", "Other"],
+  "LRF":      ["Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
+  "1F":       ["Data Hall", "Fan Wall", "Generator / MEP Yard", "Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
+  "2F":       ["Data Hall", "Fan Wall", "Generator / MEP Yard", "Corridor", "Utility", "Riser", "Service Room", "Stair", "Other"],
+  "Other":    ["Other"]
 };
+/* ZONES: flat composed list for any legacy references */
+var ZONES = (function() {
+  var list = [];
+  FLOORS.forEach(function(f) {
+    (FLOOR_AREAS[f] || []).forEach(function(a) {
+      if (a !== "Other") list.push(f + " · " + a);
+    });
+  });
+  return list;
+}());
 /* Parse an existing free-form zone string back into {floor, area, other} for editing */
 function parseZone(zoneStr) {
   var s = (zoneStr || "").trim();
@@ -1584,8 +1593,12 @@ function App() {
     setFR = _useState28[1];
   var _useState29 = useState("ALL"),
     _useState30 = _slicedToArray(_useState29, 2),
-    fZo = _useState30[0],
-    setFZ = _useState30[1];
+    fFl = _useState30[0],
+    setFl = _useState30[1];
+  var _useState29b = useState("ALL"),
+    _useState30b = _slicedToArray(_useState29b, 2),
+    fAr = _useState30b[0],
+    setFAr = _useState30b[1];
   var _useState31 = useState("ALL"),
     _useState32 = _slicedToArray(_useState31, 2),
     fFc = _useState32[0],
@@ -1608,10 +1621,10 @@ function App() {
     setSr = _useState40[1];
   var blk = {
     date: td(),
-    floor: FLOORS[0],
-    area: FLOOR_AREAS[FLOORS[0]][0],
+    floor: "",
+    area: "",
     zoneOther: "",
-    zone: composeZone(FLOORS[0], FLOOR_AREAS[FLOORS[0]][0], ""),
+    zone: "",
     company: COMPANIES[0],
     companyOther: "",
     cat: ALL_CATS[0],
@@ -1729,7 +1742,8 @@ function App() {
     return obs.filter(function (o) {
       if (fSt !== "ALL" && o.status !== fSt) return false;
       if (fRi !== "ALL" && o.risk !== fRi) return false;
-      if (fZo !== "ALL" && o.zone !== fZo) return false;
+      if (fFl !== "ALL") { var _pz = parseZone(o.zone); if (_pz.floor !== fFl) return false; }
+      if (fAr !== "ALL") { var _pz2 = parseZone(o.zone); if (_pz2.area !== fAr && _pz2.other !== fAr) return false; }
       if (fFc !== "ALL" && o.fc !== fFc) return false;
       if (fCo !== "ALL" && (o.company || "") !== fCo) return false;
       var b = o.pb ? o.pb.length : 0,
@@ -1744,7 +1758,7 @@ function App() {
       }
       return true;
     });
-  }, [obs, fSt, fRi, fZo, fFc, fCo, fPh, fOT, srch]);
+  }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch]);
   var S = useMemo(function () {
     return {
       n: obs.length,
@@ -1945,6 +1959,14 @@ function App() {
   var submit = function submit() {
     if (!form.desc || !form.by || !form.due) {
       toast$("Fill required fields", "err");
+      return;
+    }
+    if (!form.floor) {
+      toast$("Please select a Floor / Level", "err");
+      return;
+    }
+    if (!form.area) {
+      toast$("Please select an Area", "err");
       return;
     }
     if (form.area === "Other" && !(form.zoneOther || "").trim()) {
@@ -3679,11 +3701,13 @@ function App() {
       return [c, c];
     })))
   }, {
-    v: fZo,
-    s: setFZ,
-    o: [["ALL", "All Zones"]].concat(_toConsumableArray(ZONES.map(function (z) {
-      return [z, z];
-    })))
+    v: fFl,
+    s: function(v) { setFl(v); setFAr("ALL"); },
+    o: [["ALL", "All Floors"]].concat(_toConsumableArray(FLOORS.map(function(f) { return [f, f]; })))
+  }, {
+    v: fAr,
+    s: setFAr,
+    o: [["ALL", "All Areas"]].concat(_toConsumableArray((fFl !== "ALL" ? (FLOOR_AREAS[fFl] || []) : FLOORS.reduce(function(acc,f){ return acc.concat(FLOOR_AREAS[f]||[]); },[])).filter(function(a,i,arr){ return arr.indexOf(a)===i; }).map(function(a){ return [a, a]; })))
   }, {
     v: fFc,
     s: setFF,
@@ -4141,35 +4165,36 @@ function App() {
     style: iSt
   })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: lSt
-  }, "Floor / \u0e0a\u0e31\u0e49\u0e19"), /*#__PURE__*/React.createElement("select", {
+  }, "Floor / \u0e0a\u0e31\u0e49\u0e19 *"), /*#__PURE__*/React.createElement("select", {
     value: form.floor,
     onChange: function onChange(e) {
       var nf = e.target.value;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, {
           floor: nf,
-          area: (FLOOR_AREAS[nf] || ["Other"])[0],
+          area: nf ? (FLOOR_AREAS[nf] || [""])[0] : "",
           zoneOther: ""
         });
       });
     },
     style: _objectSpread(_objectSpread({}, iSt), {}, { marginBottom: 8 })
-  }, FLOORS.map(function (f) {
+  }, [/*#__PURE__*/React.createElement("option", { key: "__ph", value: "", disabled: true }, "-- Select Floor --")].concat(FLOORS.map(function (f) {
     return /*#__PURE__*/React.createElement("option", { key: f, value: f }, f);
-  })), /*#__PURE__*/React.createElement("label", {
+  }))), /*#__PURE__*/React.createElement("label", {
     style: lSt
-  }, "Area / Location"), /*#__PURE__*/React.createElement("select", {
+  }, "Area / Location *"), /*#__PURE__*/React.createElement("select", {
     value: form.area,
+    disabled: !form.floor,
     onChange: function onChange(e) {
       var na = e.target.value;
       return setForm(function (p) {
-        return _objectSpread(_objectSpread({}, p), {}, { area: na });
+        return _objectSpread(_objectSpread({}, p), {}, { area: na, zoneOther: "" });
       });
     },
-    style: iSt
-  }, (FLOOR_AREAS[form.floor] || []).map(function (a) {
+    style: _objectSpread(_objectSpread({}, iSt), {}, { opacity: form.floor ? 1 : 0.5 })
+  }, [/*#__PURE__*/React.createElement("option", { key: "__ph2", value: "", disabled: true }, form.floor ? "-- Select Area --" : "-- Select Floor first --")].concat((FLOOR_AREAS[form.floor] || []).map(function (a) {
     return /*#__PURE__*/React.createElement("option", { key: a, value: a }, a);
-  })), form.area === "Other" && /*#__PURE__*/React.createElement("input", {
+  }))), form.area === "Other" && /*#__PURE__*/React.createElement("input", {
     value: form.zoneOther || "",
     onChange: function onChange(e) {
       var v = e.target.value;
