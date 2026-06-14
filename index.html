@@ -455,13 +455,23 @@ var addD = function addD(d, n) {
   dt.setDate(dt.getDate() + n);
   return dt.toISOString().slice(0, 10);
 };
-var gid = function gid(l) {
-  var mx = l.reduce(function (m, o) {
-    var n = parseInt(o.id.replace("OBS-", ""), 10);
-    return n > m ? n : m;
-  }, 0);
-  return "OBS-" + String(mx + 1).padStart(3, "0");
-};
+/* Request a UUID from Supabase gen_random_uuid() so IDs are server-generated.
+   Falls back to crypto.randomUUID() if Supabase is unavailable. */
+function genObsId() {
+  if (cloudOn()) {
+    var u = CLOUD.url.replace(/\/$/, "") + "/rest/v1/rpc/gen_obs_id";
+    return fetch(u, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, cloudHeaders()), body: "{}" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject("rpc_fail"); })
+      .then(function (uuid) { return "OBS-" + String(uuid).replace(/-/g, "").slice(0, 8).toUpperCase(); })
+      .catch(function () {
+        /* fallback: crypto.randomUUID() is cryptographically random — collision probability negligible */
+        var uid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)).toUpperCase();
+        return "OBS-" + uid.replace(/-/g, "").slice(0, 8).toUpperCase();
+      });
+  }
+  var uid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)).toUpperCase();
+  return Promise.resolve("OBS-" + uid.replace(/-/g, "").slice(0, 8).toUpperCase());
+}
 var b64f = function b64f(f) {
   return new Promise(function (r, j) {
     var fr = new FileReader();
@@ -2877,14 +2887,24 @@ function App() {
       logEvent("edit", edit.id, changes.length ? changes.join("; ") : "edited");
       toast$(edit.id + " updated");
     } else {
-      var ni = _objectSpread(_objectSpread({}, fclean), {}, {
-        id: gid(obs),
-        pb: fBef,
-        pa: fAft
+      toast$("Generating ID…");
+      genObsId().then(function (newId) {
+        var ni = _objectSpread(_objectSpread({}, fclean), {}, {
+          id: newId,
+          pb: fBef,
+          pa: fAft
+        });
+        var created = [ni].concat(_toConsumableArray(obs));
+        ps(created);
+        logEvent("create", ni.id, "new observation");
+        toast$(ni.id + " created");
+        setEdit(null);
+        setForm(blk);
+        setFBef([]);
+        setFAft([]);
+        setView("list");
       });
-      nx = [ni].concat(_toConsumableArray(obs));
-      logEvent("create", ni.id, "new observation");
-      toast$(ni.id + " created");
+      return; /* exit early — ps() and navigation happen in the .then() callback */
     }
     ps(nx);
     setEdit(null);
