@@ -535,7 +535,7 @@ var lSt = {
 
 /* ── CSV EXPORT ─────────────────────────────────── */
 function exportCSV(rows) {
-  var cols = ["ID", "Date", "Week", "Zone", "Responsible Company", "Category", "Finding Type", "OBS Type", "Risk", "Status", "Due Date", "Closed Date", "Raised By", "Description", "Corrective Action", "Photo"];
+  var cols = ["ID", "Date", "Week", "Zone", "Responsible Company", "Category", "Finding Type", "OBS Type", "Risk", "Status", "Due Date", "Closed Date", "Closed By", "Raised By", "Description", "Corrective Action", "Photo"];
   var esc = function esc(v) {
     v = String(v || "");
     return v.includes(",") || v.includes('"') ? '"' + v.replace(/"/g, '""') + '"' : v;
@@ -549,7 +549,7 @@ function exportCSV(rows) {
       label: ""
     }).label, (STATUS[o.status] || {
       label: ""
-    }).label, o.due || "", o.closed || "", o.by || "", o.desc || "", o.rect || "", ps.l].map(esc).join(","));
+    }).label, o.due || "", o.closed || "", o.closedBy || "", o.by || "", o.desc || "", o.rect || "", ps.l].map(esc).join(","));
   });
   var blob = new Blob([lines.join("\r\n")], {
     type: "text/csv;charset=utf-8;"
@@ -722,7 +722,8 @@ function generateWeeklyReportPPT(rows, dateFrom, dateTo) {
       ["Status",           stLbl],
       ["Due Date",         o.due     || "—"],
       ["Raised By",        o.by      || "—"],
-      ["Closed Date",      o.closed  || "—"]
+      ["Closed Date",      o.closed  || "—"],
+      ["Closed By",        o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     var detY = 0.82;
     fields.forEach(function(f, fi) {
@@ -1007,7 +1008,8 @@ function generateWeeklyReportPDF(rows, dateFrom, dateTo) {
       ["Status",      stLbl],
       ["Due Date",    o.due     || "—"],
       ["Raised By",   o.by      || "—"],
-      ["Closed Date", o.closed  || "—"]
+      ["Closed Date", o.closed  || "—"],
+      ["Closed By",   o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     fields.forEach(function(f,fi) {
       var fy = fieldY + fi*12;
@@ -2290,6 +2292,7 @@ function App() {
     by: "",
     due: addD(td(), 7),
     closed: "",
+    closedBy: "",
     week: "",
     obsType: "UNSAFE_ACT"
   };
@@ -2467,7 +2470,8 @@ function App() {
     var nx = obs.map(function (o) {
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, {
         status: ns,
-        closed: ns === "CLOSED" ? td() : o.closed
+        closed:   ns === "CLOSED" ? td() : o.closed,
+        closedBy: ns === "CLOSED" ? (ctpaUser() || "Manager") : ""
       }) : o;
     });
     ps(nx);
@@ -2529,6 +2533,7 @@ function App() {
       patch.approvedBy = "Client + LP";
       patch.approvedDate = nowStamp();
       patch.closed = td();
+      patch.closedBy = who + " (via approval)";
     } else {
       patch.approvalStatus = "PENDING REVIEW";
       patch.status = "PENDING_VERIFY";
@@ -2548,6 +2553,7 @@ function App() {
       rejectedDate: nowStamp(),
       approvalComment: comment || "",
       closed: "",
+      closedBy: "",
       clientApprovedBy: "", clientApprovedDate: "",
       lpApprovedBy: "", lpApprovedDate: ""
     });
@@ -4556,7 +4562,9 @@ function App() {
           fontWeight: 600
         }
       }, info);
-    }(), false && /*#__PURE__*/React.createElement("div", {
+    }(), o.status === "CLOSED" && o.closedBy && /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "4px 9px", marginBottom: 7, fontWeight: 600 }
+    }, "✔ Closed by ", o.closedBy), false && /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         gap: 8,
@@ -5244,12 +5252,15 @@ function App() {
     l: "Due Date",
     v: det.due + (isOD(det) ? " ⚠" : "")
   }, {
-    l: "Closed",
+    l: "Closed Date",
     v: det.closed || "—"
-  }, {
+  }, det.status === "CLOSED" ? {
+    l: "Closed By",
+    v: det.closedBy || "—"
+  } : null, {
     l: "Zone",
     v: det.zone
-  }].map(function (r) {
+  }].filter(Boolean).map(function (r) {
     return /*#__PURE__*/React.createElement("div", {
       key: r.l,
       style: {
