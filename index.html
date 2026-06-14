@@ -534,35 +534,6 @@ var lSt = {
   letterSpacing: "0.06em"
 };
 
-/* ── CSV EXPORT ─────────────────────────────────── */
-function exportCSV(rows) {
-  var cols = ["ID", "Date", "Week", "Zone", "Responsible Company", "Category", "Finding Type", "OBS Type", "Risk", "Status", "Due Date", "Closed Date", "Closed By", "Raised By", "Description", "Corrective Action", "Photo"];
-  var esc = function esc(v) {
-    v = String(v || "");
-    return v.includes(",") || v.includes('"') ? '"' + v.replace(/"/g, '""') + '"' : v;
-  };
-  var lines = [cols.map(esc).join(",")];
-  rows.forEach(function (o) {
-    var ps = pStat(o);
-    lines.push([o.id, o.date, o.week || "", o.zone, o.company || "", o.cat, o.fc || "", (OBS_TYPE[o.obsType] || {
-      label: ""
-    }).label, (RISK[o.risk] || {
-      label: ""
-    }).label, (STATUS[o.status] || {
-      label: ""
-    }).label, o.due || "", o.closed || "", o.closedBy || "", o.by || "", o.desc || "", o.rect || "", ps.l].map(esc).join(","));
-  });
-  var blob = new Blob([lines.join("\r\n")], {
-    type: "text/csv;charset=utf-8;"
-  });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  a.href = url;
-  a.download = "EHS_" + td() + ".csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 /* ── EXCEL (.xlsx) EXPORT ── */
 function exportExcel(rows) {
   if (typeof XLSX === "undefined") {
@@ -570,56 +541,212 @@ function exportExcel(rows) {
     return;
   }
 
-  var headers = [
-    "ID", "Date", "Week", "Zone / Area", "Company",
-    "Category", "Finding Source", "OBS Type", "Risk Level", "Status",
-    "Raised By", "Due Date", "Closed Date", "Closed By",
-    "Description", "Corrective Action",
-    "Before Photos", "After Photos"
+  var today = new Date();
+  var dd = String(today.getDate()).padStart(2, "0");
+  var mm = String(today.getMonth() + 1).padStart(2, "0");
+  var yyyy = today.getFullYear();
+  var dateStr = yyyy + "-" + mm + "-" + dd;
+  var dateFmt = dd + "/" + mm + "/" + yyyy;
+
+  var fmtDate = function(d) {
+    if (!d) return "-";
+    var parts = d.split("-");
+    if (parts.length === 3) return parts[2] + "/" + parts[1] + "/" + parts[0];
+    return d;
+  };
+
+  var v = function(x) { return (x || "").toString().trim() || "-"; };
+
+  /* ── Summary counts ── */
+  var total   = rows.length;
+  var nOpen   = rows.filter(function(o) { return o.status !== "CLOSED"; }).length;
+  var nClosed = rows.filter(function(o) { return o.status === "CLOSED"; }).length;
+  var nOD     = rows.filter(function(o) { return isOD(o); }).length;
+  var nSer    = rows.filter(function(o) { return o.risk === "SERIOUS"; }).length;
+  var nMaj    = rows.filter(function(o) { return o.risk === "MAJOR"; }).length;
+  var nMin    = rows.filter(function(o) { return o.risk === "MINOR"; }).length;
+
+  /* ── Build sheet data (rows as arrays) ── */
+  var sheetData = [
+    /* R1 */ ["CTPA BKK22 EHS Observation Tracker"],
+    /* R2 */ ["Export Date: " + dateFmt],
+    /* R3 */ [],
+    /* R4 */ ["SUMMARY"],
+    /* R5 */ ["Total Observations", total],
+    /* R6 */ ["Open",               nOpen],
+    /* R7 */ ["Closed",             nClosed],
+    /* R8 */ ["Overdue",            nOD],
+    /* R9 */ ["Serious Risk",       nSer],
+    /* R10*/ ["Major Risk",         nMaj],
+    /* R11*/ ["Minor Risk",         nMin],
+    /* R12*/ [],
+    /* R13 — table header */
+    [
+      "OBS ID", "Date", "Week", "Observation Type",
+      "Responsible Company", "Assigned To",
+      "Floor", "Area / Location",
+      "Category", "Finding Category",
+      "Risk Level", "Status",
+      "Due Date", "Closed Date", "Closed By", "Verified By",
+      "Raised By", "Hazard Description", "Corrective Action"
+    ]
   ];
 
-  var dataRows = rows.map(function(o) {
-    var befCount = (o.pb || []).length;
-    var aftCount = (o.pa || []).length;
-    return [
-      o.id,
-      o.date,
-      o.week || "",
-      o.zone || "",
-      o.company || "",
-      o.cat || "",
-      o.fc || "",
-      (OBS_TYPE[o.obsType] || { label: "" }).label,
-      (RISK[o.risk]         || { label: "" }).label,
-      (STATUS[o.status]     || { label: "" }).label,
-      o.by       || "",
-      o.due      || "",
-      o.closed   || "",
-      o.closedBy || "",
-      o.desc     || "",
-      o.rect     || "",
-      befCount > 0 ? befCount + " photo(s)" : "No photos",
-      aftCount > 0 ? aftCount + " photo(s)" : "No photos"
-    ];
+  var HEADER_ROW = 13; /* 1-based row index of the table header */
+
+  rows.forEach(function(o) {
+    var pz = parseZone(o.zone || "");
+    sheetData.push([
+      v(o.id),
+      fmtDate(o.date),
+      v(o.week),
+      v((OBS_TYPE[o.obsType] || {}).label),
+      v(o.company),
+      v(o.by),
+      v(pz.floor),
+      v(pz.area === "Other" ? pz.other : pz.area),
+      v(o.cat),
+      v(o.fc),
+      v((RISK[o.risk]   || {}).label),
+      v((STATUS[o.status] || {}).label),
+      fmtDate(o.due),
+      fmtDate(o.closed),
+      v(o.closedBy),
+      "-",
+      v(o.by),
+      v(o.desc),
+      v(o.rect)
+    ]);
   });
 
   var wb = XLSX.utils.book_new();
-  var ws = XLSX.utils.aoa_to_sheet([headers].concat(dataRows));
+  var ws = XLSX.utils.aoa_to_sheet(sheetData);
 
-  /* column widths (characters) */
+  /* ── Column widths ── */
   ws["!cols"] = [
-    { wch: 10 }, { wch: 12 }, { wch: 6  }, { wch: 28 }, { wch: 15 },
-    { wch: 32 }, { wch: 38 }, { wch: 18 }, { wch: 12 }, { wch: 14 },
-    { wch: 16 }, { wch: 13 }, { wch: 13 }, { wch: 22 },
-    { wch: 60 }, { wch: 60 },
-    { wch: 14 }, { wch: 14 }
+    {wch:12},{wch:12},{wch:7},{wch:20},
+    {wch:22},{wch:20},
+    {wch:10},{wch:20},
+    {wch:28},{wch:28},
+    {wch:12},{wch:16},
+    {wch:13},{wch:13},{wch:22},{wch:18},
+    {wch:20},{wch:50},{wch:50}
   ];
 
-  /* freeze header row */
-  ws["!freeze"] = { xSplit: 0, ySplit: 1, topLeftCell: "A2", activePane: "bottomLeft" };
+  /* ── Freeze pane at table header + 1 ── */
+  ws["!freeze"] = { xSplit: 0, ySplit: HEADER_ROW, topLeftCell: "A" + (HEADER_ROW + 1), activePane: "bottomLeft" };
 
-  XLSX.utils.book_append_sheet(wb, ws, "Observations");
-  XLSX.writeFile(wb, "EHS_Observations_" + td() + ".xlsx");
+  /* ── AutoFilter on header row ── */
+  var lastCol = XLSX.utils.encode_col(18); /* column S (0-based index 18) */
+  ws["!autofilter"] = { ref: "A" + HEADER_ROW + ":" + lastCol + HEADER_ROW };
+
+  /* ── Merge title cell ── */
+  ws["!merges"] = [
+    { s: {r:0, c:0}, e: {r:0, c:5} },
+    { s: {r:1, c:0}, e: {r:1, c:3} },
+    { s: {r:3, c:0}, e: {r:3, c:1} }
+  ];
+
+  /* ── Cell styles ── */
+  var GREEN  = "00CC79";
+  var WHITE  = "FFFFFF";
+  var RED_BG = "FFCCCC";
+  var GRN_BG = "D9F5E8";
+  var ORG_BG = "FFE5CC";
+  var BLU_BG = "CCE5FF";
+
+  var borderAll = {
+    top:    { style: "thin", color: { rgb: "BBBBBB" } },
+    bottom: { style: "thin", color: { rgb: "BBBBBB" } },
+    left:   { style: "thin", color: { rgb: "BBBBBB" } },
+    right:  { style: "thin", color: { rgb: "BBBBBB" } }
+  };
+
+  var hdrStyle = {
+    font:      { bold: true, color: { rgb: WHITE }, sz: 11 },
+    fill:      { fgColor: { rgb: GREEN } },
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border:    borderAll
+  };
+
+  var titleStyle = {
+    font:      { bold: true, sz: 14, color: { rgb: "1A1A1A" } },
+    alignment: { horizontal: "left", vertical: "center" }
+  };
+
+  var summLblStyle = {
+    font:  { bold: true, sz: 11 },
+    alignment: { horizontal: "left" }
+  };
+
+  var summValStyle = {
+    font:  { bold: true, sz: 11, color: { rgb: "00CC79" } },
+    alignment: { horizontal: "left" }
+  };
+
+  var sectionStyle = {
+    font: { bold: true, sz: 12, color: { rgb: "444444" } }
+  };
+
+  function cellStyle(bgRgb, wrapText) {
+    return {
+      font:      { sz: 10 },
+      fill:      bgRgb ? { fgColor: { rgb: bgRgb } } : undefined,
+      alignment: { vertical: "top", wrapText: !!wrapText },
+      border:    borderAll
+    };
+  }
+
+  /* Apply title */
+  var A1 = XLSX.utils.encode_cell({r:0, c:0});
+  if (!ws[A1]) ws[A1] = { t:"s", v:"CTPA BKK22 EHS Observation Tracker" };
+  ws[A1].s = titleStyle;
+
+  /* Apply export date */
+  var A2 = XLSX.utils.encode_cell({r:1, c:0});
+  if (ws[A2]) ws[A2].s = { font: { sz: 10, color: { rgb: "666666" } } };
+
+  /* Summary section label */
+  var A4 = XLSX.utils.encode_cell({r:3, c:0});
+  if (ws[A4]) ws[A4].s = sectionStyle;
+
+  /* Summary rows */
+  [[4,""], [5, RED_BG], [6, GRN_BG], [7, RED_BG], [8, ""], [9, ""], [10, ""]].forEach(function(pair, idx) {
+    var r = 4 + idx;
+    var cellA = XLSX.utils.encode_cell({r:r, c:0});
+    var cellB = XLSX.utils.encode_cell({r:r, c:1});
+    if (ws[cellA]) ws[cellA].s = summLblStyle;
+    if (ws[cellB]) ws[cellB].s = summValStyle;
+  });
+
+  /* Header row styles */
+  for (var c = 0; c < 19; c++) {
+    var hCell = XLSX.utils.encode_cell({ r: HEADER_ROW - 1, c: c });
+    if (ws[hCell]) ws[hCell].s = hdrStyle;
+  }
+
+  /* Data row styles */
+  rows.forEach(function(o, i) {
+    var r = HEADER_ROW + i; /* 0-based */
+    var isODRow  = isOD(o);
+    var isClosed = o.status === "CLOSED";
+    var bgColor  = isODRow ? RED_BG : (isClosed ? GRN_BG : undefined);
+
+    var riskBg = o.risk === "SERIOUS" ? RED_BG : (o.risk === "MAJOR" ? ORG_BG : (o.risk === "MINOR" ? BLU_BG : undefined));
+
+    for (var c = 0; c < 19; c++) {
+      var dc = XLSX.utils.encode_cell({ r: r, c: c });
+      var isDesc = (c === 17 || c === 18);
+      var isRisk = (c === 10);
+      var bg = isRisk ? riskBg : bgColor;
+      if (ws[dc]) {
+        ws[dc].s = cellStyle(bg, isDesc);
+      }
+    }
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, "Observation Tracker");
+  XLSX.writeFile(wb, "EHS_Observation_Tracker_" + dateStr + ".xlsx");
 }
 
 /* ── PRINT (uses data-URI to avoid nested escaping) ── */
@@ -4496,20 +4623,6 @@ function App() {
       cursor: "pointer"
     }
   }, "\u2B07 Excel"), /*#__PURE__*/React.createElement("button", {
-    onClick: function onClick() {
-      return exportCSV(filt);
-    },
-    style: {
-      fontSize: 11,
-      padding: "6px 14px",
-      borderRadius: 8,
-      border: "1.5px solid " + C.blue,
-      background: C.blueBg,
-      color: C.blueDk,
-      fontWeight: 700,
-      cursor: "pointer"
-    }
-  }, "\u2B07 CSV"), /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       return printRegister(filt);
     },
