@@ -26,6 +26,9 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel CDN removed - pre-compiled -->
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -597,6 +600,656 @@ function printRegister(rows) {
   w.document.open();
   w.document.write(html);
   w.document.close();
+}
+
+/* ── WEEKLY REPORT GENERATOR ──────────────────── */
+var RPT_GREEN  = "00CC79";
+var RPT_DARK   = "0A3D2B";
+var RPT_RED    = "EF4444";
+var RPT_AMBER  = "F59E0B";
+var RPT_TEXT   = "0F172A";
+var RPT_GRAY   = "64748B";
+var RPT_LIGHT  = "F8FAFC";
+var RPT_BORDER = "E2E8F0";
+
+function rptNow() {
+  return new Date().toLocaleDateString("en-GB", {day:"2-digit", month:"short", year:"numeric"});
+}
+function rptFilterObs(rows, dateFrom, dateTo) {
+  return rows.filter(function(o) {
+    if (!o.date) return false;
+    if (dateFrom && o.date < dateFrom) return false;
+    if (dateTo   && o.date > dateTo)   return false;
+    return true;
+  });
+}
+
+/* ── PowerPoint (.pptx) ── */
+function generateWeeklyReportPPT(rows, dateFrom, dateTo) {
+  if (!window.PptxGenJS) { alert("PptxGenJS library not loaded. Check your internet connection."); return; }
+  var pptx  = new PptxGenJS();
+  pptx.layout  = "LAYOUT_WIDE";
+  pptx.title   = "EHS Weekly Safety Report";
+  pptx.subject = PROJECT;
+
+  var now         = rptNow();
+  var periodLabel = (dateFrom || "—") + "  to  " + (dateTo || "—");
+  var G = RPT_GREEN, DK = RPT_DARK, RED = RPT_RED, AMB = RPT_AMBER;
+
+  /* helper: table header cell */
+  function hCell(text, bg) {
+    return { text: text, options: { bold: true, color: "FFFFFF", fill: { color: bg || DK }, fontSize: 9, fontFace: "Arial" } };
+  }
+
+  /* ── SLIDE 1 : COVER ── */
+  var s1 = pptx.addSlide();
+  s1.background = { color: DK };
+  s1.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.5, h:5.625, fill:{ color:G } });
+  s1.addShape(pptx.ShapeType.rect, { x:0.5, y:0,       w:9.5, h:0.06, fill:{ color:G } });
+  s1.addShape(pptx.ShapeType.rect, { x:0.5, y:5.565,   w:9.5, h:0.06, fill:{ color:G } });
+  s1.addText("EHS SAFETY", { x:1.1, y:0.85, w:8, h:0.9,  fontSize:42, bold:true, color:G,         fontFace:"Arial" });
+  s1.addText("OBSERVATION REPORT", { x:1.1, y:1.7,  w:8, h:0.7,  fontSize:28, bold:true, color:"FFFFFF",  fontFace:"Arial" });
+  s1.addText(PROJECT, { x:1.1, y:2.55, w:8, h:0.45, fontSize:14,            color:"CCCCCC",  fontFace:"Arial" });
+  s1.addShape(pptx.ShapeType.rect, { x:1.1, y:3.1, w:5, h:0.04, fill:{ color:"334155" } });
+  s1.addText("REPORTING PERIOD",  { x:1.1, y:3.25, w:4, h:0.3,  fontSize:9, bold:true, color:G,    fontFace:"Arial" });
+  s1.addText(periodLabel,          { x:1.1, y:3.6,  w:7, h:0.45, fontSize:15, bold:true, color:"FFFFFF", fontFace:"Arial" });
+  s1.addText("Generated: " + now,  { x:1.1, y:4.15, w:5, h:0.32, fontSize:10,            color:"94A3B8", fontFace:"Arial" });
+  s1.addText("CONFIDENTIAL  ·  EHS DEPARTMENT", { x:1.1, y:5.15, w:8, h:0.25, fontSize:8, color:"334155", fontFace:"Arial" });
+
+  /* ── SLIDE 2 : EXECUTIVE SUMMARY ── */
+  var s2 = pptx.addSlide();
+  s2.background = { color:"FFFFFF" };
+  s2.addShape(pptx.ShapeType.rect, { x:0, y:0,    w:10, h:0.75, fill:{ color:DK } });
+  s2.addShape(pptx.ShapeType.rect, { x:0, y:0.75, w:10, h:0.07, fill:{ color:G  } });
+  s2.addText("EXECUTIVE SUMMARY", { x:0.3, y:0.1, w:8, h:0.55, fontSize:20, bold:true, color:"FFFFFF", fontFace:"Arial" });
+  s2.addText(periodLabel,           { x:0.3, y:0.78, w:9, h:0.25, fontSize:9,            color:G,         fontFace:"Arial" });
+
+  var total    = rows.length;
+  var openC    = rows.filter(function(o){ return o.status === "OPEN"; }).length;
+  var inprog   = rows.filter(function(o){ return o.status === "IN_PROGRESS"; }).length;
+  var closed   = rows.filter(function(o){ return o.status === "CLOSED"; }).length;
+  var overdue  = rows.filter(function(o){ return isOD(o); }).length;
+  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && o.status !== "CLOSED"; }).length;
+  var goodObs  = rows.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
+  var unsafeA  = rows.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
+  var unsafeC  = rows.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
+
+  var kpis = [
+    { l:"Total OBS",    v:total,   c:RPT_TEXT, bg:RPT_LIGHT },
+    { l:"Open",         v:openC,   c:openC  > 0 ? RED : RPT_TEXT, bg:openC  > 0 ? "FEE2E2" : RPT_LIGHT },
+    { l:"In Progress",  v:inprog,  c:AMB,                          bg:"FEF3C7" },
+    { l:"Closed",       v:closed,  c:G,                            bg:"D1FAE5" },
+    { l:"Overdue ⚠",   v:overdue, c:overdue > 0 ? RED : RPT_TEXT, bg:overdue > 0 ? "FEE2E2" : RPT_LIGHT },
+    { l:"Serious Open", v:serious, c:serious > 0 ? RED : RPT_TEXT, bg:serious > 0 ? "FEE2E2" : RPT_LIGHT }
+  ];
+  kpis.forEach(function(k, i) {
+    var col = i % 3, row2 = Math.floor(i / 3);
+    var kx = 0.22 + col * 3.22, ky = 1.1 + row2 * 2.05;
+    s2.addShape(pptx.ShapeType.rect, { x:kx, y:ky, w:3.06, h:1.7, fill:{ color:k.bg }, line:{ color:RPT_BORDER, pt:1 } });
+    s2.addText(String(k.v), { x:kx, y:ky+0.2,  w:3.06, h:0.9, fontSize:40, bold:true, color:k.c, align:"center", fontFace:"Arial" });
+    s2.addText(k.l,          { x:kx, y:ky+1.2,  w:3.06, h:0.35, fontSize:10,            color:RPT_GRAY, align:"center", fontFace:"Arial" });
+  });
+  s2.addText(
+    "Good Obs: " + goodObs + "   |   Unsafe Act: " + unsafeA + "   |   Unsafe Condition: " + unsafeC,
+    { x:0.2, y:5.25, w:9.6, h:0.28, fontSize:10, color:RPT_GRAY, align:"center", fontFace:"Arial" }
+  );
+
+  /* ── SLIDES 3+ : PER OBSERVATION ── */
+  rows.forEach(function(o) {
+    var sl = pptx.addSlide();
+    sl.background = { color:"FFFFFF" };
+    var rk      = RISK[o.risk]      || { label: o.risk      || "" };
+    var st      = STATUS[o.status]  || { label: o.status    || "" };
+    var ot      = OBS_TYPE[o.obsType] || { label: o.obsType || "" };
+    var rkColor = o.risk === "SERIOUS" ? RED : o.risk === "MAJOR" ? AMB : G;
+    var stLbl   = (st.label || o.status || "").replace(/_/g, " ");
+
+    /* header bar */
+    sl.addShape(pptx.ShapeType.rect, { x:0, y:0,    w:10, h:0.65, fill:{ color:DK } });
+    sl.addShape(pptx.ShapeType.rect, { x:0, y:0.65, w:10, h:0.05, fill:{ color:G  } });
+    sl.addText(o.id, { x:0.25, y:0.05, w:1.4, h:0.55, fontSize:14, bold:true, color:G,        fontFace:"Arial" });
+    sl.addText(" · " + ot.label, { x:1.6,  y:0.05, w:5.2, h:0.55, fontSize:11,           color:"CCCCCC",   fontFace:"Arial" });
+    sl.addText(o.date + (o.week ? "  ·  " + o.week : ""), { x:6.9, y:0.05, w:2.2, h:0.55, fontSize:10, color:"94A3B8", align:"right", fontFace:"Arial" });
+    /* risk badge */
+    sl.addShape(pptx.ShapeType.rect, { x:9.2, y:0.1, w:0.72, h:0.44, fill:{ color:rkColor }, rounding:true });
+    sl.addText((rk.label || "").slice(0,3).toUpperCase(), { x:9.2, y:0.1, w:0.72, h:0.44, fontSize:8, bold:true, color:"FFFFFF", align:"center", valign:"middle", fontFace:"Arial" });
+
+    /* detail fields - left column */
+    var fields = [
+      ["Zone / Area",      o.zone    || "—"],
+      ["Contractor",       o.company || "—"],
+      ["Risk Level",       rk.label  || o.risk],
+      ["Status",           stLbl],
+      ["Due Date",         o.due     || "—"],
+      ["Raised By",        o.by      || "—"],
+      ["Closed Date",      o.closed  || "—"]
+    ];
+    var detY = 0.82;
+    fields.forEach(function(f, fi) {
+      var fy = detY + fi * 0.54;
+      if (fi % 2 === 0) sl.addShape(pptx.ShapeType.rect, { x:0.2, y:fy, w:5.55, h:0.51, fill:{ color:RPT_LIGHT } });
+      sl.addText(f[0] + ":", { x:0.3,  y:fy+0.09, w:1.65, h:0.34, fontSize:8, bold:true, color:RPT_GRAY, fontFace:"Arial" });
+      sl.addText(f[1],        { x:2.0,  y:fy+0.09, w:3.6,  h:0.34, fontSize:9,            color:RPT_TEXT, fontFace:"Arial" });
+    });
+
+    /* description & corrective action boxes */
+    var descY = detY + fields.length * 0.54 + 0.04;
+    sl.addShape(pptx.ShapeType.rect, { x:0.2, y:descY,      w:5.55, h:0.85, fill:{ color:"EFF6FF" }, line:{ color:"BFDBFE", pt:1 } });
+    sl.addText("DESCRIPTION",        { x:0.3, y:descY+0.06, w:5.3,  h:0.22, fontSize:7, bold:true, color:"1E3A8A", fontFace:"Arial" });
+    sl.addText(o.desc || "—",        { x:0.3, y:descY+0.26, w:5.3,  h:0.55, fontSize:8.5, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+
+    /* photos - right column */
+    var photoX = 5.9;
+    sl.addShape(pptx.ShapeType.rect, { x:photoX, y:0.72, w:3.9, h:4.8, fill:{ color:RPT_LIGHT }, line:{ color:RPT_BORDER, pt:1 } });
+    var bef = o.pb && o.pb.length ? o.pb[0] : null;
+    var aft = o.pa && o.pa.length ? o.pa[0] : null;
+    var hasPhotos = bef || aft;
+
+    if (hasPhotos) {
+      if (bef) {
+        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fill:{ color:"1E3A8A" } });
+        sl.addText("BEFORE", { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
+        try { sl.addImage({ data:bef, x:photoX+0.1, y:1.12, w:1.82, h:2.15 }); } catch(e) {}
+      } else {
+        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
+        sl.addText("No Before Photo", { x:photoX+0.1, y:1.7, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
+      }
+      if (aft) {
+        var ax = bef ? photoX+2.05 : photoX+0.1;
+        sl.addShape(pptx.ShapeType.rect, { x:ax, y:0.82, w:1.82, h:0.29, fill:{ color:G } });
+        sl.addText("AFTER", { x:ax, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
+        try { sl.addImage({ data:aft, x:ax, y:1.12, w:1.82, h:2.15 }); } catch(e) {}
+      } else {
+        var ax2 = bef ? photoX+2.05 : photoX+0.1;
+        sl.addShape(pptx.ShapeType.rect, { x:ax2, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
+        sl.addText("No After Photo", { x:ax2, y:1.7, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
+      }
+      sl.addText("CORRECTIVE ACTION", { x:photoX+0.1, y:3.45, w:3.7, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
+      sl.addText(o.rect || "—",        { x:photoX+0.1, y:3.74, w:3.7, h:1.68, fontSize:8, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+    } else {
+      sl.addText("No Photos",          { x:photoX, y:1.85, w:3.9, h:0.5, fontSize:11, color:"CBD5E1", align:"center", fontFace:"Arial" });
+      sl.addText("CORRECTIVE ACTION",  { x:photoX+0.15, y:2.55, w:3.6, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
+      sl.addText(o.rect || "—",        { x:photoX+0.15, y:2.84, w:3.6, h:2.55, fontSize:9, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+    }
+
+    /* footer */
+    sl.addShape(pptx.ShapeType.rect, { x:0, y:5.5, w:10, h:0.125, fill:{ color:RPT_LIGHT } });
+    sl.addText(PROJECT + "  ·  EHS Weekly Report  ·  " + now, { x:0.2, y:5.51, w:9.6, h:0.11, fontSize:7, color:"94A3B8", fontFace:"Arial" });
+  });
+
+  /* ── HIGH RISK SUMMARY ── */
+  var hrObs = rows.filter(function(o){ return o.risk === "SERIOUS"; });
+  if (hrObs.length > 0) {
+    var hrs = pptx.addSlide();
+    hrs.background = { color:"FFFFFF" };
+    hrs.addShape(pptx.ShapeType.rect, { x:0, y:0,    w:10, h:0.75, fill:{ color:"7F1D1D" } });
+    hrs.addShape(pptx.ShapeType.rect, { x:0, y:0.75, w:10, h:0.06, fill:{ color:RED } });
+    hrs.addText("⚠  HIGH RISK FINDINGS — SERIOUS", { x:0.3, y:0.1, w:9.4, h:0.55, fontSize:18, bold:true, color:"FFFFFF", fontFace:"Arial" });
+    var hrData = [
+      [hCell("ID","7F1D1D"), hCell("Date","7F1D1D"), hCell("Zone / Area","7F1D1D"), hCell("Contractor","7F1D1D"), hCell("Description","7F1D1D"), hCell("Status","7F1D1D")]
+    ].concat(hrObs.map(function(o) {
+      var stC = o.status === "CLOSED" ? G : RED;
+      var stL = (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ");
+      var desc = (o.desc||"").length > 85 ? (o.desc||"").slice(0,85)+"…" : (o.desc||"");
+      return [
+        { text:o.id,             options:{bold:true, fontSize:9, fontFace:"Arial"} },
+        { text:o.date,           options:{fontSize:9, fontFace:"Arial"} },
+        { text:o.zone||"—",     options:{fontSize:9, fontFace:"Arial"} },
+        { text:o.company||"—",  options:{fontSize:9, fontFace:"Arial"} },
+        { text:desc,             options:{fontSize:8, fontFace:"Arial"} },
+        { text:stL,              options:{fontSize:9, bold:true, color:stC, fontFace:"Arial"} }
+      ];
+    }));
+    hrs.addTable(hrData, {
+      x:0.25, y:0.88, w:9.5,
+      colW:[1.0, 0.95, 1.85, 1.35, 3.3, 1.05],
+      border:{ type:"solid", color:RPT_BORDER, pt:0.5 },
+      autoPage:true, autoPageRepeatHeader:true
+    });
+  }
+
+  /* ── CONTRACTOR PERFORMANCE ── */
+  var contMap = {};
+  rows.forEach(function(o) {
+    var co = o.company || "Unknown";
+    if (!contMap[co]) contMap[co] = { total:0, open:0, closed:0, overdue:0 };
+    contMap[co].total++;
+    if (o.status === "CLOSED") contMap[co].closed++; else contMap[co].open++;
+    if (isOD(o)) contMap[co].overdue++;
+  });
+  var ctKeys = Object.keys(contMap).sort();
+  if (ctKeys.length > 0) {
+    var cs = pptx.addSlide();
+    cs.background = { color:"FFFFFF" };
+    cs.addShape(pptx.ShapeType.rect, { x:0, y:0,    w:10, h:0.75, fill:{ color:DK } });
+    cs.addShape(pptx.ShapeType.rect, { x:0, y:0.75, w:10, h:0.07, fill:{ color:G  } });
+    cs.addText("CONTRACTOR PERFORMANCE SUMMARY", { x:0.3, y:0.1, w:9.4, h:0.55, fontSize:18, bold:true, color:"FFFFFF", fontFace:"Arial" });
+    var ctData = [
+      [hCell("Contractor"), hCell("Total"), hCell("Open"), hCell("Closed"), hCell("Overdue"), hCell("Closure %")]
+    ].concat(ctKeys.map(function(co, idx) {
+      var d   = contMap[co];
+      var pct = d.total > 0 ? Math.round(d.closed / d.total * 100) : 0;
+      var bg  = idx % 2 === 0 ? "FFFFFF" : RPT_LIGHT;
+      var pctC = pct >= 80 ? G : pct >= 50 ? AMB : RED;
+      return [
+        { text:co,          options:{ bold:true, fill:{ color:bg }, fontSize:10, fontFace:"Arial" } },
+        { text:String(d.total),   options:{ align:"center", fill:{ color:bg }, fontSize:10, fontFace:"Arial" } },
+        { text:String(d.open),    options:{ align:"center", fill:{ color:bg }, color:d.open   > 0 ? RED : RPT_TEXT, bold:d.open   > 0, fontSize:10, fontFace:"Arial" } },
+        { text:String(d.closed),  options:{ align:"center", fill:{ color:bg }, color:G,        bold:true,           fontSize:10, fontFace:"Arial" } },
+        { text:String(d.overdue), options:{ align:"center", fill:{ color:bg }, color:d.overdue> 0 ? RED : RPT_TEXT, bold:d.overdue> 0, fontSize:10, fontFace:"Arial" } },
+        { text:pct + "%",         options:{ align:"center", fill:{ color:bg }, color:pctC,     bold:true,           fontSize:10, fontFace:"Arial" } }
+      ];
+    }));
+    cs.addTable(ctData, {
+      x:1.5, y:0.88, w:7.0,
+      colW:[2.2, 0.9, 0.9, 0.9, 0.9, 1.2],
+      rowH:0.55,
+      border:{ type:"solid", color:RPT_BORDER, pt:0.5 },
+      autoPage:true
+    });
+  }
+
+  /* ── CLOSING SLIDE ── */
+  var cls = pptx.addSlide();
+  cls.background = { color:DK };
+  cls.addShape(pptx.ShapeType.rect, { x:0, y:0, w:0.5, h:5.625, fill:{ color:G } });
+  cls.addText("Thank You", { x:1.1, y:1.75, w:8, h:0.85, fontSize:36, bold:true, color:"FFFFFF", fontFace:"Arial" });
+  cls.addText("Report prepared by EHS Department  ·  " + PROJECT, { x:1.1, y:2.7, w:8, h:0.4, fontSize:13, color:"AAAAAA", fontFace:"Arial" });
+  cls.addText(now, { x:1.1, y:3.2, w:5, h:0.35, fontSize:11, color:"94A3B8", fontFace:"Arial" });
+
+  var fname = "EHS_Weekly_Report_" + (dateFrom||"").replace(/-/g,"") + "_" + (dateTo||"").replace(/-/g,"") + ".pptx";
+  pptx.writeFile({ fileName: fname });
+}
+
+/* ── PDF (.pdf) ── */
+function generateWeeklyReportPDF(rows, dateFrom, dateTo) {
+  if (typeof window.jspdf === "undefined") { alert("jsPDF library not loaded. Check your internet connection."); return; }
+  var jsPDF = window.jspdf.jsPDF;
+  var doc = new jsPDF({ orientation:"landscape", unit:"mm", format:"a4" });
+  var W = 297, H = 210;
+  var now         = rptNow();
+  var periodLabel = (dateFrom || "—") + "  to  " + (dateTo || "—");
+
+  function hx(hex) {
+    var h = (hex.charAt(0) === "#") ? hex.slice(1) : hex;
+    return [ parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16) ];
+  }
+  function fill(hex)  { var c=hx(hex); doc.setFillColor(c[0],c[1],c[2]); }
+  function draw(hex)  { var c=hx(hex); doc.setDrawColor(c[0],c[1],c[2]); }
+  function color(hex) { var c=hx(hex); doc.setTextColor(c[0],c[1],c[2]); }
+  function frect(x,y,w,h,hex) { fill(hex); doc.rect(x,y,w,h,"F"); }
+  function txt(s,x,y,opts) {
+    opts = opts || {};
+    color(opts.color || "#0F172A");
+    doc.setFontSize(opts.size || 10);
+    doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+    var args = [String(s||""), x, y, { align: opts.align||"left" }];
+    if (opts.maxW) args[3].maxWidth = opts.maxW;
+    doc.text.apply(doc, args);
+  }
+
+  /* ── PAGE 1: COVER ── */
+  frect(0,0,W,H,"#0A3D2B");
+  frect(0,0,6,H,"#00CC79");
+  frect(6,0,W-6,2,"#00CC79");
+  frect(6,H-2,W-6,2,"#00CC79");
+  txt("EHS SAFETY",                               18, 52, { size:38, bold:true, color:"#00CC79" });
+  txt("OBSERVATION REPORT",                        18, 68, { size:26, bold:true, color:"#FFFFFF" });
+  txt(PROJECT,                                     18, 84, { size:13,             color:"#AAAAAA" });
+  frect(18,92,80,0.5,"#334155");
+  txt("REPORTING PERIOD",                          18,103, { size:8, bold:true, color:"#00CC79" });
+  txt(periodLabel,                                 18,113, { size:14, bold:true, color:"#FFFFFF" });
+  txt("Generated: " + now,                         18,124, { size:10,             color:"#94A3B8" });
+  txt("CONFIDENTIAL  ·  EHS DEPARTMENT",           18,H-5, { size:8,              color:"#334155" });
+
+  /* ── PAGE 2: EXECUTIVE SUMMARY ── */
+  doc.addPage();
+  frect(0,0,W,18,"#0A3D2B");
+  frect(0,18,W,1.5,"#00CC79");
+  txt("EXECUTIVE SUMMARY",  8, 13, { size:18, bold:true, color:"#FFFFFF" });
+  txt(periodLabel,           8, 22, { size:9,              color:"#00CC79" });
+
+  var total    = rows.length;
+  var openC    = rows.filter(function(o){ return o.status === "OPEN"; }).length;
+  var inprog   = rows.filter(function(o){ return o.status === "IN_PROGRESS"; }).length;
+  var closed   = rows.filter(function(o){ return o.status === "CLOSED"; }).length;
+  var overdue  = rows.filter(function(o){ return isOD(o); }).length;
+  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && o.status !== "CLOSED"; }).length;
+  var goodObs  = rows.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
+  var unsafeA  = rows.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
+  var unsafeC  = rows.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
+
+  var kpis = [
+    { l:"Total OBS",   v:total,   c:"#0F172A", bg:"#F8FAFC" },
+    { l:"Open",        v:openC,   c:openC  >0?"#EF4444":"#0F172A", bg:openC  >0?"#FEE2E2":"#F8FAFC" },
+    { l:"In Progress", v:inprog,  c:"#F59E0B",                     bg:"#FEF3C7" },
+    { l:"Closed",      v:closed,  c:"#00CC79",                     bg:"#D1FAE5" },
+    { l:"Overdue",     v:overdue, c:overdue >0?"#EF4444":"#0F172A", bg:overdue >0?"#FEE2E2":"#F8FAFC" },
+    { l:"Serious",     v:serious, c:serious >0?"#EF4444":"#0F172A", bg:serious >0?"#FEE2E2":"#F8FAFC" }
+  ];
+  var kw=40, kh=28, km=8;
+  var kstart = (W - (kpis.length * (kw+km) - km)) / 2;
+  kpis.forEach(function(k,i) {
+    var kx = kstart + i*(kw+km), ky = 26;
+    frect(kx,ky,kw,kh,k.bg);
+    draw("#E2E8F0"); doc.rect(kx,ky,kw,kh);
+    txt(String(k.v), kx+kw/2, ky+14, { size:22, bold:true, color:k.c, align:"center" });
+    txt(k.l,         kx+kw/2, ky+22, { size:7,              color:"#64748B", align:"center" });
+  });
+
+  /* OBS type breakdown */
+  var obsY = 26+kh+10;
+  [[goodObs,"Good Obs","#00CC79","#D1FAE5"],[unsafeA,"Unsafe Act","#EF4444","#FEE2E2"],[unsafeC,"Unsafe Cond","#F59E0B","#FEF3C7"]].forEach(function(t,i){
+    var tx=20+i*90;
+    frect(tx,obsY,85,16,t[3]);
+    txt(String(t[0]), tx+14, obsY+10, { size:14, bold:true, color:t[2] });
+    txt(t[1],         tx+30, obsY+10, { size:10,             color:"#334155" });
+  });
+
+  /* Contractor table */
+  var contMap2 = {};
+  rows.forEach(function(o) {
+    var co=o.company||"Unknown";
+    if (!contMap2[co]) contMap2[co]={total:0,open:0,closed:0,overdue:0};
+    contMap2[co].total++;
+    if (o.status==="CLOSED") contMap2[co].closed++; else contMap2[co].open++;
+    if (isOD(o)) contMap2[co].overdue++;
+  });
+  var ct2Keys = Object.keys(contMap2).sort();
+  if (ct2Keys.length > 0 && doc.autoTable) {
+    doc.autoTable({
+      startY: obsY+22,
+      head:[["Contractor","Total","Open","Closed","Overdue","Closure %"]],
+      body: ct2Keys.map(function(co) {
+        var d=contMap2[co], pct=d.total>0?Math.round(d.closed/d.total*100):0;
+        return [co, d.total, d.open, d.closed, d.overdue, pct+"%"];
+      }),
+      headStyles:{ fillColor:hx("#0A3D2B"), textColor:[255,255,255], fontStyle:"bold", fontSize:9 },
+      bodyStyles:{ fontSize:9 },
+      columnStyles:{ 0:{fontStyle:"bold"}, 1:{halign:"center"}, 2:{halign:"center"}, 3:{halign:"center"}, 4:{halign:"center"}, 5:{halign:"center"} },
+      margin:{ left:20, right:20 },
+      theme:"striped",
+      didParseCell:function(data) {
+        if (data.section==="body") {
+          if (data.column.index===2 && parseInt(data.cell.raw)>0) data.cell.styles.textColor=hx("#EF4444");
+          if (data.column.index===3) data.cell.styles.textColor=hx("#00CC79");
+          if (data.column.index===4 && parseInt(data.cell.raw)>0) data.cell.styles.textColor=hx("#EF4444");
+        }
+      }
+    });
+  }
+
+  /* ── PAGE PER OBSERVATION ── */
+  rows.forEach(function(o) {
+    doc.addPage();
+    var rk  = RISK[o.risk]     || { label:o.risk    ||"" };
+    var st  = STATUS[o.status] || { label:o.status   ||"" };
+    var ot  = OBS_TYPE[o.obsType]||{ label:o.obsType||"" };
+    var rkColor = o.risk==="SERIOUS"?"#EF4444":o.risk==="MAJOR"?"#F59E0B":"#00CC79";
+    var stLbl   = (st.label||o.status||"").replace(/_/g," ");
+
+    /* header */
+    frect(0,0,W,16,"#0A3D2B");
+    frect(0,16,W,1,"#00CC79");
+    txt(o.id,  8, 11, { size:13, bold:true, color:"#00CC79" });
+    txt("  ·  " + ot.label, 28, 11, { size:10, color:"#AAAAAA" });
+    txt(o.date + (o.week ? "  ·  " + o.week : ""), W-8, 11, { size:9, color:"#94A3B8", align:"right" });
+    /* risk badge */
+    frect(W-34,3,30,10,rkColor);
+    txt((rk.label||"").toUpperCase(), W-19, 10, { size:8, bold:true, color:"#FFFFFF", align:"center" });
+
+    /* left column: fields */
+    var leftW=155, leftX=8, fieldY=21;
+    var fields=[
+      ["Zone / Area", o.zone    || "—"],
+      ["Contractor",  o.company || "—"],
+      ["Risk Level",  rk.label  || o.risk],
+      ["Status",      stLbl],
+      ["Due Date",    o.due     || "—"],
+      ["Raised By",   o.by      || "—"],
+      ["Closed Date", o.closed  || "—"]
+    ];
+    fields.forEach(function(f,fi) {
+      var fy = fieldY + fi*12;
+      if (fi%2===0) frect(leftX, fy-2, leftW, 11, "#F8FAFC");
+      txt(f[0]+":", leftX+2,  fy+6, { size:8, bold:true, color:"#64748B" });
+      txt(f[1],     leftX+50, fy+6, { size:8,             color:"#0F172A" });
+    });
+
+    /* description */
+    var descY = fieldY + fields.length*12 + 3;
+    frect(leftX, descY, leftW, 22, "#EFF6FF");
+    txt("DESCRIPTION", leftX+2, descY+5, { size:7, bold:true, color:"#1E3A8A" });
+    var dLines = doc.splitTextToSize(o.desc||"—", leftW-6);
+    txt(dLines.slice(0,3).join("\n"), leftX+2, descY+11, { size:8, color:"#0F172A" });
+
+    /* corrective action */
+    var rectY = descY + 26;
+    frect(leftX, rectY, leftW, 22, "#F0FDF4");
+    txt("CORRECTIVE ACTION", leftX+2, rectY+5, { size:7, bold:true, color:"#065F46" });
+    var rLines = doc.splitTextToSize(o.rect||"—", leftW-6);
+    txt(rLines.slice(0,3).join("\n"), leftX+2, rectY+11, { size:8, color:"#0F172A" });
+
+    /* photos */
+    var photoX=170, photoW=120, photoH=(H-26)/2-3;
+    frect(photoX,20,photoW,H-22,"#F8FAFC");
+    draw("#E2E8F0"); doc.rect(photoX,20,photoW,H-22);
+
+    var bef=o.pb&&o.pb.length?o.pb[0]:null;
+    var aft=o.pa&&o.pa.length?o.pa[0]:null;
+
+    if (bef) {
+      frect(photoX+2,22,photoW-4,6,"#1E3A8A");
+      txt("BEFORE", photoX+photoW/2, 27, { size:8, bold:true, color:"#FFFFFF", align:"center" });
+      try { var bt=bef.indexOf("png")>-1?"PNG":"JPEG"; doc.addImage(bef,bt,photoX+2,29,photoW-4,photoH); } catch(e){}
+    } else {
+      frect(photoX+2,22,photoW-4,photoH+7,"#F1F5F9");
+      txt("No Before Photo", photoX+photoW/2, 22+photoH/2, { size:8, color:"#CBD5E1", align:"center" });
+    }
+
+    var afy = 22+photoH+9;
+    if (aft) {
+      frect(photoX+2,afy,photoW-4,6,"#00CC79");
+      txt("AFTER", photoX+photoW/2, afy+5, { size:8, bold:true, color:"#FFFFFF", align:"center" });
+      try { var at2=aft.indexOf("png")>-1?"PNG":"JPEG"; doc.addImage(aft,at2,photoX+2,afy+7,photoW-4,photoH-3); } catch(e){}
+    } else {
+      frect(photoX+2,afy,photoW-4,photoH+5,"#F1F5F9");
+      txt("No After Photo", photoX+photoW/2, afy+photoH/2, { size:8, color:"#CBD5E1", align:"center" });
+    }
+
+    /* footer */
+    frect(0,H-7,W,7,"#F8FAFC");
+    txt(PROJECT + "  ·  EHS Weekly Report  ·  " + now, 8, H-2, { size:7, color:"#94A3B8" });
+    txt(o.id + "  ·  Page " + doc.internal.getCurrentPageInfo().pageNumber, W-8, H-2, { size:7, color:"#94A3B8", align:"right" });
+  });
+
+  /* ── HIGH RISK SUMMARY ── */
+  var hrObs2 = rows.filter(function(o){ return o.risk==="SERIOUS"; });
+  if (hrObs2.length > 0 && doc.autoTable) {
+    doc.addPage();
+    frect(0,0,W,18,"#7F1D1D");
+    frect(0,18,W,1.5,"#EF4444");
+    txt("⚠  HIGH RISK FINDINGS — SERIOUS", 8, 13, { size:16, bold:true, color:"#FFFFFF" });
+    doc.autoTable({
+      startY:22,
+      head:[["ID","Date","Zone / Area","Contractor","Description","Status"]],
+      body:hrObs2.map(function(o){
+        return [
+          o.id, o.date, o.zone||"—", o.company||"—",
+          (o.desc||"").slice(0,100)+((o.desc||"").length>100?"…":""),
+          (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ")
+        ];
+      }),
+      headStyles:{ fillColor:hx("#7F1D1D"), textColor:[255,255,255], fontStyle:"bold", fontSize:9 },
+      bodyStyles:{ fontSize:9 },
+      columnStyles:{ 0:{fontStyle:"bold",cellWidth:20}, 1:{cellWidth:22}, 2:{cellWidth:40}, 3:{cellWidth:30}, 4:{}, 5:{cellWidth:25, fontStyle:"bold"} },
+      margin:{ left:8, right:8 },
+      theme:"striped",
+      didParseCell:function(data){
+        if (data.section==="body" && data.column.index===5) {
+          data.cell.styles.textColor = (data.cell.raw||"").toUpperCase()==="CLOSED" ? hx("#00CC79") : hx("#EF4444");
+        }
+      }
+    });
+    frect(0,H-7,W,7,"#F8FAFC");
+    txt(PROJECT + "  ·  EHS Weekly Report  ·  " + now, 8, H-2, { size:7, color:"#94A3B8" });
+  }
+
+  var fname = "EHS_Weekly_Report_" + (dateFrom||"").replace(/-/g,"") + "_" + (dateTo||"").replace(/-/g,"") + ".pdf";
+  doc.save(fname);
+}
+
+/* ── REPORT VIEW COMPONENT ── */
+function ReportView(props) {
+  var obs = props.obs || [];
+
+  /* default date range: Mon–today of current week */
+  function thisMonday() {
+    var d = new Date(), dow = d.getDay();
+    var mon = new Date(d); mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    return mon.toISOString().slice(0,10);
+  }
+  var _df  = React.useState(thisMonday());
+  var dateFrom = _df[0], setDateFrom = _df[1];
+  var _dt  = React.useState(td());
+  var dateTo   = _dt[0], setDateTo   = _dt[1];
+  var _gen = React.useState(false);
+  var generating    = _gen[0], setGenerating    = _gen[1];
+  var _gPdf = React.useState(false);
+  var generatingPdf = _gPdf[0], setGeneratingPdf = _gPdf[1];
+
+  /* available weeks for quick-select buttons */
+  var weeks = React.useMemo(function() {
+    var ws = {};
+    obs.forEach(function(o){ if (o.week) ws[o.week] = true; });
+    return Object.keys(ws).sort();
+  }, [obs]);
+
+  var filtered = React.useMemo(function() {
+    return rptFilterObs(obs, dateFrom, dateTo);
+  }, [obs, dateFrom, dateTo]);
+
+  var totalF   = filtered.length;
+  var openF    = filtered.filter(function(o){ return o.status==="OPEN"; }).length;
+  var closedF  = filtered.filter(function(o){ return o.status==="CLOSED"; }).length;
+  var overdueF = filtered.filter(function(o){ return isOD(o); }).length;
+  var seriousF = filtered.filter(function(o){ return o.risk==="SERIOUS"&&o.status!=="CLOSED"; }).length;
+  var photosF  = filtered.filter(function(o){ return (o.pb&&o.pb.length)||(o.pa&&o.pa.length); }).length;
+
+  function setWeekRange(wk) {
+    var wDates = obs.filter(function(o){ return o.week===wk&&o.date; }).map(function(o){ return o.date; }).sort();
+    if (wDates.length) { setDateFrom(wDates[0]); setDateTo(wDates[wDates.length-1]); }
+  }
+
+  function handlePPT() {
+    if (!totalF) { alert("No observations in the selected date range."); return; }
+    setGenerating(true);
+    setTimeout(function() {
+      try { generateWeeklyReportPPT(filtered, dateFrom, dateTo); }
+      catch(e) { console.error(e); alert("PowerPoint generation failed: " + e.message); }
+      setGenerating(false);
+    }, 80);
+  }
+  function handlePDF() {
+    if (!totalF) { alert("No observations in the selected date range."); return; }
+    setGeneratingPdf(true);
+    setTimeout(function() {
+      try { generateWeeklyReportPDF(filtered, dateFrom, dateTo); }
+      catch(e) { console.error(e); alert("PDF generation failed: " + e.message); }
+      setGeneratingPdf(false);
+    }, 80);
+  }
+
+  var iSt  = { padding:"9px 12px", borderRadius:8, border:"1.5px solid "+C.border, background:"#fff", fontSize:14, width:"100%", boxSizing:"border-box" };
+  var lSt  = { fontSize:11, fontWeight:600, color:C.slateMid, display:"block", marginBottom:5 };
+  var cSt  = { background:"#fff", borderRadius:12, padding:"18px 20px", border:"1.5px solid "+C.border, marginBottom:16 };
+  var hSt  = { fontSize:13, fontWeight:700, color:C.text, marginBottom:12 };
+  var kpis2 = [
+    { l:"Total",     v:totalF,   c:C.text,  bg:"#F8FAFC" },
+    { l:"Open",      v:openF,    c:openF    >0?C.red:C.text, bg:openF    >0?C.redBg :"#F8FAFC" },
+    { l:"Closed",    v:closedF,  c:C.green,                  bg:C.greenBg },
+    { l:"Overdue",   v:overdueF, c:overdueF >0?C.red:C.text, bg:overdueF >0?C.redBg :"#F8FAFC" },
+    { l:"Serious",   v:seriousF, c:seriousF >0?C.red:C.text, bg:seriousF >0?C.redBg :"#F8FAFC" },
+    { l:"With Photos",v:photosF, c:C.blue,                   bg:C.blueBg }
+  ];
+
+  return React.createElement("div", { className:"fade-in", style:{ maxWidth:720, margin:"0 auto" } },
+    /* page title */
+    React.createElement("div", { style:{ marginBottom:18 } },
+      React.createElement("h2", { style:{ fontSize:20, fontWeight:800, color:C.text, margin:0 } }, "📊 Weekly Report Generator"),
+      React.createElement("p",  { style:{ fontSize:12, color:C.slate, margin:"5px 0 0" } },
+        "Select a reporting period, preview the data, then download as PowerPoint or PDF."
+      )
+    ),
+
+    /* date range card */
+    React.createElement("div", { style:cSt },
+      React.createElement("div", { style:hSt }, "Reporting Period"),
+      React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom: weeks.length ? 12 : 0 } },
+        React.createElement("div", null,
+          React.createElement("label", { style:lSt }, "Date From"),
+          React.createElement("input", { type:"date", value:dateFrom, onChange:function(e){ setDateFrom(e.target.value); }, style:iSt })
+        ),
+        React.createElement("div", null,
+          React.createElement("label", { style:lSt }, "Date To"),
+          React.createElement("input", { type:"date", value:dateTo,   onChange:function(e){ setDateTo(e.target.value); },   style:iSt })
+        )
+      ),
+      weeks.length > 0 && React.createElement("div", null,
+        React.createElement("div", { style:{ fontSize:11, fontWeight:600, color:C.slateMid, marginBottom:7 } }, "Quick select by week:"),
+        React.createElement("div", { style:{ display:"flex", flexWrap:"wrap", gap:6 } },
+          weeks.map(function(wk) {
+            return React.createElement("button", {
+              key:wk, onClick:function(){ setWeekRange(wk); },
+              style:{ fontSize:11, padding:"5px 13px", borderRadius:20, border:"1.5px solid "+C.border, background:"#fff", color:C.textMid, cursor:"pointer", fontWeight:500 }
+            }, wk);
+          })
+        )
+      )
+    ),
+
+    /* stats preview card */
+    React.createElement("div", { style:cSt },
+      React.createElement("div", { style:hSt },
+        "Preview  ",
+        React.createElement("span", { style:{ fontWeight:400, color:C.slate, fontSize:12 } },
+          totalF === 0 ? "No observations match this period" : totalF + " observation" + (totalF===1?"":"s") + " will be included"
+        )
+      ),
+      React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8 } },
+        kpis2.map(function(k) {
+          return React.createElement("div", { key:k.l, style:{ background:k.bg, borderRadius:8, padding:"10px 8px", textAlign:"center", border:"1.5px solid "+C.border } },
+            React.createElement("div", { style:{ fontSize:22, fontWeight:800, color:k.c } }, String(k.v)),
+            React.createElement("div", { style:{ fontSize:10, color:C.slate, marginTop:3 } }, k.l)
+          );
+        })
+      )
+    ),
+
+    /* generate buttons card */
+    React.createElement("div", { style:cSt },
+      React.createElement("div", { style:hSt }, "Generate & Download"),
+      React.createElement("div", { style:{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 } },
+        React.createElement("button", {
+          onClick:handlePPT, disabled:generating||!totalF,
+          style:{ padding:"14px 10px", borderRadius:10, border:"none",
+                  background:generating||!totalF?"#94A3B8":C.green, color:"#fff",
+                  fontSize:13, fontWeight:700, cursor:generating||!totalF?"not-allowed":"pointer" }
+        }, generating ? "Generating…" : "⬇ PowerPoint (.pptx)"),
+        React.createElement("button", {
+          onClick:handlePDF, disabled:generatingPdf||!totalF,
+          style:{ padding:"14px 10px", borderRadius:10, border:"none",
+                  background:generatingPdf||!totalF?"#94A3B8":C.red, color:"#fff",
+                  fontSize:13, fontWeight:700, cursor:generatingPdf||!totalF?"not-allowed":"pointer" }
+        }, generatingPdf ? "Generating…" : "⬇ PDF (.pdf)")
+      ),
+      React.createElement("p", { style:{ fontSize:11, color:C.slate, marginTop:12, textAlign:"center", lineHeight:1.5 } },
+        "PowerPoint: Full slide deck with before/after photos per observation.",
+        React.createElement("br",null),
+        "PDF: A4 landscape report with the same content."
+      )
+    )
+  );
 }
 
 /* ── SAMPLE DATA ────────────────────────────────── */
@@ -1524,7 +2177,7 @@ function App() {
     setApproverRole("");
   };
   React.useEffect(function(){
-    if(!mgr && (view==="dashboard"||view==="list"||view==="detail"||view==="log")) setView("form");
+    if(!mgr && (view==="dashboard"||view==="list"||view==="detail"||view==="log"||view==="report")) setView("form");
   }, [mgr, view]);
   var _logSt = React.useState([]),
     logRows = _logSt[0],
@@ -2124,7 +2777,7 @@ function App() {
       display: "flex",
       gap: 6
     }
-  }, (mgr ? [["dashboard", "Dashboard"], ["list", "Observations"], ["log", "Activity"]] : []).map(function (_ref6) {
+  }, (mgr ? [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]] : []).map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -4498,7 +5151,7 @@ function App() {
       color: C.textMid,
       fontWeight: 600
     }
-  }, "Cancel"))), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
+  }, "Cancel"))), view === "report" && mgr && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: {
       maxWidth: 720
