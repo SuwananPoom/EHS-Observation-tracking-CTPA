@@ -2397,29 +2397,12 @@ function App() {
     setLoad = _useState0[1];
   /* Ref so forceSync can call pull() defined inside useEffect */
   var pullRef = React.useRef(null);
-  var _useState1 = useState((function(){ try{ return (sessionStorage.getItem("ctpa_mgr")==="1"||localStorage.getItem("ctpa_mgr")==="1")?"dashboard":"form"; }catch(e){ return "form"; } })()),
+  var _useState1 = useState("dashboard"),
     _useState10 = _slicedToArray(_useState1, 2),
     view = _useState10[0],
     setView = _useState10[1];
-  var _mgrSt = React.useState((function(){ try{ return sessionStorage.getItem("ctpa_mgr")==="1"||localStorage.getItem("ctpa_mgr")==="1"; }catch(e){ return false; } })()),
-    mgr = _mgrSt[0],
-    setMgr = _mgrSt[1];
-  var unlockMgr = function(){
-    var code = window.prompt("Manager access code / รหัสผู้จัดการ:");
-    if(code === null) return;
-    if(code === MGR_CODE){
-      try{ sessionStorage.setItem("ctpa_mgr","1"); }catch(e){}
-      setMgr(true);
-      setView("dashboard");
-    } else {
-      window.alert("Incorrect code / รหัสไม่ถูกต้อง");
-    }
-  };
-  var logoutMgr = function(){
-    try{ sessionStorage.removeItem("ctpa_mgr"); localStorage.removeItem("ctpa_mgr"); }catch(e){}
-    setMgr(false);
-    setView("form");
-  };
+  /* Manager login removed — all users have full access */
+  var mgr = true;
   /* ===== Closure-approver gate (separate from manager) ===== */
   var _aprSt = React.useState((function(){ try{ return sessionStorage.getItem("ctpa_apr_role")||""; }catch(e){ return ""; } })()),
     approverRole = _aprSt[0],
@@ -2450,9 +2433,6 @@ function App() {
     try{ sessionStorage.removeItem("ctpa_apr_role"); }catch(e){}
     setApproverRole("");
   };
-  React.useEffect(function(){
-    if(!mgr && (view==="dashboard"||view==="list"||view==="detail"||view==="log"||view==="report")) setView("form");
-  }, [mgr, view]);
   var _logSt = React.useState([]),
     logRows = _logSt[0],
     setLogRows = _logSt[1];
@@ -3047,14 +3027,7 @@ function App() {
     }
     ps(nx);
     setEdit(null);
-    if (mgr) {
-      setView("list");
-    } else {
-      setForm(blk);
-      setFBef([]);
-      setFAft([]);
-      setView("form");
-    }
+    setView("list");
   };
   var topCo = useMemo(function () {
     var m = {};
@@ -3148,7 +3121,7 @@ function App() {
       display: "flex",
       gap: 6
     }
-  }, (mgr ? [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]] : []).map(function (_ref6) {
+  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -3196,20 +3169,7 @@ function App() {
       opacity: syncBusy ? 0.7 : 1,
       whiteSpace: "nowrap"
     }
-  }, syncBusy ? "\u21BB Syncing\u2026" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")), /*#__PURE__*/React.createElement("button", {
-    onClick: mgr ? logoutMgr : unlockMgr,
-    className: "navbtn",
-    style: {
-      fontSize: 11,
-      padding: "7px 14px",
-      borderRadius: 9,
-      border: "1.5px solid " + (mgr ? C.green : C.border),
-      background: mgr ? C.greenBg : "#fff",
-      color: mgr ? C.greenDk : C.textMid,
-      fontWeight: 700,
-      cursor: "pointer"
-    }
-  }, mgr ? "\u2713 Manager" : "\uD83D\uDD12 Manager"))),
+  }, syncBusy ? "\u21BB Syncing\u2026" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync"))),
   /* \u2500\u2500 Sync error / diagnostics banner \u2500\u2500 */
   (syncErr || showDiag) ? /*#__PURE__*/React.createElement("div", {
     style: { background: syncErr ? "#FEF2F2" : "#F0F9FF", borderBottom: "1px solid " + (syncErr ? "#FCA5A5" : "#BAE6FD"), padding: "10px 20px", fontSize: 12 }
@@ -3229,7 +3189,7 @@ function App() {
       margin: "0 auto",
       padding: "18px 14px"
     }
-  }, (mgr && view === "log") && /*#__PURE__*/React.createElement("div", {
+  }, (view === "log") && /*#__PURE__*/React.createElement("div", {
     className: "fade-in"
   }, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }
@@ -5568,7 +5528,7 @@ function App() {
       color: C.textMid,
       fontWeight: 600
     }
-  }, "Cancel"))), view === "report" && mgr && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
+  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: {
       maxWidth: 720
