@@ -133,19 +133,24 @@ var CLOUD = {
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
 var __ctpaLastWrite = 0;   // ms timestamp of the most recent local save (guards against stale pulls)
 function cloudHeaders(){
-  /* New Supabase keys (sb_publishable_…) are NOT JWTs and must be sent only in the
-     apikey header. Legacy keys (eyJ…) also accept an Authorization: Bearer header. */
-  var h = { "apikey": CLOUD.key, "Content-Type": "application/json" };
-  if (CLOUD.key.indexOf("eyJ") === 0) { h["Authorization"] = "Bearer " + CLOUD.key; }
-  return h;
+  /* Send both apikey and Authorization headers for all key formats.
+     Supabase REST API requires Authorization: Bearer for RLS policies. */
+  return {
+    "apikey": CLOUD.key,
+    "Authorization": "Bearer " + CLOUD.key,
+    "Content-Type": "application/json"
+  };
 }
 function cloudLoad(){
   if(!cloudOn()) return Promise.resolve(null);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data,updated_at";
   return fetch(u, { headers: cloudHeaders() })
-    .then(function(r){ return r.ok ? r.json() : null; })
-    .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; })   // { data, updated_at }
-    .catch(function(){ return null; });
+    .then(function(r){
+      if(!r.ok){ console.warn("[CTPA] cloudLoad HTTP " + r.status); return null; }
+      return r.json();
+    })
+    .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; })
+    .catch(function(e){ console.warn("[CTPA] cloudLoad error:", e && e.message); return null; });
 }
 function cloudSave(arr){
   if(!cloudOn()) return Promise.resolve(false);
@@ -154,7 +159,10 @@ function cloudSave(arr){
     method: "POST",
     headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
     body: JSON.stringify([{ id: CLOUD.row, data: arr, updated_at: new Date().toISOString() }])
-  }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+  }).then(function(r){
+    if(!r.ok){ console.warn("[CTPA] cloudSave HTTP " + r.status); }
+    return r.ok;
+  }).catch(function(e){ console.warn("[CTPA] cloudSave error:", e && e.message); return false; });
 }
 
 /* ===== Identity: self-entered user name (remembered per device) ===== */
