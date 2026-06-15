@@ -2555,13 +2555,34 @@ function App() {
       cloudLoad().then(function(row){
         if(row && row.data && row.data.length > 0){
           var cloudT = row.updated_at ? Date.parse(row.updated_at) : 0;
-          /* only apply cloud data if it is at least as new as our last local edit.
-             this prevents the auto-refresh from overwriting a fresh local change
-             with stale data while the cloud write is still in flight or failing. */
-          if(cloudT >= __ctpaLastWrite){
-            var migrated = ctpaMigrate(row.data);
-            setObs(migrated);
-            try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e){}
+          /* Merge cloud + local by ID so observations created on other devices
+             always appear, even if this device has unsaved local changes.
+             Cloud wins for any ID that exists in both (cloud is source of truth).
+             Local-only IDs (created offline) are preserved. */
+          var cloudMigrated = ctpaMigrate(row.data);
+          setObs(function(localObs) {
+            var cloudMap = {};
+            cloudMigrated.forEach(function(o){ cloudMap[o.id] = o; });
+            /* keep local-only records (not yet synced to cloud) */
+            var localOnly = localObs.filter(function(o){ return !cloudMap[o.id]; });
+            /* cloud takes priority for shared records */
+            var merged = cloudMigrated.concat(localOnly);
+            /* sort: newest first by date then by id */
+            merged.sort(function(a,b){
+              if (b.date !== a.date) return b.date > a.date ? 1 : -1;
+              return b.id > a.id ? 1 : -1;
+            });
+            try { localStorage.setItem(SKEY, JSON.stringify(merged)); } catch(e){}
+            return merged;
+          });
+          /* if cloud is newer than our last write, also push merged state up
+             so all devices converge to the same data */
+          if(cloudT < __ctpaLastWrite){
+            /* our local write is newer — re-save to cloud to include local-only obs */
+            setObs(function(cur){
+              cloudSave(cur).catch(function(){});
+              return cur;
+            });
           }
         }
       });
