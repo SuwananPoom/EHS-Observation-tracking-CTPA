@@ -144,7 +144,7 @@ function cloudHeaders(){
 function cloudLoad(){
   if(!cloudOn()) return Promise.resolve(null);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data,updated_at";
-  return fetch(u, { headers: cloudHeaders() })
+  return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
       if(!r.ok){ console.warn("[CTPA] cloudLoad HTTP " + r.status); return null; }
       return r.json();
@@ -221,7 +221,7 @@ function logLoad(limit){
           "&select=*" +
           "&order=at.desc" +
           "&limit=" + (limit || 300);
-  return fetch(u, { headers: cloudHeaders() })
+  return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
       if(!r.ok){ return r.text().then(function(t){ throw new Error("HTTP " + r.status + (t ? (" \u2014 " + t.slice(0,140)) : "")); }); }
       return r.json();
@@ -2317,6 +2317,8 @@ function App() {
     _useState0 = _slicedToArray(_useState9, 2),
     load = _useState0[0],
     setLoad = _useState0[1];
+  /* Ref so forceSync can call pull() defined inside useEffect */
+  var pullRef = React.useRef(null);
   var _useState1 = useState((function(){ try{ return (sessionStorage.getItem("ctpa_mgr")==="1"||localStorage.getItem("ctpa_mgr")==="1")?"dashboard":"form"; }catch(e){ return "form"; } })()),
     _useState10 = _slicedToArray(_useState1, 2),
     view = _useState10[0],
@@ -2382,6 +2384,12 @@ function App() {
   var _logErr = React.useState(null),
     logErr = _logErr[0],
     setLogErr = _logErr[1];
+  var _syncSt = React.useState(null),
+    lastSynced = _syncSt[0],
+    setLastSynced = _syncSt[1];
+  var _syncBusy = React.useState(false),
+    syncBusy = _syncBusy[0],
+    setSyncBusy = _syncBusy[1];
   var refreshLog = function(){
     setLogLoading(true);
     logLoad(300).then(function(res){
@@ -2541,9 +2549,11 @@ function App() {
       sv(ctpaMigrate(_seed));
     }
     /* ----- CLOUD SYNC: pull latest, then keep refreshing ----- */
-    var pull = function(){
-      if(!cloudOn()) return;
-      cloudLoad().then(function(row){
+    var pull = function(opts){
+      var isForcePull = opts && opts.force;
+      if(!cloudOn()) return Promise.resolve(false);
+      return cloudLoad().then(function(row){
+        setLastSynced(new Date());
         if(row && row.data && row.data.length > 0){
           var cloudT = row.updated_at ? Date.parse(row.updated_at) : 0;
           /* Merge cloud + local by ID so observations created on other devices
@@ -2552,6 +2562,9 @@ function App() {
              Local-only IDs (created offline) are preserved. */
           var cloudMigrated = ctpaMigrate(row.data);
           setObs(function(localObs) {
+            /* On force-pull, treat cloud as full source of truth — local-only
+               records that are NOT yet in cloud are still preserved, but we
+               don't silently drop them. */
             var cloudMap = {};
             cloudMigrated.forEach(function(o){ cloudMap[o.id] = o; });
             /* keep local-only records (not yet synced to cloud) */
@@ -2574,9 +2587,17 @@ function App() {
             }
             return merged;
           });
+        } else if(isForcePull && (!row || !row.data)){
+          /* Cloud returned nothing — show a warning but don't wipe local data */
+          console.warn("[CTPA] Force pull: Supabase returned no data (table may not exist)");
         }
+        return true;
+      }).catch(function(e){
+        console.warn("[CTPA] pull failed:", e && e.message);
+        return false;
       });
     };
+    pullRef.current = pull;
     pull();
     var onFocus = function(){ pull(); };
     window.addEventListener("focus", onFocus);
@@ -2594,6 +2615,12 @@ function App() {
       }
     } catch(e){}
     return function(){ window.removeEventListener("focus", onFocus); clearInterval(iv); };
+  }, []);
+  /* Exposed force-sync so the UI button can trigger it */
+  var forceSync = React.useCallback(function(){
+    if(!pullRef.current) return;
+    setSyncBusy(true);
+    pullRef.current({ force: true }).finally(function(){ setSyncBusy(false); });
   }, []);
   var setRisk = function setRisk(r) {
     return setForm(function (p) {
@@ -3054,6 +3081,21 @@ function App() {
       cursor: "pointer"
     }
   }, "\uFF0B New OBS"), /*#__PURE__*/React.createElement("button", {
+    onClick: forceSync,
+    title: lastSynced ? ("Last synced: " + lastSynced.toLocaleTimeString()) : "Not yet synced \u2014 click to sync now",
+    style: {
+      fontSize: 11,
+      padding: "7px 12px",
+      borderRadius: 9,
+      border: "1.5px solid " + (lastSynced ? C.green : "#F59E0B"),
+      background: lastSynced ? C.greenBg : "#FFFBEB",
+      color: lastSynced ? C.greenDk : "#92400E",
+      fontWeight: 700,
+      cursor: syncBusy ? "wait" : "pointer",
+      opacity: syncBusy ? 0.7 : 1,
+      whiteSpace: "nowrap"
+    }
+  }, syncBusy ? "\u21BB Syncing\u2026" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")), /*#__PURE__*/React.createElement("button", {
     onClick: mgr ? logoutMgr : unlockMgr,
     className: "navbtn",
     style: {
