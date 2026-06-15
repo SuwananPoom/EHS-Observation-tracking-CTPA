@@ -455,22 +455,16 @@ var addD = function addD(d, n) {
   dt.setDate(dt.getDate() + n);
   return dt.toISOString().slice(0, 10);
 };
-/* Request a UUID from Supabase gen_random_uuid() so IDs are server-generated.
-   Falls back to crypto.randomUUID() if Supabase is unavailable. */
-function genObsId() {
-  if (cloudOn()) {
-    var u = CLOUD.url.replace(/\/$/, "") + "/rest/v1/rpc/gen_obs_id";
-    return fetch(u, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, cloudHeaders()), body: "{}" })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject("rpc_fail"); })
-      .then(function (uuid) { return "OBS-" + String(uuid).replace(/-/g, "").slice(0, 8).toUpperCase(); })
-      .catch(function () {
-        /* fallback: crypto.randomUUID() is cryptographically random — collision probability negligible */
-        var uid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)).toUpperCase();
-        return "OBS-" + uid.replace(/-/g, "").slice(0, 8).toUpperCase();
-      });
-  }
-  var uid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2)).toUpperCase();
-  return Promise.resolve("OBS-" + uid.replace(/-/g, "").slice(0, 8).toUpperCase());
+/* Generate next sequential OBS ID based on the highest existing number in the system.
+   Reads max from the current obs array passed in, pads to 3 digits minimum.
+   e.g. existing max OBS-474 → next is OBS-475 */
+function genObsId(obsList) {
+  var mx = (obsList || []).reduce(function(m, o) {
+    var n = parseInt((o.id || "").replace(/^OBS-/i, ""), 10);
+    return isNaN(n) ? m : Math.max(m, n);
+  }, 0);
+  var next = "OBS-" + String(mx + 1).padStart(3, "0");
+  return Promise.resolve(next);
 }
 var b64f = function b64f(f) {
   return new Promise(function (r, j) {
@@ -2909,7 +2903,7 @@ function App() {
       toast$(edit.id + " updated");
     } else {
       toast$("Generating ID…");
-      genObsId().then(function (newId) {
+      genObsId(obs).then(function (newId) {
         var ni = _objectSpread(_objectSpread({}, fclean), {}, {
           id: newId,
           pb: fBef,
