@@ -144,25 +144,42 @@ function cloudHeaders(){
 function cloudLoad(){
   if(!cloudOn()) return Promise.resolve(null);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data,updated_at";
+  console.log("[CTPA] cloudLoad →", u.replace(CLOUD.url, "<supabase>"));
   return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
-      if(!r.ok){ console.warn("[CTPA] cloudLoad HTTP " + r.status); return null; }
+      if(!r.ok){
+        return r.text().then(function(t){
+          console.error("[CTPA] cloudLoad HTTP", r.status, t.slice(0,200));
+          return null;
+        });
+      }
       return r.json();
     })
-    .then(function(rows){ return (rows && rows[0]) ? rows[0] : null; })
-    .catch(function(e){ console.warn("[CTPA] cloudLoad error:", e && e.message); return null; });
+    .then(function(rows){
+      var result = (rows && rows[0]) ? rows[0] : null;
+      console.log("[CTPA] cloudLoad ← rows:", rows && rows.length, "| has data:", !!(result && result.data));
+      return result;
+    })
+    .catch(function(e){ console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message); return null; });
 }
 function cloudSave(arr){
   if(!cloudOn()) return Promise.resolve(false);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?on_conflict=id";
+  console.log("[CTPA] cloudSave →", arr.length, "obs");
   return fetch(u, {
     method: "POST",
     headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
     body: JSON.stringify([{ id: CLOUD.row, data: arr, updated_at: new Date().toISOString() }])
   }).then(function(r){
-    if(!r.ok){ console.warn("[CTPA] cloudSave HTTP " + r.status); }
-    return r.ok;
-  }).catch(function(e){ console.warn("[CTPA] cloudSave error:", e && e.message); return false; });
+    if(!r.ok){
+      return r.text().then(function(t){
+        console.error("[CTPA] cloudSave HTTP", r.status, t.slice(0,200));
+        return false;
+      });
+    }
+    console.log("[CTPA] cloudSave ← OK (", r.status, ")");
+    return true;
+  }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message); return false; });
 }
 
 /* ===== Identity: self-entered user name (remembered per device) ===== */
@@ -2390,6 +2407,12 @@ function App() {
   var _syncBusy = React.useState(false),
     syncBusy = _syncBusy[0],
     setSyncBusy = _syncBusy[1];
+  var _syncErr = React.useState(null),
+    syncErr = _syncErr[0],
+    setSyncErr = _syncErr[1];
+  var _showDiag = React.useState(false),
+    showDiag = _showDiag[0],
+    setShowDiag = _showDiag[1];
   var refreshLog = function(){
     setLogLoading(true);
     logLoad(300).then(function(res){
@@ -2511,6 +2534,7 @@ function App() {
   };
   var sv = useCallback(function (d) {
     __ctpaLastWrite = Date.now();
+    console.log("[CTPA] sv() saving", d.length, "obs to localStorage + Supabase");
     try {
       localStorage.setItem(SKEY, JSON.stringify(d));
     } catch (e) {
@@ -2552,57 +2576,55 @@ function App() {
     var pull = function(opts){
       var isForcePull = opts && opts.force;
       if(!cloudOn()) return Promise.resolve(false);
+      console.log("[CTPA] pull() start", isForcePull ? "(force)" : "");
       return cloudLoad().then(function(row){
         setLastSynced(new Date());
         if(row && row.data && row.data.length > 0){
           var cloudT = row.updated_at ? Date.parse(row.updated_at) : 0;
-          /* Merge cloud + local by ID so observations created on other devices
-             always appear, even if this device has unsaved local changes.
-             Cloud wins for any ID that exists in both (cloud is source of truth).
-             Local-only IDs (created offline) are preserved. */
+          console.log("[CTPA] pull() cloud returned", row.data.length, "obs, updated_at:", row.updated_at);
           var cloudMigrated = ctpaMigrate(row.data);
           setObs(function(localObs) {
-            /* On force-pull, treat cloud as full source of truth — local-only
-               records that are NOT yet in cloud are still preserved, but we
-               don't silently drop them. */
             var cloudMap = {};
             cloudMigrated.forEach(function(o){ cloudMap[o.id] = o; });
-            /* keep local-only records (not yet synced to cloud) */
             var localOnly = localObs.filter(function(o){ return !cloudMap[o.id]; });
-            /* cloud takes priority for shared records */
             var merged = cloudMigrated.concat(localOnly);
-            /* sort: newest first by date then by id */
             merged.sort(function(a,b){
               if (b.date !== a.date) return b.date > a.date ? 1 : -1;
               return b.id > a.id ? 1 : -1;
             });
             try { localStorage.setItem(SKEY, JSON.stringify(merged)); } catch(e){}
-            /* re-push to cloud whenever we have local-only records OR our last
-               write is newer — ensures no device's data gets permanently lost
-               when two devices save at the same time (race condition fix) */
             if(localOnly.length > 0 || cloudT < __ctpaLastWrite){
+              console.log("[CTPA] pull() re-pushing", localOnly.length, "local-only obs to cloud");
               setTimeout(function(){
-                cloudSave(merged).catch(function(){});
+                cloudSave(merged).then(function(ok){
+                  console.log("[CTPA] re-push cloudSave:", ok ? "OK" : "FAILED");
+                }).catch(function(e){ console.warn("[CTPA] re-push cloudSave error:", e && e.message); });
               }, 500);
             }
+            console.log("[CTPA] pull() merged:", merged.length, "obs (", localOnly.length, "local-only)");
             return merged;
           });
-        } else if(isForcePull && (!row || !row.data)){
-          /* Cloud returned nothing — show a warning but don't wipe local data */
-          console.warn("[CTPA] Force pull: Supabase returned no data (table may not exist)");
+        } else {
+          console.log("[CTPA] pull() cloud empty or no data:", JSON.stringify(row));
+          if(isForcePull){
+            console.warn("[CTPA] Force pull: Supabase returned no data — ctpa_state table may not exist or bkk22 row missing.");
+          }
         }
         return true;
       }).catch(function(e){
-        console.warn("[CTPA] pull failed:", e && e.message);
+        console.warn("[CTPA] pull() FAILED:", e && e.message);
         return false;
       });
     };
     pullRef.current = pull;
-    pull();
+    /* Wait for the first cloud pull before showing the app.
+       This ensures all devices start from the same Supabase state.
+       If cloud is unreachable, fall back to local data after 6s. */
+    var initTimeout = setTimeout(function(){ setLoad(false); }, 6000);
+    pull().finally(function(){ clearTimeout(initTimeout); setLoad(false); });
     var onFocus = function(){ pull(); };
     window.addEventListener("focus", onFocus);
     var iv = setInterval(pull, 20000);
-    setLoad(false);
     /* first-visit name prompt + log this visit once per session */
     try {
       if (!ctpaUser()) {
@@ -2620,7 +2642,12 @@ function App() {
   var forceSync = React.useCallback(function(){
     if(!pullRef.current) return;
     setSyncBusy(true);
-    pullRef.current({ force: true }).finally(function(){ setSyncBusy(false); });
+    setSyncErr(null);
+    pullRef.current({ force: true }).then(function(ok){
+      if(!ok) setSyncErr("Supabase unreachable — check tables exist and API key is valid.");
+    }).catch(function(e){
+      setSyncErr((e && e.message) || "Unknown error");
+    }).finally(function(){ setSyncBusy(false); });
   }, []);
   var setRisk = function setRisk(r) {
     return setForm(function (p) {
@@ -3108,7 +3135,21 @@ function App() {
       fontWeight: 700,
       cursor: "pointer"
     }
-  }, mgr ? "\u2713 Manager" : "\uD83D\uDD12 Manager"))), /*#__PURE__*/React.createElement("div", {
+  }, mgr ? "\u2713 Manager" : "\uD83D\uDD12 Manager")))),
+  /* \u2500\u2500 Sync error / diagnostics banner \u2500\u2500 */
+  (syncErr || showDiag) ? /*#__PURE__*/React.createElement("div", {
+    style: { background: syncErr ? "#FEF2F2" : "#F0F9FF", borderBottom: "1px solid " + (syncErr ? "#FCA5A5" : "#BAE6FD"), padding: "10px 20px", fontSize: 12 }
+  },
+    syncErr ? /*#__PURE__*/React.createElement("span", { style: { color: "#B91C1C", fontWeight: 700 } }, "\u26A0\uFE0F Sync error: " + syncErr + " ") : null,
+    showDiag ? /*#__PURE__*/React.createElement("span", { style: { color: "#0369A1" } },
+      "\uD83D\uDD0D Diagnostics | Supabase: " + CLOUD.url + " | Table: " + CLOUD.table + " | Row: " + CLOUD.row + " | Key: " + CLOUD.key.slice(0,20) + "\u2026 | Site ID: bkk22 | SKEY: " + SKEY + " | Last synced: " + (lastSynced ? lastSynced.toLocaleTimeString() : "never") + " | Obs: " + obs.length
+    ) : null,
+    /*#__PURE__*/React.createElement("button", {
+      onClick: function(){ setShowDiag(function(v){ return !v; }); setSyncErr(null); },
+      style: { marginLeft: 10, fontSize: 11, padding: "2px 8px", borderRadius: 5, border: "1px solid #ccc", background: "#fff", cursor: "pointer" }
+    }, showDiag ? "Hide Diagnostics" : "Show Diagnostics")
+  ) : null,
+  /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1160,
       margin: "0 auto",
