@@ -132,6 +132,22 @@ var CLOUD = {
 };
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
 var __ctpaLastWrite = 0;   // ms timestamp of the most recent local save (guards against stale pulls)
+var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
+/* cloudCheck: fetches ONLY updated_at (~50 bytes) to decide if a full pull is needed.
+   Reduces egress by ~99% — the full 272 KB blob is only downloaded when data actually changed. */
+function cloudCheck(){
+  if(!cloudOn()) return Promise.resolve(false);
+  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=updated_at";
+  return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(rows){
+      if(!rows || !rows[0]) return false;
+      var t = rows[0].updated_at ? Date.parse(rows[0].updated_at) : 0;
+      if(t > __ctpaLastCloudAt){ __ctpaLastCloudAt = t; return true; }
+      return false;
+    })
+    .catch(function(){ return false; });
+}
 function cloudHeaders(){
   /* Send both apikey and Authorization headers for all key formats.
      Supabase REST API requires Authorization: Bearer for RLS policies. */
@@ -2626,6 +2642,7 @@ function App() {
         setLastSynced(new Date());
         if(row && row.data && row.data.length > 0){
           var cloudT = row.updated_at ? Date.parse(row.updated_at) : 0;
+          if(cloudT > __ctpaLastCloudAt) __ctpaLastCloudAt = cloudT;
           console.log("[CTPA] pull() cloud returned", row.data.length, "obs, updated_at:", row.updated_at);
           var cloudMigrated = ctpaMigrate(row.data);
           setObs(function(localObs) {
@@ -2667,13 +2684,17 @@ function App() {
     pull().finally(function(){ clearTimeout(initTimeout); setLoad(false); });
     /* Supabase Realtime: instant push notification when any device saves */
     var stopRealtime = startRealtime(function(){ pull(); });
-    /* Fallback polling: 5s when focused, 20s when blurred */
+    /* Fallback polling: 60s focused / 5min blurred — checks updated_at only (~50 bytes)
+       and downloads the full blob (~272 KB) only when data actually changed.
+       Realtime WebSocket handles instant sync; polling is just a safety net. */
     var focused = true;
     var onFocus = function(){ focused = true; pull(); };
     var onBlur  = function(){ focused = false; };
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur",  onBlur);
-    var iv = setInterval(function(){ pull(); }, focused ? 5000 : 20000);
+    var iv = setInterval(function(){
+      cloudCheck().then(function(changed){ if(changed) pull(); });
+    }, focused ? 60000 : 300000);
     /* first-visit name prompt + log this visit once per session */
     try {
       if (!ctpaUser()) {
