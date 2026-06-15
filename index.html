@@ -3028,7 +3028,22 @@ function App() {
       toast$(edit.id + " updated");
     } else {
       toast$("Generating ID…");
-      genObsId(obs).then(function (newId) {
+      /* Fetch latest from Supabase first so ID is based on the true global max,
+         not just this device's local state — prevents duplicate IDs across devices. */
+      (cloudOn() ? cloudLoad() : Promise.resolve(null)).then(function(row) {
+        var cloudList = (row && row.data && row.data.length > 0) ? ctpaMigrate(row.data) : [];
+        /* find max across cloud + local — whichever has higher numbers wins */
+        var mx = 0;
+        cloudList.concat(obs).forEach(function(o){
+          var n = parseInt((o.id || "").replace(/^OBS-/i,""), 10);
+          if(!isNaN(n) && n > mx) mx = n;
+        });
+        if(cloudList.length > 0 && row && row.updated_at){
+          var t = Date.parse(row.updated_at);
+          if(t > __ctpaLastCloudAt) __ctpaLastCloudAt = t;
+        }
+        return "OBS-" + String(mx + 1).padStart(3, "0");
+      }).then(function (newId) {
         var ni = _objectSpread(_objectSpread({}, fclean), {}, {
           id: newId,
           pb: fBef,
