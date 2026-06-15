@@ -211,34 +211,23 @@ function logEvent(action, obsId, detail){
   }).then(function(r){ return r.ok; }).catch(function(){ return false; });
 }
 function logLoad(limit){
-  var local = logLocalGet();
-  function sortRows(rows){
-    return (rows || []).slice().sort(function(a, b){
-      var ta = a.at || a.created_at || a.inserted_at || "";
-      var tb = b.at || b.created_at || b.inserted_at || "";
-      return ta < tb ? 1 : (ta > tb ? -1 : 0);
-    });
-  }
-  function merge(cloudRows){
-    var seen = {}, out = [];
-    [].concat(cloudRows || [], local).forEach(function(r){
-      if(!r) return;
-      var key = (r.at || "") + "|" + (r.action || "") + "|" + (r.obs_id || "") + "|" + (r.who || "");
-      if(seen[key]) return; seen[key] = 1; out.push(r);
-    });
-    return sortRows(out).slice(0, limit || 300);
-  }
-  if(!cloudOn()) return Promise.resolve({ rows: sortRows(local).slice(0, limit || 300), error: null });
-  /* select=* avoids 400s when the table is missing optional columns; ordering is done client-side */
-  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_log?site=eq." + encodeURIComponent(CLOUD.row) +
-          "&select=*&limit=" + (limit || 300);
+  /* Activity Log is Supabase-only (single source of truth).
+     localStorage is only a write buffer \u2014 never shown in the UI.
+     If cloud is unreachable, return empty rows + error message. */
+  if(!cloudOn()) return Promise.resolve({ rows: [], error: "Cloud not configured \u2014 no Supabase URL/key set." });
+  /* Server-side ORDER BY at DESC so all clients always see the same ordered list */
+  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_log" +
+          "?site=eq." + encodeURIComponent(CLOUD.row) +
+          "&select=*" +
+          "&order=at.desc" +
+          "&limit=" + (limit || 300);
   return fetch(u, { headers: cloudHeaders() })
     .then(function(r){
       if(!r.ok){ return r.text().then(function(t){ throw new Error("HTTP " + r.status + (t ? (" \u2014 " + t.slice(0,140)) : "")); }); }
       return r.json();
     })
-    .then(function(rows){ return { rows: merge(rows), error: null }; })
-    .catch(function(e){ return { rows: merge([]), error: (e && e.message) || "network error" }; });
+    .then(function(rows){ return { rows: rows || [], error: null }; })
+    .catch(function(e){ return { rows: [], error: (e && e.message) || "network error" }; });
 }
 
 
@@ -3095,7 +3084,7 @@ function App() {
     style: { fontSize: 11, padding: "7px 14px", borderRadius: 9, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 700, cursor: "pointer" }
   }, "\u21bb Refresh")), logErr ? /*#__PURE__*/React.createElement("div", {
     style: { fontSize: 11, color: C.amberDk, background: C.amberBg, border: "1px solid " + C.amber, borderRadius: 9, padding: "10px 12px", marginBottom: 12, lineHeight: 1.5 }
-  }, /*#__PURE__*/React.createElement("strong", null, "Cloud log unavailable \u2014 showing local events only."), /*#__PURE__*/React.createElement("br", null), "Reason: " + logErr + ". Verify the 'ctpa_log' table exists and that Row Level Security allows anon INSERT/SELECT.") : null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("strong", null, "\u26a0 Cannot load Activity Log from Supabase."), /*#__PURE__*/React.createElement("br", null), "Error: " + logErr, /*#__PURE__*/React.createElement("br", null), "Fix: Run the SQL below in your Supabase dashboard (SQL Editor) to create the ctpa_log table, then click Refresh.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("code", { style: { display: "block", marginTop: 6, padding: "6px 8px", background: "#fff", borderRadius: 5, whiteSpace: "pre-wrap", fontSize: 10 } }, "CREATE TABLE IF NOT EXISTS public.ctpa_log (\n  id         BIGSERIAL PRIMARY KEY,\n  site       TEXT NOT NULL DEFAULT 'bkk22',\n  who        TEXT,\n  action     TEXT,\n  obs_id     TEXT,\n  detail     TEXT,\n  device     TEXT,\n  at         TIMESTAMPTZ NOT NULL DEFAULT now()\n);\nALTER TABLE public.ctpa_log ENABLE ROW LEVEL SECURITY;\nCREATE POLICY \"log_select\" ON public.ctpa_log FOR SELECT USING (true);\nCREATE POLICY \"log_insert\" ON public.ctpa_log FOR INSERT WITH CHECK (true);")) : null, /*#__PURE__*/React.createElement("div", {
     style: { fontSize: 12, color: C.slate, marginBottom: 12 }
   }, logLoading ? "Loading\u2026" : (logRows.length + " recent events")),
   logRows.length === 0 && !logLoading ? /*#__PURE__*/React.createElement("div", {
