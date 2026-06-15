@@ -3169,7 +3169,7 @@ function App() {
       opacity: syncBusy ? 0.7 : 1,
       whiteSpace: "nowrap"
     }
-  }, syncBusy ? "\u21BB Syncing\u2026" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync"))),
+  }, syncBusy ? "\u21BB Syncing\u2026" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")))),
   /* \u2500\u2500 Sync error / diagnostics banner \u2500\u2500 */
   (syncErr || showDiag) ? /*#__PURE__*/React.createElement("div", {
     style: { background: syncErr ? "#FEF2F2" : "#F0F9FF", borderBottom: "1px solid " + (syncErr ? "#FCA5A5" : "#BAE6FD"), padding: "10px 20px", fontSize: 12 }
