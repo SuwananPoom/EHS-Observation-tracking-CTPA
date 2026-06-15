@@ -2567,17 +2567,16 @@ function App() {
               return b.id > a.id ? 1 : -1;
             });
             try { localStorage.setItem(SKEY, JSON.stringify(merged)); } catch(e){}
+            /* re-push to cloud whenever we have local-only records OR our last
+               write is newer — ensures no device's data gets permanently lost
+               when two devices save at the same time (race condition fix) */
+            if(localOnly.length > 0 || cloudT < __ctpaLastWrite){
+              setTimeout(function(){
+                cloudSave(merged).catch(function(){});
+              }, 500);
+            }
             return merged;
           });
-          /* if cloud is newer than our last write, also push merged state up
-             so all devices converge to the same data */
-          if(cloudT < __ctpaLastWrite){
-            /* our local write is newer — re-save to cloud to include local-only obs */
-            setObs(function(cur){
-              cloudSave(cur).catch(function(){});
-              return cur;
-            });
-          }
         }
       });
     };
