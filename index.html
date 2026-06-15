@@ -182,6 +182,67 @@ function cloudSave(arr){
   }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message); return false; });
 }
 
+/* ===== Supabase Realtime — WebSocket subscription for instant cross-device sync =====
+   When any device saves to ctpa_state, Supabase emits a postgres_changes event.
+   This device receives it and immediately calls pull() — no page refresh needed.
+   Falls back to polling if WebSocket fails. */
+function startRealtime(onUpdate) {
+  if(!cloudOn()) return function(){};
+  var wsUrl = CLOUD.url.replace(/^https?:\/\//, function(m){ return m === "https://" ? "wss://" : "ws://"; }) +
+              "/realtime/v1/websocket?apikey=" + encodeURIComponent(CLOUD.key) + "&vsn=1.0.0";
+  var ws, heartbeatIv, reconnectT, dead = false;
+
+  function connect() {
+    try { ws = new WebSocket(wsUrl); } catch(e) { return; }
+
+    ws.onopen = function() {
+      console.log("[CTPA] Realtime connected");
+      /* Subscribe to all changes on ctpa_state table */
+      ws.send(JSON.stringify({
+        topic: "realtime:public:ctpa_state",
+        event: "phx_join",
+        payload: {
+          config: {
+            broadcast: { self: false },
+            presence: { key: "" },
+            postgres_changes: [{ event: "*", schema: "public", table: "ctpa_state" }]
+          },
+          access_token: CLOUD.key
+        },
+        ref: "1"
+      }));
+      /* Heartbeat every 25s to keep connection alive */
+      clearInterval(heartbeatIv);
+      heartbeatIv = setInterval(function(){
+        if(ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: "phoenix", event: "heartbeat", payload: {}, ref: null }));
+      }, 25000);
+    };
+
+    ws.onmessage = function(e) {
+      try {
+        var msg = JSON.parse(e.data);
+        /* postgres_changes event = another device saved data */
+        if(msg.event === "postgres_changes") {
+          console.log("[CTPA] Realtime: ctpa_state changed →", msg.payload && msg.payload.data && msg.payload.data.type);
+          onUpdate();
+        }
+      } catch(_) {}
+    };
+
+    ws.onclose = function(ev) {
+      clearInterval(heartbeatIv);
+      if(dead) return;
+      console.log("[CTPA] Realtime disconnected (code " + ev.code + "), reconnecting in 8s");
+      reconnectT = setTimeout(connect, 8000);
+    };
+
+    ws.onerror = function() { try { ws.close(); } catch(_){} };
+  }
+
+  connect();
+  return function() { dead = true; clearInterval(heartbeatIv); clearTimeout(reconnectT); try { ws && ws.close(); } catch(_){} };
+}
+
 /* ===== Identity: self-entered user name (remembered per device) ===== */
 function ctpaUser(){
   try { return localStorage.getItem("ctpa_user") || ""; } catch(e){ return ""; }
@@ -2545,6 +2606,10 @@ function App() {
         if (!ok) {
           try { setT({ msg: "⚠ Cloud save failed — saved on this device only. Check connection.", type: "err" }); setTimeout(function(){ setT(null); }, 5000); } catch (e) {}
           if (window.Sentry) { try { window.Sentry.captureMessage("cloudSave failed"); } catch (e) {} }
+        } else {
+          /* Save succeeded — pull in 2s to pick up any concurrent changes from
+             other devices that saved between our local write and cloud write */
+          setTimeout(function(){ if(pullRef.current) pullRef.current(); }, 2000);
         }
       }).catch(function (err) {
         try { setT({ msg: "⚠ Network error — data saved locally only.", type: "err" }); setTimeout(function(){ setT(null); }, 5000); } catch (e) {}
@@ -2617,14 +2682,18 @@ function App() {
       });
     };
     pullRef.current = pull;
-    /* Wait for the first cloud pull before showing the app.
-       This ensures all devices start from the same Supabase state.
-       If cloud is unreachable, fall back to local data after 6s. */
+    /* Wait for first cloud pull before rendering (max 6s offline fallback) */
     var initTimeout = setTimeout(function(){ setLoad(false); }, 6000);
     pull().finally(function(){ clearTimeout(initTimeout); setLoad(false); });
-    var onFocus = function(){ pull(); };
+    /* Supabase Realtime: instant push notification when any device saves */
+    var stopRealtime = startRealtime(function(){ pull(); });
+    /* Fallback polling: 5s when focused, 20s when blurred */
+    var focused = true;
+    var onFocus = function(){ focused = true; pull(); };
+    var onBlur  = function(){ focused = false; };
     window.addEventListener("focus", onFocus);
-    var iv = setInterval(pull, 20000);
+    window.addEventListener("blur",  onBlur);
+    var iv = setInterval(function(){ pull(); }, focused ? 5000 : 20000);
     /* first-visit name prompt + log this visit once per session */
     try {
       if (!ctpaUser()) {
@@ -2636,7 +2705,12 @@ function App() {
         sessionStorage.setItem("ctpa_visit_logged", "1");
       }
     } catch(e){}
-    return function(){ window.removeEventListener("focus", onFocus); clearInterval(iv); };
+    return function(){
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur",  onBlur);
+      clearInterval(iv);
+      stopRealtime();
+    };
   }, []);
   /* Exposed force-sync so the UI button can trigger it */
   var forceSync = React.useCallback(function(){
