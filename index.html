@@ -133,6 +133,7 @@ var CLOUD = {
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
 var __ctpaLastWrite = 0;   // ms timestamp of last local save — reset to 0 after cloud confirms
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
+var __lastCloudSaveErr = ""; // last cloudSave failure detail — read by sv() for UI error message
 /* cloudCheck: lightweight poll — selects only id (~20 bytes) to confirm row exists.
    NOTE: updated_at does NOT exist in production ctpa_state; polling always triggers a full pull. */
 function cloudCheck(){
@@ -210,6 +211,13 @@ function cloudSave(arr){
   var payload = { data: arr };
   console.log("[CTPA] cloudSave PATCH →", patchUrl.replace(CLOUD.url,"<supabase>"),
     "| obs:", arr.length, "| payload keys:", Object.keys(payload).join(","));
+  function fmtSupaErr(status, t){
+    var p; try { p = JSON.parse(t); } catch(_){ p = null; }
+    var msg = (p && (p.message || p.error)) || t.slice(0,200) || "(empty body)";
+    var hint = p && p.hint ? " | Hint: " + p.hint : "";
+    var code = p && p.code ? " | code: " + p.code : "";
+    return "HTTP " + status + code + " | " + msg + hint;
+  }
   return fetch(patchUrl, {
     method: "PATCH",
     headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
@@ -217,16 +225,11 @@ function cloudSave(arr){
     cache: "no-store"
   }).then(function(r){
     console.log("[CTPA] cloudSave PATCH ←", r.status, r.statusText);
-    if(r.ok){ return true; }
+    if(r.ok){ __lastCloudSaveErr = ""; return true; }
     return r.text().then(function(t){
-      var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = null; }
-      console.error("[CTPA] cloudSave PATCH failed | status:", r.status,
-        "| code:", parsed && parsed.code,
-        "| message:", parsed && parsed.message || t.slice(0,300),
-        "| hint:", parsed && parsed.hint,
-        "| details:", parsed && parsed.details);
+      var patchErr = fmtSupaErr(r.status, t);
+      console.error("[CTPA] cloudSave PATCH failed:", patchErr);
       /* PATCH failed — try POST upsert as fallback (row may not exist yet) */
-      console.warn("[CTPA] cloudSave PATCH failed — falling back to POST upsert");
       var upsertUrl = base + "?on_conflict=id";
       return fetch(upsertUrl, {
         method: "POST",
@@ -235,20 +238,21 @@ function cloudSave(arr){
         cache: "no-store"
       }).then(function(r2){
         console.log("[CTPA] cloudSave POST ←", r2.status, r2.statusText);
-        if(!r2.ok){
-          return r2.text().then(function(t2){
-            var p2; try { p2 = JSON.parse(t2); } catch(_){ p2 = null; }
-            console.error("[CTPA] cloudSave POST failed | status:", r2.status,
-              "| code:", p2 && p2.code,
-              "| message:", p2 && p2.message || t2.slice(0,300),
-              "| hint:", p2 && p2.hint);
-            return false;
-          });
-        }
-        return true;
+        if(r2.ok){ __lastCloudSaveErr = ""; return true; }
+        return r2.text().then(function(t2){
+          var postErr = fmtSupaErr(r2.status, t2);
+          console.error("[CTPA] cloudSave POST failed:", postErr);
+          __lastCloudSaveErr = "PATCH: " + patchErr + " | POST: " + postErr;
+          return false;
+        });
       });
     });
-  }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message, e); return false; });
+  }).catch(function(e){
+    var msg = "Network error: " + (e && e.message || "unknown");
+    console.error("[CTPA] cloudSave NETWORK ERROR:", msg, e);
+    __lastCloudSaveErr = msg;
+    return false;
+  });
 }
 
 /* ===== Supabase Realtime — WebSocket subscription for instant cross-device sync =====
@@ -2531,9 +2535,9 @@ function runObsWorkflowTest(currentObs) {
   /* Step 2: Read existing state row */
   .then(function() {
     return step("2. Read ctpa_state row — SELECT", {
-      table: "ctpa_state", column: "id, updated_at", operation: "GET", filter: "id=eq.bkk22"
+      table: "ctpa_state", column: "id, data", operation: "GET", filter: "id=eq.bkk22"
     }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id,updated_at,data", {
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id,data", {
         headers: cloudHeaders(), cache: "no-store"
       }).then(function(r) {
         if (!r.ok) throw new Error("HTTP " + r.status + " — table: ctpa_state — " + parseSupaErr(r.body));
@@ -2542,7 +2546,7 @@ function runObsWorkflowTest(currentObs) {
         var d = rows[0].data;
         var cnt = Array.isArray(d) ? d.length : (d === null ? "null" : typeof d);
         results.cloudObsCount = Array.isArray(d) ? d.length : 0;
-        return "Row bkk22 found | data: " + cnt + " obs | updated_at: " + rows[0].updated_at;
+        return "Row bkk22 found | data: " + cnt + " obs | columns: id, data (no updated_at in production)";
       });
     });
   })
@@ -2572,7 +2576,7 @@ function runObsWorkflowTest(currentObs) {
       };
       /* Build full payload with existing obs + test obs */
       var newData = (currentObs || []).concat([testObs]);
-      var payload = JSON.stringify({ data: newData, updated_at: new Date().toISOString() });
+      var payload = JSON.stringify({ data: newData });
       results._testObs = testObs;
       results._newData = newData;
       results._payload = payload;
@@ -2584,7 +2588,7 @@ function runObsWorkflowTest(currentObs) {
   /* Step 4: PATCH observation data to cloud (this is exactly what sv() does) */
   .then(function() {
     return step("4. Save observation to cloud — PATCH ctpa_state", {
-      table: "ctpa_state", column: "data, updated_at", operation: "PATCH",
+      table: "ctpa_state", column: "data", operation: "PATCH",
       filter: "id=eq.bkk22", payloadSize: results.payloadSizeKB + " KB"
     }, function() {
       return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
@@ -2609,7 +2613,7 @@ function runObsWorkflowTest(currentObs) {
     return step("5. Verify observation saved — re-read from cloud", {
       table: "ctpa_state", column: "data", operation: "GET (verify round-trip)"
     }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data,updated_at", {
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
         headers: cloudHeaders(), cache: "no-store"
       }).then(function(r) {
         if (!r.ok) throw new Error("HTTP " + r.status + " — re-read failed: " + parseSupaErr(r.body));
@@ -2654,7 +2658,7 @@ function runObsWorkflowTest(currentObs) {
       table: "ctpa_state", column: "data", operation: "PATCH (remove test obs)"
     }, function() {
       var cleanData = results._newData.filter(function(o){ return o.id !== testId; });
-      var cleanPayload = JSON.stringify({ data: cleanData, updated_at: new Date().toISOString() });
+      var cleanPayload = JSON.stringify({ data: cleanData });
       return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
         method: "PATCH",
         headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
@@ -2715,13 +2719,13 @@ function runConnectivityTest() {
     });
   }).then(function() {
     return step("SELECT ctpa_state", { table: "ctpa_state", operation: "GET", filter: "id=eq.bkk22" }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id,updated_at", {
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id", {
         headers: cloudHeaders(), cache: "no-store"
       }).then(function(r) {
         if (!r.ok) throw new Error("HTTP " + r.status + " — table: ctpa_state — " + parseSupaErr(r.body));
         var rows = JSON.parse(r.body);
         if (!rows.length) throw new Error("Row 'bkk22' NOT FOUND — run supabase_setup_minimal.sql to seed it");
-        return "Row bkk22 found, updated_at=" + rows[0].updated_at;
+        return "Row bkk22 found (id=" + rows[0].id + ")  — no updated_at column in production";
       });
     });
   }).then(function() {
@@ -2911,7 +2915,7 @@ function DiagnosticsView(_ref_diag) {
 
     /* RLS reference */
     (function(){
-      var SQL_RLS = ['-- ════════════════════════════════════════════════','-- CTPA BKK22 — Complete RLS Fix','-- Run in: Supabase Dashboard → SQL Editor → New query','-- Safe to run multiple times (idempotent)','-- ════════════════════════════════════════════════','','-- 1. Enable RLS on ctpa_state','ALTER TABLE public.ctpa_state ENABLE ROW LEVEL SECURITY;','','-- 2. Drop ALL existing policies (catches legacy names)','DROP POLICY IF EXISTS "state_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "Enable read access for all users" ON public.ctpa_state;','','-- 3. Re-create all 4 policies for anon','CREATE POLICY "state_select" ON public.ctpa_state','  FOR SELECT USING (true);','','CREATE POLICY "state_insert" ON public.ctpa_state','  FOR INSERT WITH CHECK (true);','','-- CRITICAL: UPDATE needs BOTH USING and WITH CHECK.','-- Missing WITH CHECK (true) causes HTTP 403 on every PATCH.','CREATE POLICY "state_update" ON public.ctpa_state','  FOR UPDATE USING (true) WITH CHECK (true);','','CREATE POLICY "state_delete" ON public.ctpa_state','  FOR DELETE USING (true);','','-- 4. Ensure bkk22 row exists (PATCH silently fails if row missing)','INSERT INTO public.ctpa_state (id, data, updated_at)',"VALUES ('bkk22', '[]'::jsonb, now())",'ON CONFLICT (id) DO NOTHING;','','-- 5. Verify: must show 4 policies + 1 bkk22 row','SELECT policyname, cmd, qual, with_check',"FROM pg_policies WHERE tablename = 'ctpa_state' ORDER BY cmd;",'','SELECT id, updated_at, jsonb_array_length(data) AS obs_count',"FROM public.ctpa_state WHERE id = 'bkk22';",'','-- 6. Smoke-test PATCH (must return 1 row with no errors)','UPDATE public.ctpa_state SET updated_at = now()',"WHERE id = 'bkk22' RETURNING id, updated_at;"].join("\n");
+      var SQL_RLS = ['-- ════════════════════════════════════════════════','-- CTPA BKK22 — Complete RLS Fix','-- Run in: Supabase Dashboard → SQL Editor → New query','-- Safe to run multiple times (idempotent)','-- NOTE: ctpa_state has only 2 columns: id TEXT, data JSONB','-- ════════════════════════════════════════════════','','-- 1. Enable RLS on ctpa_state','ALTER TABLE public.ctpa_state ENABLE ROW LEVEL SECURITY;','','-- 2. Drop ALL existing policies (catches legacy names)','DROP POLICY IF EXISTS "state_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "Enable read access for all users" ON public.ctpa_state;','','-- 3. Re-create all 4 policies for anon','CREATE POLICY "state_select" ON public.ctpa_state','  FOR SELECT USING (true);','','CREATE POLICY "state_insert" ON public.ctpa_state','  FOR INSERT WITH CHECK (true);','','-- CRITICAL: UPDATE needs BOTH USING and WITH CHECK.','-- Missing WITH CHECK (true) causes HTTP 403 on every PATCH.','CREATE POLICY "state_update" ON public.ctpa_state','  FOR UPDATE USING (true) WITH CHECK (true);','','CREATE POLICY "state_delete" ON public.ctpa_state','  FOR DELETE USING (true);','','-- 4. Ensure bkk22 row exists (PATCH fails silently if row is missing)','-- NOTE: only (id, data) — no updated_at column in production','INSERT INTO public.ctpa_state (id, data)',"VALUES ('bkk22', '[]'::jsonb)",'ON CONFLICT (id) DO NOTHING;','','-- 5. Verify: must show 4 policies + 1 bkk22 row','SELECT policyname, cmd, qual, with_check',"FROM pg_policies WHERE tablename = 'ctpa_state' ORDER BY cmd;",'','SELECT id, jsonb_array_length(data) AS obs_count',"FROM public.ctpa_state WHERE id = 'bkk22';",'','-- 6. Smoke-test UPDATE (must return 1 row with no errors)','UPDATE public.ctpa_state SET data = data',"WHERE id = 'bkk22' RETURNING id, jsonb_array_length(data) AS obs_count;"].join("\n");
       var _cpSt = React.useState(false), cpOk = _cpSt[0], setCpOk = _cpSt[1];
       function copySQL(){
         try{ navigator.clipboard.writeText(SQL_RLS).then(function(){ setCpOk(true); setTimeout(function(){ setCpOk(false); },2500); }); }catch(e){}
@@ -3143,8 +3147,9 @@ function App() {
     cloudSave(d).then(function (ok) {
       setSyncBusy(false);
       if (!ok) {
-        setSyncErr("Cloud save failed");
-        setT({ msg: "❌ Failed to save to Supabase (check console for HTTP status). This device still has your data — tap ↻ Sync to retry.", type: "err" });
+        var errDetail = __lastCloudSaveErr || "unknown error";
+        setSyncErr("Cloud save failed — " + errDetail);
+        setT({ msg: "❌ Supabase save failed: " + errDetail + ". Your data is on this device — tap ↻ Sync to retry.", type: "err" });
         setTimeout(function(){ setT(null); }, 10000);
       } else {
         setSyncErr(null);
@@ -3602,10 +3607,6 @@ function App() {
           var n = parseInt((o.id || "").replace(/^OBS-/i,""), 10);
           if(!isNaN(n) && n > mx) mx = n;
         });
-        if(cloudList.length > 0 && row && row.updated_at){
-          var t = Date.parse(row.updated_at);
-          if(t > __ctpaLastCloudAt) __ctpaLastCloudAt = t;
-        }
         return "OBS-" + String(mx + 1).padStart(3, "0");
       }).then(function (newId) {
         var ni = _objectSpread(_objectSpread({}, fclean), {}, {
