@@ -139,14 +139,17 @@ function cloudCheck(){
   if(!cloudOn()) return Promise.resolve(false);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=updated_at";
   return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
-    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(r){
+      if(!r.ok){ console.warn("[CTPA] cloudCheck HTTP", r.status, r.statusText); return null; }
+      return r.json();
+    })
     .then(function(rows){
       if(!rows || !rows[0]) return false;
       var t = rows[0].updated_at ? Date.parse(rows[0].updated_at) : 0;
       if(t > __ctpaLastCloudAt){ __ctpaLastCloudAt = t; return true; }
       return false;
     })
-    .catch(function(){ return false; });
+    .catch(function(e){ console.warn("[CTPA] cloudCheck network error:", e && e.message); return false; });
 }
 function cloudHeaders(){
   /* Send both apikey and Authorization headers for all key formats.
