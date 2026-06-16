@@ -133,21 +133,22 @@ var CLOUD = {
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
 var __ctpaLastWrite = 0;   // ms timestamp of the most recent local save (guards against stale pulls)
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
-/* cloudCheck: fetches ONLY updated_at (~50 bytes) to decide if a full pull is needed.
-   Reduces egress by ~99% — the full 272 KB blob is only downloaded when data actually changed. */
+/* cloudCheck: lightweight poll — selects only id (~20 bytes) to confirm row exists.
+   NOTE: updated_at does NOT exist in production ctpa_state; polling always triggers a full pull. */
 function cloudCheck(){
   if(!cloudOn()) return Promise.resolve(false);
-  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=updated_at";
+  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id";
   return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
-      if(!r.ok){ console.warn("[CTPA] cloudCheck HTTP", r.status, r.statusText); return null; }
+      if(!r.ok){
+        console.warn("[CTPA] cloudCheck HTTP", r.status, r.statusText);
+        return r.text().then(function(t){ console.warn("[CTPA] cloudCheck error body:", t.slice(0,200)); return null; });
+      }
       return r.json();
     })
     .then(function(rows){
-      if(!rows || !rows[0]) return false;
-      var t = rows[0].updated_at ? Date.parse(rows[0].updated_at) : 0;
-      if(t > __ctpaLastCloudAt){ __ctpaLastCloudAt = t; return true; }
-      return false;
+      console.log("[CTPA] cloudCheck ← rows:", rows && rows.length);
+      return !!(rows && rows[0]);
     })
     .catch(function(e){ console.warn("[CTPA] cloudCheck network error:", e && e.message); return false; });
 }
@@ -162,24 +163,41 @@ function cloudHeaders(){
 }
 function cloudLoad(){
   if(!cloudOn()) return Promise.resolve(null);
-  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data,updated_at";
-  console.log("[CTPA] cloudLoad →", u.replace(CLOUD.url, "<supabase>"));
+  /* NOTE: updated_at does NOT exist in production ctpa_state — select only 'data' */
+  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data";
+  console.log("[CTPA] cloudLoad → GET", u.replace(CLOUD.url, "<supabase>"));
   return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
+      console.log("[CTPA] cloudLoad ← HTTP", r.status, r.statusText);
       if(!r.ok){
         return r.text().then(function(t){
-          console.error("[CTPA] cloudLoad HTTP", r.status, t.slice(0,200));
+          var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
+          console.error("[CTPA] cloudLoad SELECT failed | status:", r.status,
+            "| code:", parsed && parsed.code,
+            "| message:", parsed && parsed.message || t.slice(0,300),
+            "| hint:", parsed && parsed.hint,
+            "| details:", parsed && parsed.details);
           return null;
         });
       }
       return r.json();
     })
     .then(function(rows){
-      var result = (rows && rows[0]) ? rows[0] : null;
-      console.log("[CTPA] cloudLoad ← rows:", rows && rows.length, "| has data:", !!(result && result.data));
+      if(!rows){
+        console.error("[CTPA] cloudLoad ← null (fetch error above)");
+        return null;
+      }
+      console.log("[CTPA] cloudLoad ← row count:", rows.length,
+        "| first row keys:", rows[0] ? Object.keys(rows[0]).join(",") : "none",
+        "| data length:", rows[0] && Array.isArray(rows[0].data) ? rows[0].data.length : "(not array)");
+      var result = rows[0] || null;
+      if(!result){
+        console.warn("[CTPA] cloudLoad ← row bkk22 NOT found in table", CLOUD.table,
+          "— confirm row exists: SELECT id FROM ctpa_state WHERE id='bkk22'");
+      }
       return result;
     })
-    .catch(function(e){ console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message); return null; });
+    .catch(function(e){ console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message, e); return null; });
 }
 function cloudSave(arr){
   if(!cloudOn()) return Promise.resolve(false);
@@ -188,34 +206,49 @@ function cloudSave(arr){
      not INSERT. The bkk22 row is always present (seeded in SQL setup). */
   var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table;
   var patchUrl = base + "?id=eq." + CLOUD.row;
-  var payload = { data: arr, updated_at: new Date().toISOString() };
-  console.log("[CTPA] cloudSave PATCH →", arr.length, "obs");
+  /* NOTE: updated_at does NOT exist in production ctpa_state — payload contains only 'data' */
+  var payload = { data: arr };
+  console.log("[CTPA] cloudSave PATCH →", patchUrl.replace(CLOUD.url,"<supabase>"),
+    "| obs:", arr.length, "| payload keys:", Object.keys(payload).join(","));
   return fetch(patchUrl, {
     method: "PATCH",
     headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
     body: JSON.stringify(payload),
     cache: "no-store"
   }).then(function(r){
-    if(r.ok){ console.log("[CTPA] cloudSave PATCH ← OK (" + r.status + ")"); return true; }
-    /* PATCH failed — try POST upsert as fallback (row may not exist yet) */
-    console.warn("[CTPA] cloudSave PATCH failed (" + r.status + ") — falling back to POST upsert");
-    var upsertUrl = base + "?on_conflict=id";
-    return fetch(upsertUrl, {
-      method: "POST",
-      headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
-      body: JSON.stringify([{ id: CLOUD.row, data: arr, updated_at: new Date().toISOString() }]),
-      cache: "no-store"
-    }).then(function(r2){
-      if(!r2.ok){
-        return r2.text().then(function(t){
-          console.error("[CTPA] cloudSave POST HTTP", r2.status, t.slice(0,300));
-          return false;
-        });
-      }
-      console.log("[CTPA] cloudSave POST ← OK (" + r2.status + ")");
-      return true;
+    console.log("[CTPA] cloudSave PATCH ←", r.status, r.statusText);
+    if(r.ok){ return true; }
+    return r.text().then(function(t){
+      var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = null; }
+      console.error("[CTPA] cloudSave PATCH failed | status:", r.status,
+        "| code:", parsed && parsed.code,
+        "| message:", parsed && parsed.message || t.slice(0,300),
+        "| hint:", parsed && parsed.hint,
+        "| details:", parsed && parsed.details);
+      /* PATCH failed — try POST upsert as fallback (row may not exist yet) */
+      console.warn("[CTPA] cloudSave PATCH failed — falling back to POST upsert");
+      var upsertUrl = base + "?on_conflict=id";
+      return fetch(upsertUrl, {
+        method: "POST",
+        headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
+        body: JSON.stringify([{ id: CLOUD.row, data: arr }]),
+        cache: "no-store"
+      }).then(function(r2){
+        console.log("[CTPA] cloudSave POST ←", r2.status, r2.statusText);
+        if(!r2.ok){
+          return r2.text().then(function(t2){
+            var p2; try { p2 = JSON.parse(t2); } catch(_){ p2 = null; }
+            console.error("[CTPA] cloudSave POST failed | status:", r2.status,
+              "| code:", p2 && p2.code,
+              "| message:", p2 && p2.message || t2.slice(0,300),
+              "| hint:", p2 && p2.hint);
+            return false;
+          });
+        }
+        return true;
+      });
     });
-  }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message); return false; });
+  }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message, e); return false; });
 }
 
 /* ===== Supabase Realtime — WebSocket subscription for instant cross-device sync =====
@@ -3147,9 +3180,15 @@ function App() {
       return cloudLoad().then(function(row){
         setLastSynced(new Date());
         setSyncErr(null);
-        if(row && row.data && row.data.length > 0){
-          var cloudT = row.updated_at ? Date.parse(row.updated_at) : 0;
-          if(cloudT > __ctpaLastCloudAt) __ctpaLastCloudAt = cloudT;
+        console.log("[CTPA] pull() ← row:", row ? JSON.stringify({
+          hasRow: true,
+          dataType: typeof row.data,
+          isArray: Array.isArray(row.data),
+          length: Array.isArray(row.data) ? row.data.length : "N/A",
+          keys: Object.keys(row)
+        }) : "null (cloudLoad returned null — see errors above)");
+        if(row && row.data && Array.isArray(row.data) && row.data.length > 0){
+          var cloudT = 0; /* updated_at column does not exist in production */
           var cloudMigrated = ctpaMigrate(row.data);
           setObs(function(localObs) {
             /* Supabase is the single source of truth.
@@ -3170,7 +3209,12 @@ function App() {
             return cloudMigrated;
           });
         } else {
-          /* Cloud row is empty or missing — check if we have local data to restore */
+          /* Cloud row is empty/null/missing — diagnose and log the exact reason */
+          var reason = !row ? "cloudLoad returned null (HTTP error — see console errors above)"
+            : !row.data ? "row exists but 'data' field is null or undefined"
+            : !Array.isArray(row.data) ? "row.data is not an array (type=" + typeof row.data + ")"
+            : "row.data array is empty (length=0)";
+          console.warn("[CTPA] pull(): cloud data unusable —", reason);
           setObs(function(localObs){
             if(localObs && localObs.length > 0){
               /* Auto-restore: push local data back to cloud */
@@ -3196,8 +3240,8 @@ function App() {
         return true;
       }).catch(function(e){
         var msg = (e && e.message) || "Sync failed";
-        console.warn("[CTPA] pull() FAILED:", msg);
-        setSyncErr(msg);
+        console.error("[CTPA] pull() EXCEPTION:", msg, e);
+        setSyncErr("Sync error: " + msg + " — open DevTools Console for details");
         return false;
       });
     };
