@@ -131,7 +131,7 @@ var CLOUD = {
   row: "bkk22"
 };
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
-var __ctpaLastWrite = 0;   // ms timestamp of the most recent local save (guards against stale pulls)
+var __ctpaLastWrite = 0;   // ms timestamp of last local save — reset to 0 after cloud confirms
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
 /* cloudCheck: lightweight poll — selects only id (~20 bytes) to confirm row exists.
    NOTE: updated_at does NOT exist in production ctpa_state; polling always triggers a full pull. */
@@ -2994,6 +2994,12 @@ function App() {
   var _syncSt = React.useState(null),
     lastSynced = _syncSt[0],
     setLastSynced = _syncSt[1];
+  var _writeTime = React.useState(null),
+    lastWriteTime = _writeTime[0],
+    setLastWriteTime = _writeTime[1];
+  var _cloudCnt = React.useState(null),
+    cloudObsCount = _cloudCnt[0],
+    setCloudObsCount = _cloudCnt[1];
   var _syncBusy = React.useState(false),
     syncBusy = _syncBusy[0],
     setSyncBusy = _syncBusy[1];
@@ -3142,6 +3148,8 @@ function App() {
         setTimeout(function(){ setT(null); }, 10000);
       } else {
         setSyncErr(null);
+        __ctpaLastWrite = 0; /* cloud confirmed — clear guard so pull() doesn't re-push stale data */
+        setLastWriteTime(new Date());
         /* Pull 1.5s after save to pick up any concurrent changes from other devices */
         setTimeout(function(){ if(pullRef.current) pullRef.current(); }, 1500);
       }
@@ -3188,26 +3196,15 @@ function App() {
           keys: Object.keys(row)
         }) : "null (cloudLoad returned null — see errors above)");
         if(row && row.data && Array.isArray(row.data) && row.data.length > 0){
-          var cloudT = 0; /* updated_at column does not exist in production */
           var cloudMigrated = ctpaMigrate(row.data);
-          setObs(function(localObs) {
-            /* Supabase is the single source of truth.
-               Exception: if we wrote locally AFTER the cloud timestamp (our save
-               is still in-flight or failed), keep local and re-push to cloud. */
-            if(__ctpaLastWrite > 0 && __ctpaLastWrite > cloudT + 3000){
-              console.log("[CTPA] pull(): local newer than cloud — re-pushing local data");
-              setTimeout(function(){
-                cloudSave(localObs)
-                  .then(function(ok){ if(ok){ __ctpaLastWrite = 0; } })
-                  .catch(function(){});
-              }, 800);
-              try { localStorage.setItem(SKEY, JSON.stringify(localObs)); } catch(e){}
-              return localObs;
-            }
-            /* Normal case: cloud wins entirely */
-            try { localStorage.setItem(SKEY, JSON.stringify(cloudMigrated)); } catch(e){}
-            return cloudMigrated;
-          });
+          setCloudObsCount(cloudMigrated.length);
+          console.log("[CTPA] pull(): cloud wins — applying", cloudMigrated.length, "obs from Supabase");
+          /* Supabase is the single source of truth — cloud always wins.
+             __ctpaLastWrite guard is intentionally removed: since updated_at does not
+             exist in production, cloudT was always 0, making the guard fire on EVERY
+             pull and causing each device to overwrite Supabase with its own stale data. */
+          try { localStorage.setItem(SKEY, JSON.stringify(cloudMigrated)); } catch(e){}
+          setObs(cloudMigrated);
         } else {
           /* Cloud row is empty/null/missing — diagnose and log the exact reason */
           var reason = !row ? "cloudLoad returned null (HTTP error — see console errors above)"
@@ -3783,6 +3780,18 @@ function App() {
       style: { marginLeft: 10, fontSize: 11, padding: "4px 10px", borderRadius: 5, border: "1px solid #EF4444", background: "#fff", color: "#B91C1C", cursor: "pointer", fontWeight: 700 }
     }, "\uD83D\uDD0D Run Diagnostics")
   ) : null,
+  /* \u2500\u2500 Cloud Sync Status bar \u2500\u2500 */
+  /*#__PURE__*/React.createElement("div", {
+    style: { background: lastSynced && !syncErr ? "#F0FDF4" : "#FFFBEB", borderBottom: "1px solid " + (lastSynced && !syncErr ? "#BBF7D0" : "#FDE68A"), padding: "5px 20px", fontSize: 11, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", color: "#374151" }
+  },
+    /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: lastSynced && !syncErr ? "#15803D" : "#92400E" } },
+      lastSynced && !syncErr ? "\u2601\uFE0F Supabase Connected" : "\u26A0\uFE0F Supabase Not Confirmed"
+    ),
+    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCE5 Last Read: ", lastSynced ? lastSynced.toLocaleTimeString() : "Never"),
+    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCE4 Last Write: ", lastWriteTime ? lastWriteTime.toLocaleTimeString() : "None this session"),
+    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCCA Cloud Records: ", cloudObsCount !== null ? cloudObsCount : "\u2014"),
+    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCF1 Device: ", (function(){ try { return localStorage.getItem("ctpa_user") || "Unknown"; } catch(e){ return "Unknown"; } })())
+  ),
   /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1160,
