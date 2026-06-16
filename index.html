@@ -29,7 +29,7 @@
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1044,8 +1044,8 @@ function generateWeeklyReportPPT(rows, dateFrom, dateTo) {
     /* photos - right column */
     var photoX = 5.9;
     sl.addShape(pptx.ShapeType.rect, { x:photoX, y:0.72, w:3.9, h:4.8, fill:{ color:RPT_LIGHT }, line:{ color:RPT_BORDER, pt:1 } });
-    var bef = o.pb && o.pb.length ? o.pb[0] : null;
-    var aft = o.pa && o.pa.length ? o.pa[0] : null;
+    var bef = o.pb && o.pb.length ? (o.pb[0].src || o.pb[0]) : null;
+    var aft = o.pa && o.pa.length ? (o.pa[0].src || o.pa[0]) : null;
     var hasPhotos = bef || aft;
 
     if (hasPhotos) {
@@ -1339,8 +1339,8 @@ function generateWeeklyReportPDF(rows, dateFrom, dateTo) {
     frect(photoX,20,photoW,H-22,"#F8FAFC");
     draw("#E2E8F0"); doc.rect(photoX,20,photoW,H-22);
 
-    var bef=o.pb&&o.pb.length?o.pb[0]:null;
-    var aft=o.pa&&o.pa.length?o.pa[0]:null;
+    var bef=o.pb&&o.pb.length?(o.pb[0].src||o.pb[0]):null;
+    var aft=o.pa&&o.pa.length?(o.pa[0].src||o.pa[0]):null;
 
     if (bef) {
       frect(photoX+2,22,photoW-4,6,"#1E3A8A");
@@ -2687,9 +2687,28 @@ function App() {
             return cloudMigrated;
           });
         } else {
-          if(isForcePull){
-            setSyncErr("Supabase returned no data. Check that ctpa_state table exists and row bkk22 is present.");
-          }
+          /* Cloud row is empty or missing — check if we have local data to restore */
+          setObs(function(localObs){
+            if(localObs && localObs.length > 0){
+              /* Auto-restore: push local data back to cloud */
+              console.log("[CTPA] Cloud empty — restoring " + localObs.length + " obs from local cache");
+              cloudSave(localObs).then(function(ok){
+                if(ok){
+                  setSyncErr(null);
+                  setT({ msg: "✅ Cloud was empty — your local data has been restored to Supabase (" + localObs.length + " observations).", type: "ok" });
+                  setTimeout(function(){ setT(null); }, 8000);
+                } else {
+                  setSyncErr("Cloud save failed during restore. Your data is safe on this device — tap ↻ Sync to retry.");
+                }
+              }).catch(function(e){
+                setSyncErr((e && e.message) || "Restore failed — check network");
+              });
+              return localObs;
+            } else if(isForcePull){
+              setSyncErr("Supabase has no data and this device has no cached data. If you have data on another device, open the app there and tap ↻ Sync to push it to the cloud.");
+            }
+            return localObs;
+          });
         }
         return true;
       }).catch(function(e){
