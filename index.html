@@ -271,6 +271,43 @@ function cloudSave(arr){
   });
 }
 
+/* cloudMergeSave: read current cloud data → merge localArr into it → write back.
+   Prevents one device from overwriting observations added by other devices.
+   Merge rule: localArr is authoritative for obs IDs it contains (edits/deletes/status).
+   Cloud obs with IDs not in localArr are preserved (added by other devices). */
+function cloudMergeSave(localArr){
+  if(!cloudOn()) return Promise.resolve({ ok: false, merged: localArr });
+  console.log("[CTPA] cloudMergeSave start | local obs:", localArr.length);
+  return cloudLoad().then(function(row){
+    var cloudArr = (row && row.data && Array.isArray(row.data)) ? row.data : [];
+    console.log("[CTPA] cloudMergeSave | cloud obs:", cloudArr.length);
+    /* Build ID set from localArr */
+    var localIdSet = {};
+    localArr.forEach(function(o){ if(o.id) localIdSet[o.id] = true; });
+    /* Keep cloud obs whose IDs are not present in localArr (added by other devices) */
+    var cloudOnly = cloudArr.filter(function(o){ return o.id && !localIdSet[o.id]; });
+    /* Merged = local (authoritative for touched obs) + cloudOnly (other devices' new obs) */
+    var merged = localArr.concat(cloudOnly);
+    /* Sort by OBS number descending so newest appear first */
+    merged.sort(function(a,b){
+      var na = parseInt((a.id||"").replace(/[^0-9]/g,""),10)||0;
+      var nb = parseInt((b.id||"").replace(/[^0-9]/g,""),10)||0;
+      return nb - na;
+    });
+    console.log("[CTPA] cloudMergeSave | merged obs:", merged.length,
+      "(local:", localArr.length, "+ cloud-only:", cloudOnly.length, ")");
+    return cloudSave(merged).then(function(ok){
+      return { ok: ok, merged: merged };
+    });
+  }).catch(function(e){
+    console.error("[CTPA] cloudMergeSave ERROR:", e && e.message);
+    /* Fall back to direct save so data is not lost */
+    return cloudSave(localArr).then(function(ok){
+      return { ok: ok, merged: localArr };
+    });
+  });
+}
+
 /* ===== Supabase Realtime — WebSocket subscription for instant cross-device sync =====
    When any device saves to ctpa_state, Supabase emits a postgres_changes event.
    This device receives it and immediately calls pull() — no page refresh needed.
@@ -3156,19 +3193,25 @@ function App() {
     }
     setSyncBusy(true);
     setSyncErr(null);
-    cloudSave(d).then(function (ok) {
+    /* cloudMergeSave: reads current cloud data first, merges, then writes.
+       Prevents this device from overwriting observations added by other devices. */
+    cloudMergeSave(d).then(function(result) {
       setSyncBusy(false);
-      if (!ok) {
+      if (!result.ok) {
         var errDetail = __lastCloudSaveErr || "unknown error";
         setSyncErr("Cloud save failed — " + errDetail);
         setT({ msg: "❌ Supabase save failed: " + errDetail + ". Your data is on this device — tap ↻ Sync to retry.", type: "err" });
         setTimeout(function(){ setT(null); }, 10000);
       } else {
         setSyncErr(null);
-        __ctpaLastWrite = 0; /* cloud confirmed — clear guard so pull() doesn't re-push stale data */
+        __ctpaLastWrite = 0;
         setLastWriteTime(new Date());
-        /* Pull 1.5s after save to pick up any concurrent changes from other devices */
-        setTimeout(function(){ if(pullRef.current) pullRef.current(); }, 1500);
+        /* Update local state and cache with merged result so this device sees all obs */
+        var migrated = ctpaMigrate(result.merged);
+        setObs(migrated);
+        try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e) {}
+        setCloudObsCount(migrated.length);
+        console.log("[CTPA] sv() merge-save complete | final obs count:", migrated.length);
       }
     }).catch(function (err) {
       setSyncBusy(false);
