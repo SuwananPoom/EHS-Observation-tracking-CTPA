@@ -2663,10 +2663,15 @@ function runObsWorkflowTest(currentObs) {
         if (!Array.isArray(d)) throw new Error("data field is not an array after write — got: " + typeof d);
         var found = d.find(function(o){ return o.id === testId; });
         if (!found) throw new Error("Test observation " + testId + " NOT FOUND in cloud data after write — write silently failed or RLS blocked it");
-        /* Check photo survived */
-        var photoOk = found.pb && found.pb.length > 0 && found.pb[0].src === DIAG_TEST_PHOTO;
+        /* Photos are intentionally stripped from cloud payload to keep size < 1 MB.
+           Verify photo METADATA synced (_hasPhoto flag, name, count) but not the src. */
+        var photoMeta = found.pb && found.pb.length > 0;
+        var hasFlag   = found.pb && found.pb[0] && found.pb[0]._hasPhoto === true;
+        var photoNote = photoMeta
+          ? "✅ metadata synced (name=" + found.pb[0].name + ", _hasPhoto=" + hasFlag + ") | src stripped by design"
+          : "⚠️ no photo metadata";
         return "✅ Observation " + testId + " confirmed in cloud | obs total: " + d.length +
-               " | photo round-trip: " + (photoOk ? "✅ PASS" : "❌ FAIL — photo lost in transit");
+               " | photo: " + photoNote;
       });
     });
   })
@@ -2685,9 +2690,13 @@ function runObsWorkflowTest(currentObs) {
         var d = (rows && rows[0] && rows[0].data) || [];
         var found = d.find(function(o){ return o.id === testId; });
         if (!found) throw new Error("Test obs not readable on simulated 2nd device — possible replication lag or write failure");
-        var photoSrc = found.pb && found.pb[0] && found.pb[0].src;
-        if (photoSrc !== DIAG_TEST_PHOTO) throw new Error("Photo corrupted in transit — expected " + DIAG_TEST_PHOTO.length + " chars, got " + (photoSrc ? photoSrc.length : 0));
-        return "2nd device can read obs + photo | photo bytes match: ✅ | total obs: " + d.length;
+        /* Photo src is intentionally stripped — verify metadata synced correctly */
+        var hasMeta = found.pb && found.pb.length > 0 && found.pb[0].name;
+        var srcStripped = !found.pb || !found.pb[0] || !found.pb[0].src;
+        if(!hasMeta) throw new Error("Photo metadata missing on 2nd device — pb array empty or name missing");
+        return "✅ 2nd device read obs successfully | obs total: " + d.length +
+               " | photo metadata: ✅ (name=" + found.pb[0].name + ")" +
+               " | photo src: stripped by design (local-only, ~10 MB saved per sync)";
       });
     });
   })
