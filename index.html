@@ -2417,6 +2417,262 @@ function Donut(_ref5) {
   }, cs || "Total"));
 }
 
+/* ══ SUPABASE DIAGNOSTIC ENGINE ═══════════════════════════════════════════ */
+function runDiagnostics() {
+  var base = (CLOUD.url || "").replace(/\/$/,"");
+  var results = {
+    timestamp: new Date().toISOString(),
+    config: {
+      url: CLOUD.url || "NOT SET",
+      key: CLOUD.key ? (CLOUD.key.slice(0,20) + "…") : "NOT SET",
+      table: CLOUD.table,
+      row: CLOUD.row,
+      configured: cloudOn()
+    },
+    steps: []
+  };
+
+  function step(name, fn) {
+    var start = Date.now();
+    return Promise.resolve().then(fn).then(function(r) {
+      results.steps.push({ name: name, ok: true, ms: Date.now()-start, detail: r });
+    }).catch(function(e) {
+      results.steps.push({ name: name, ok: false, ms: Date.now()-start, detail: String(e && e.message || e) });
+    });
+  }
+
+  return step("Network reachable", function() {
+    return fetch(base + "/rest/v1/", { headers: cloudHeaders(), cache: "no-store" })
+      .then(function(r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return "HTTP " + r.status + " OK";
+      });
+  }).then(function() {
+    return step("READ ctpa_state (SELECT)", function() {
+      return fetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id,updated_at", {
+        headers: cloudHeaders(), cache: "no-store"
+      }).then(function(r) {
+        return r.text().then(function(t) {
+          if (!r.ok) throw new Error("HTTP " + r.status + " — " + t.slice(0,300));
+          var rows = JSON.parse(t);
+          if (!rows || !rows.length) return "Row bkk22 NOT FOUND (table may be empty)";
+          return "Row bkk22 found, updated_at=" + rows[0].updated_at;
+        });
+      });
+    });
+  }).then(function() {
+    return step("READ data blob (SELECT data)", function() {
+      return fetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
+        headers: cloudHeaders(), cache: "no-store"
+      }).then(function(r) {
+        return r.text().then(function(t) {
+          if (!r.ok) throw new Error("HTTP " + r.status + " — " + t.slice(0,300));
+          var rows = JSON.parse(t);
+          if (!rows || !rows.length) return "Row bkk22 NOT FOUND";
+          var d = rows[0].data;
+          var cnt = Array.isArray(d) ? d.length : (d ? "non-array: " + typeof d : "null/empty");
+          return "data contains " + cnt + " observation(s)";
+        });
+      });
+    });
+  }).then(function() {
+    return step("WRITE ctpa_state (PATCH/UPDATE)", function() {
+      var probe = { _diag_ping: new Date().toISOString() };
+      return fetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
+        method: "PATCH",
+        headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+        body: JSON.stringify(probe),
+        cache: "no-store"
+      }).then(function(r) {
+        if (r.ok) return "PATCH HTTP " + r.status + " — UPDATE permission OK";
+        return r.text().then(function(t) { throw new Error("HTTP " + r.status + " — " + t.slice(0,300)); });
+      });
+    });
+  }).then(function() {
+    return step("READ ctpa_log (SELECT)", function() {
+      return fetch(base + "/rest/v1/ctpa_log?select=id&limit=1", {
+        headers: cloudHeaders(), cache: "no-store"
+      }).then(function(r) {
+        return r.text().then(function(t) {
+          if (!r.ok) throw new Error("HTTP " + r.status + " — " + t.slice(0,300));
+          return "ctpa_log readable, HTTP " + r.status;
+        });
+      });
+    });
+  }).then(function() {
+    return step("WRITE ctpa_log (INSERT)", function() {
+      return fetch(base + "/rest/v1/ctpa_log", {
+        method: "POST",
+        headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+        body: JSON.stringify([{ site: "bkk22", who: "DIAG", action: "connectivity_test", device: "diagnostic" }]),
+        cache: "no-store"
+      }).then(function(r) {
+        if (r.ok) return "INSERT HTTP " + r.status + " — INSERT permission OK";
+        return r.text().then(function(t) { throw new Error("HTTP " + r.status + " — " + t.slice(0,300)); });
+      });
+    });
+  }).then(function() {
+    return step("Realtime WebSocket", function() {
+      return new Promise(function(resolve, reject) {
+        var wsUrl = CLOUD.url.replace(/^https?:\/\//, function(m){ return m === "https://" ? "wss://" : "ws://"; }) +
+                    "/realtime/v1/websocket?apikey=" + encodeURIComponent(CLOUD.key) + "&vsn=1.0.0";
+        var ws;
+        var t = setTimeout(function() {
+          if (ws) ws.close();
+          reject(new Error("WebSocket connection timed out after 5s"));
+        }, 5000);
+        try {
+          ws = new WebSocket(wsUrl);
+          ws.onopen = function() {
+            clearTimeout(t);
+            ws.close();
+            resolve("WebSocket connected OK");
+          };
+          ws.onerror = function() {
+            clearTimeout(t);
+            reject(new Error("WebSocket connection error"));
+          };
+        } catch(e) {
+          clearTimeout(t);
+          reject(e);
+        }
+      });
+    });
+  }).then(function() {
+    return results;
+  });
+}
+
+/* ── DiagnosticsView component ── */
+function DiagnosticsView(_ref_diag) {
+  var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr;
+  var _dState = React.useState(null), diagResult = _dState[0], setDiagResult = _dState[1];
+  var _dRun = React.useState(false), running = _dRun[0], setRunning = _dRun[1];
+
+  function runTest() {
+    setRunning(true);
+    setDiagResult(null);
+    runDiagnostics().then(function(r) { setDiagResult(r); setRunning(false); }).catch(function(e) { setDiagResult({ error: String(e) }); setRunning(false); });
+  }
+
+  var secBox = function(title, children) {
+    return React.createElement("div", { style: { background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "14px 16px", marginBottom: 14 } },
+      React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 } }, title),
+      children
+    );
+  };
+
+  var row = function(label, value, color) {
+    return React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, padding: "5px 0", borderBottom: "1px solid #F1F5F9" } },
+      React.createElement("span", { style: { color: C.slateMid, fontWeight: 600 } }, label),
+      React.createElement("span", { style: { fontWeight: 700, color: color || C.text, fontFamily: "monospace", fontSize: 11 } }, value)
+    );
+  };
+
+  /* Count local obs with photos */
+  var withBef = obs.filter(function(o){ return o.pb && o.pb.length > 0; }).length;
+  var withAft = obs.filter(function(o){ return o.pa && o.pa.length > 0; }).length;
+
+  return React.createElement("div", { className: "fade-in", style: { maxWidth: 720 } },
+    React.createElement("div", { style: { fontSize: 20, fontWeight: 800, color: C.text, marginBottom: 4 } }, "🔍 Supabase Connectivity Audit"),
+    React.createElement("div", { style: { fontSize: 11, color: C.slate, marginBottom: 18 } }, "Full test suite: SELECT, UPDATE, INSERT, WebSocket, RLS, and table permissions."),
+
+    /* Config card */
+    secBox("Configuration",
+      React.createElement("div", null,
+        row("Supabase URL", CLOUD.url),
+        row("API Key (prefix)", CLOUD.key ? CLOUD.key.slice(0,24) + "…" : "NOT SET", CLOUD.key ? C.green : C.redDk),
+        row("Table", CLOUD.table),
+        row("Row ID", CLOUD.row),
+        row("Key source", "Hardcoded in HTML (no build process — Vercel env vars not applicable)", C.amber),
+        row("Connection enabled", cloudOn() ? "YES" : "NO — URL or key missing", cloudOn() ? C.green : C.redDk)
+      )
+    ),
+
+    /* Live state card */
+    secBox("Live State",
+      React.createElement("div", null,
+        row("Local observations", String(obs.length)),
+        row("Observations with Before photos", String(withBef)),
+        row("Observations with After photos", String(withAft)),
+        row("Last cloud sync", lastSynced ? lastSynced.toLocaleString() : "Never"),
+        row("Sync error", syncErr || "None", syncErr ? C.redDk : C.green),
+        row("localStorage key", SKEY)
+      )
+    ),
+
+    /* Run test button */
+    React.createElement("button", {
+      onClick: runTest,
+      disabled: running,
+      style: { display: "block", width: "100%", padding: "12px 0", background: running ? C.border : C.green, color: running ? C.slate : "#fff", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: running ? "wait" : "pointer", marginBottom: 16 }
+    }, running ? "⏳ Running tests…" : "▶ Run Full Connectivity Test"),
+
+    /* Results */
+    diagResult && !diagResult.error && React.createElement("div", null,
+      React.createElement("div", { style: { fontSize: 11, color: C.slate, marginBottom: 10 } }, "Tested at " + new Date(diagResult.timestamp).toLocaleString()),
+      secBox("Test Results",
+        React.createElement("div", null,
+          diagResult.steps.map(function(s, i) {
+            return React.createElement("div", { key: i, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", borderBottom: "1px solid #F1F5F9" } },
+              React.createElement("span", { style: { fontSize: 14, marginTop: 1 } }, s.ok ? "✅" : "❌"),
+              React.createElement("div", { style: { flex: 1 } },
+                React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: s.ok ? C.greenDk : C.redDk } }, s.name),
+                React.createElement("div", { style: { fontSize: 11, color: C.slateMid, fontFamily: "monospace", marginTop: 2, wordBreak: "break-all" } }, s.detail),
+                React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 1 } }, s.ms + "ms")
+              )
+            );
+          })
+        )
+      ),
+      /* Summary */
+      (function() {
+        var failed = diagResult.steps.filter(function(s){ return !s.ok; });
+        if (failed.length === 0) {
+          return React.createElement("div", { style: { background: C.greenBg, border: "1.5px solid " + C.green, borderRadius: 10, padding: "12px 16px", fontSize: 13, fontWeight: 700, color: C.greenDk } },
+            "✅ All " + diagResult.steps.length + " tests passed — Supabase connection is fully operational."
+          );
+        }
+        return React.createElement("div", { style: { background: C.redBg, border: "1.5px solid " + C.red, borderRadius: 10, padding: "12px 16px" } },
+          React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.redDk, marginBottom: 8 } }, "❌ " + failed.length + " test(s) failed"),
+          failed.map(function(s, i) {
+            return React.createElement("div", { key: i, style: { fontSize: 11, color: C.redDk, marginBottom: 4 } },
+              React.createElement("strong", null, s.name + ": "),
+              s.detail
+            );
+          }),
+          React.createElement("div", { style: { fontSize: 11, color: C.textMid, marginTop: 10 } },
+            "Common fixes: (1) Check RLS policies allow anon SELECT/INSERT/UPDATE. (2) Verify ctpa_state row \"bkk22\" exists. (3) Check Supabase project is not paused. (4) Supabase free-tier usage limits may block writes."
+          )
+        );
+      })()
+    ),
+
+    diagResult && diagResult.error && React.createElement("div", { style: { background: C.redBg, border: "1.5px solid " + C.red, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: C.redDk, fontWeight: 700 } },
+      "❌ Diagnostic runner failed: " + diagResult.error
+    ),
+
+    /* RLS policy guide */
+    secBox("Required RLS Policies (reference)",
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: 11, color: C.textMid, marginBottom: 10 } }, "Run these in Supabase SQL Editor if you see 403/permission errors:"),
+        React.createElement("pre", { style: { background: "#1E293B", color: "#E2E8F0", borderRadius: 8, padding: "12px 14px", fontSize: 10, overflowX: "auto", lineHeight: 1.6 } },
+`-- ctpa_state: anon can SELECT and UPDATE (not INSERT/DELETE)
+ALTER TABLE public.ctpa_state ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "state_select" ON public.ctpa_state FOR SELECT USING (true);
+CREATE POLICY "state_update" ON public.ctpa_state FOR UPDATE USING (true) WITH CHECK (true);
+CREATE POLICY "state_insert" ON public.ctpa_state FOR INSERT WITH CHECK (true);
+
+-- ctpa_log: anon can SELECT and INSERT
+ALTER TABLE public.ctpa_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "log_select" ON public.ctpa_log FOR SELECT USING (true);
+CREATE POLICY "log_insert" ON public.ctpa_log FOR INSERT WITH CHECK (true);`
+        )
+      )
+    )
+  );
+}
+
 /* ══ APP ════════════════════════════════════════════ */
 function App() {
   var _STATUS$det$status, _STATUS$det$status2, _STATUS$det$status3;
@@ -3197,7 +3453,7 @@ function App() {
       display: "flex",
       gap: 6
     }
-  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]].map(function (_ref6) {
+  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"], ["diag", "🔍 Diag"]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -3246,18 +3502,15 @@ function App() {
       whiteSpace: "nowrap"
     }
   }, syncBusy ? "\u21BB Saving\u2026" : syncErr ? "\u274C Sync Error" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")))),
-  /* \u2500\u2500 Sync error / diagnostics banner \u2500\u2500 */
-  (syncErr || showDiag) ? /*#__PURE__*/React.createElement("div", {
-    style: { background: syncErr ? "#FEF2F2" : "#F0F9FF", borderBottom: "2px solid " + (syncErr ? "#EF4444" : "#BAE6FD"), padding: "10px 20px", fontSize: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
+  /* ── Sync error banner ── */
+  syncErr ? /*#__PURE__*/React.createElement("div", {
+    style: { background: "#FEF2F2", borderBottom: "2px solid #EF4444", padding: "10px 20px", fontSize: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
   },
-    syncErr ? /*#__PURE__*/React.createElement("span", { style: { color: "#B91C1C", fontWeight: 800, flex: 1 } }, "\u274C Supabase sync error: " + syncErr + " \u2014 data may not be saved to cloud. Tap \u21BB Sync to retry.") : null,
-    showDiag ? /*#__PURE__*/React.createElement("span", { style: { color: "#0369A1" } },
-      "\uD83D\uDD0D Diagnostics | Supabase: " + CLOUD.url + " | Table: " + CLOUD.table + " | Row: " + CLOUD.row + " | Key: " + CLOUD.key.slice(0,20) + "\u2026 | Site ID: bkk22 | SKEY: " + SKEY + " | Last synced: " + (lastSynced ? lastSynced.toLocaleTimeString() : "never") + " | Obs: " + obs.length
-    ) : null,
+    /*#__PURE__*/React.createElement("span", { style: { color: "#B91C1C", fontWeight: 800, flex: 1 } }, "\u274C Supabase sync error: " + syncErr + " \u2014 data may not be saved to cloud. Tap \u21BB Sync to retry."),
     /*#__PURE__*/React.createElement("button", {
-      onClick: function(){ setShowDiag(function(v){ return !v; }); setSyncErr(null); },
-      style: { marginLeft: 10, fontSize: 11, padding: "2px 8px", borderRadius: 5, border: "1px solid #ccc", background: "#fff", cursor: "pointer" }
-    }, showDiag ? "Hide Diagnostics" : "Show Diagnostics")
+      onClick: function(){ setView("diag"); setSyncErr(null); },
+      style: { marginLeft: 10, fontSize: 11, padding: "4px 10px", borderRadius: 5, border: "1px solid #EF4444", background: "#fff", color: "#B91C1C", cursor: "pointer", fontWeight: 700 }
+    }, "\uD83D\uDD0D Run Diagnostics")
   ) : null,
   /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5604,7 +5857,7 @@ function App() {
       color: C.textMid,
       fontWeight: 600
     }
-  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
+  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "diag" && /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: {
       maxWidth: 720
