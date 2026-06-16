@@ -216,17 +216,54 @@ function cloudLoad(){
     })
     .catch(function(e){ console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message, e); return null; });
 }
+/* stripPhotos: remove base64 src from photo arrays before sending to Supabase.
+   Keeps metadata (id, name, at, count) but drops the data URI (can be 50-500 KB per photo).
+   Photos are restored from localStorage when loading. Reduces payload from ~10 MB to ~50 KB. */
+function stripPhotos(arr){
+  return arr.map(function(o){
+    var o2 = Object.assign({}, o);
+    if(o2.pb && o2.pb.length) o2.pb = o2.pb.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true }; });
+    if(o2.pa && o2.pa.length) o2.pa = o2.pa.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true }; });
+    return o2;
+  });
+}
+/* restorePhotos: after loading from cloud, merge back local photo src data
+   for observations this device has cached. Photos from other devices remain as metadata only. */
+function restorePhotos(cloudArr, localArr){
+  if(!localArr || !localArr.length) return cloudArr;
+  var localMap = {};
+  localArr.forEach(function(o){ if(o.id) localMap[o.id] = o; });
+  return cloudArr.map(function(o){
+    var loc = localMap[o.id];
+    if(!loc) return o;
+    var o2 = Object.assign({}, o);
+    /* Restore before-photos if cloud has stripped them but local has src */
+    if(o2.pb && o2.pb.length && loc.pb && loc.pb.length){
+      o2.pb = o2.pb.map(function(cp, i){
+        var lp = loc.pb[i];
+        return (lp && lp.src) ? Object.assign({}, cp, { src: lp.src }) : cp;
+      });
+    }
+    /* Restore after-photos */
+    if(o2.pa && o2.pa.length && loc.pa && loc.pa.length){
+      o2.pa = o2.pa.map(function(cp, i){
+        var lp = loc.pa[i];
+        return (lp && lp.src) ? Object.assign({}, cp, { src: lp.src }) : cp;
+      });
+    }
+    return o2;
+  });
+}
 function cloudSave(arr){
   if(!cloudOn()) return Promise.resolve(false);
-  /* Use PATCH (UPDATE) against the existing bkk22 row.
-     More reliable than POST upsert — only needs UPDATE permission,
-     not INSERT. The bkk22 row is always present (seeded in SQL setup). */
   var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table;
   var patchUrl = base + "?id=eq." + CLOUD.row;
-  /* NOTE: updated_at does NOT exist in production ctpa_state — payload contains only 'data' */
-  var payload = { data: arr };
-  console.log("[CTPA] cloudSave PATCH →", patchUrl.replace(CLOUD.url,"<supabase>"),
-    "| obs:", arr.length, "| payload keys:", Object.keys(payload).join(","));
+  /* Strip base64 photo data before sending — keeps payload ~50 KB instead of ~10 MB.
+     Photos are restored from localStorage on load. */
+  var stripped = stripPhotos(arr);
+  var payload = { data: stripped };
+  var payloadKB = Math.round(JSON.stringify(payload).length / 1024);
+  console.log("[CTPA] cloudSave PATCH →", arr.length, "obs |", payloadKB, "KB (photos stripped)");
   function fmtSupaErr(status, t){
     var p; try { p = JSON.parse(t); } catch(_){ p = null; }
     var msg = (p && (p.message || p.error)) || t.slice(0,200) || "(empty body)";
@@ -2574,14 +2611,17 @@ function runObsWorkflowTest(currentObs) {
         pb: [{ id: 1, src: DIAG_TEST_PHOTO, name: "test_before.png", at: new Date().toISOString().slice(0,10) }],
         pa: []
       };
-      /* Build full payload with existing obs + test obs */
+      /* Build full payload with existing obs + test obs — strip photos to match production behavior */
       var newData = (currentObs || []).concat([testObs]);
-      var payload = JSON.stringify({ data: newData });
+      var strippedData = stripPhotos(newData);
+      var payload = JSON.stringify({ data: strippedData });
       results._testObs = testObs;
-      results._newData = newData;
+      results._newData = newData;       /* keep full data for local verify */
+      results._strippedData = strippedData; /* stripped for cloud write */
       results._payload = payload;
       results.payloadSizeKB = (payload.length / 1024).toFixed(1);
-      return "Payload built | obs count: " + newData.length + " | size: " + results.payloadSizeKB + " KB | photo: 1×1px PNG (" + DIAG_TEST_PHOTO.length + " chars)";
+      var rawKB = (JSON.stringify({ data: newData }).length / 1024).toFixed(1);
+      return "Payload built | obs count: " + newData.length + " | stripped size: " + results.payloadSizeKB + " KB (raw with photos: " + rawKB + " KB) | photo: 1×1px PNG";
     });
   })
 
@@ -2657,7 +2697,7 @@ function runObsWorkflowTest(currentObs) {
     return step("7. Cleanup — remove test observation from cloud", {
       table: "ctpa_state", column: "data", operation: "PATCH (remove test obs)"
     }, function() {
-      var cleanData = results._newData.filter(function(o){ return o.id !== testId; });
+      var cleanData = stripPhotos(results._newData.filter(function(o){ return o.id !== testId; }));
       var cleanPayload = JSON.stringify({ data: cleanData });
       return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
         method: "PATCH",
@@ -3265,12 +3305,15 @@ function App() {
           var cloudMigrated = ctpaMigrate(row.data);
           setCloudObsCount(cloudMigrated.length);
           console.log("[CTPA] pull(): cloud wins — applying", cloudMigrated.length, "obs from Supabase");
-          /* Supabase is the single source of truth — cloud always wins.
-             __ctpaLastWrite guard is intentionally removed: since updated_at does not
-             exist in production, cloudT was always 0, making the guard fire on EVERY
-             pull and causing each device to overwrite Supabase with its own stale data. */
-          try { localStorage.setItem(SKEY, JSON.stringify(cloudMigrated)); } catch(e){}
-          setObs(cloudMigrated);
+          /* Restore photo src from this device's localStorage cache.
+             Cloud stores only photo metadata (no base64) to keep payload small.
+             Photos uploaded on other devices appear as metadata only until those
+             devices implement Supabase Storage. */
+          setObs(function(localObs){
+            var restored = restorePhotos(cloudMigrated, localObs);
+            try { localStorage.setItem(SKEY, JSON.stringify(restored)); } catch(e){}
+            return restored;
+          });
         } else {
           /* Cloud row is empty/null/missing — diagnose and log the exact reason */
           var reason = !row ? "cloudLoad returned null (HTTP error — see console errors above)"
