@@ -180,21 +180,38 @@ function cloudLoad(){
 }
 function cloudSave(arr){
   if(!cloudOn()) return Promise.resolve(false);
-  var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?on_conflict=id";
-  console.log("[CTPA] cloudSave →", arr.length, "obs");
-  return fetch(u, {
-    method: "POST",
-    headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
-    body: JSON.stringify([{ id: CLOUD.row, data: arr, updated_at: new Date().toISOString() }])
+  /* Use PATCH (UPDATE) against the existing bkk22 row.
+     More reliable than POST upsert — only needs UPDATE permission,
+     not INSERT. The bkk22 row is always present (seeded in SQL setup). */
+  var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table;
+  var patchUrl = base + "?id=eq." + CLOUD.row;
+  var payload = { data: arr, updated_at: new Date().toISOString() };
+  console.log("[CTPA] cloudSave PATCH →", arr.length, "obs");
+  return fetch(patchUrl, {
+    method: "PATCH",
+    headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+    body: JSON.stringify(payload),
+    cache: "no-store"
   }).then(function(r){
-    if(!r.ok){
-      return r.text().then(function(t){
-        console.error("[CTPA] cloudSave HTTP", r.status, t.slice(0,200));
-        return false;
-      });
-    }
-    console.log("[CTPA] cloudSave ← OK (", r.status, ")");
-    return true;
+    if(r.ok){ console.log("[CTPA] cloudSave PATCH ← OK (" + r.status + ")"); return true; }
+    /* PATCH failed — try POST upsert as fallback (row may not exist yet) */
+    console.warn("[CTPA] cloudSave PATCH failed (" + r.status + ") — falling back to POST upsert");
+    var upsertUrl = base + "?on_conflict=id";
+    return fetch(upsertUrl, {
+      method: "POST",
+      headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
+      body: JSON.stringify([{ id: CLOUD.row, data: arr, updated_at: new Date().toISOString() }]),
+      cache: "no-store"
+    }).then(function(r2){
+      if(!r2.ok){
+        return r2.text().then(function(t){
+          console.error("[CTPA] cloudSave POST HTTP", r2.status, t.slice(0,300));
+          return false;
+        });
+      }
+      console.log("[CTPA] cloudSave POST ← OK (" + r2.status + ")");
+      return true;
+    });
   }).catch(function(e){ console.error("[CTPA] cloudSave NETWORK ERROR:", e && e.message); return false; });
 }
 
@@ -2605,7 +2622,7 @@ function App() {
       setSyncBusy(false);
       if (!ok) {
         setSyncErr("Cloud save failed");
-        setT({ msg: "❌ Failed to save to Supabase. This device still has your data — tap ↻ Sync to retry.", type: "err" });
+        setT({ msg: "❌ Failed to save to Supabase (check console for HTTP status). This device still has your data — tap ↻ Sync to retry.", type: "err" });
         setTimeout(function(){ setT(null); }, 10000);
       } else {
         setSyncErr(null);
