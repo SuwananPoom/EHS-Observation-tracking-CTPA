@@ -2521,11 +2521,14 @@ function runObsWorkflowTest(currentObs) {
     });
   }
 
-  /* Step 1: Network */
-  return step("1. Network — Supabase reachable", { table: "n/a", operation: "GET /rest/v1/" }, function() {
-    return diagFetch(base + "/rest/v1/", { headers: cloudHeaders(), cache: "no-store" }).then(function(r) {
+  /* Step 1: Network — use actual table endpoint (root /rest/v1/ requires service-role key, anon key forbidden) */
+  return step("1. Network — Supabase reachable", { table: "ctpa_state", operation: "GET ?select=id" }, function() {
+    return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id", {
+      headers: cloudHeaders(), cache: "no-store"
+    }).then(function(r) {
       if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText + "\n" + parseSupaErr(r.body));
-      return "HTTP " + r.status + " — network OK";
+      var rows = JSON.parse(r.body || "[]");
+      return "HTTP " + r.status + " OK (" + r.ms + "ms) — row bkk22 " + (rows.length ? "exists" : "NOT FOUND");
     });
   })
 
@@ -2709,10 +2712,13 @@ function runConnectivityTest() {
     });
   }
 
-  return step("Network reachable", { operation: "GET /rest/v1/" }, function() {
-    return diagFetch(base + "/rest/v1/", { headers: cloudHeaders(), cache: "no-store" }).then(function(r) {
+  return step("Network reachable", { operation: "GET ctpa_state?select=id" }, function() {
+    return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id", {
+      headers: cloudHeaders(), cache: "no-store"
+    }).then(function(r) {
       if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText + " — " + parseSupaErr(r.body));
-      return "HTTP " + r.status + " OK (" + r.ms + "ms)";
+      var rows = JSON.parse(r.body || "[]");
+      return "HTTP " + r.status + " OK (" + r.ms + "ms) — row bkk22 " + (rows.length ? "exists" : "NOT FOUND");
     });
   }).then(function() {
     return step("SELECT ctpa_state", { table: "ctpa_state", operation: "GET", filter: "id=eq.bkk22" }, function() {
