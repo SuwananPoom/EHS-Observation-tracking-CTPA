@@ -117,6 +117,11 @@ var PMC_CODE = "PMC2026";             // PMC Manager approver code (was LP_CODE)
 /* backward-compat aliases */
 var CLIENT_CODE = GC_CODE;
 var LP_CODE     = PMC_CODE;
+/* Diagnostic page access — SHA-256 hash of the admin password.
+   Password: CTPA@Diag2026  (share only with system admins, never with site users)
+   To change: run  crypto.subtle.digest('SHA-256', new TextEncoder().encode('newpass'))
+              then convert ArrayBuffer to hex string. */
+var DIAG_PASS_HASH = "9325c5731b3bdba4c718a57854e5718e29ef088eaa5f6166dd35928b2c387206";
 
 /* ============================================================
    CLOUD SYNC (Supabase) — กรอกค่า 2 บรรทัดนี้หลังสร้างโปรเจกต์
@@ -131,6 +136,17 @@ var CLOUD = {
   row: "bkk22"
 };
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
+/* Diagnostic access — compares SHA-256 of typed password against stored hash.
+   Returns a Promise<boolean>. Never stores the plain-text password. */
+function checkDiagPass(input){
+  if(!input) return Promise.resolve(false);
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(input))
+    .then(function(buf){
+      var hex = Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,"0"); }).join("");
+      return hex === DIAG_PASS_HASH;
+    })
+    .catch(function(){ return false; });
+}
 var __ctpaLastWrite = 0;   // ms timestamp of last local save — reset to 0 after cloud confirms
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
 var __lastCloudSaveErr = ""; // last cloudSave failure detail — read by sv() for UI error message
@@ -2697,6 +2713,54 @@ function runConnectivityTest() {
   }).then(function() { return results; });
 }
 
+/* ── DiagAuthGate: password prompt shown to any user who navigates to diag ── */
+function DiagAuthGate(_ref_gate) {
+  var onAuth = _ref_gate.onAuth, onBack = _ref_gate.onBack;
+  var _pw  = React.useState(""), pw = _pw[0], setPw = _pw[1];
+  var _err = React.useState(""), err = _err[0], setErr = _err[1];
+  var _busy= React.useState(false), busy = _busy[0], setBusy = _busy[1];
+
+  function submit(e) {
+    if(e && e.preventDefault) e.preventDefault();
+    if(!pw){ setErr("Enter the admin password."); return; }
+    setBusy(true); setErr("");
+    checkDiagPass(pw).then(function(ok){
+      setBusy(false);
+      if(ok){ onAuth(); }
+      else { setErr("Incorrect password."); setPw(""); }
+    });
+  }
+
+  return React.createElement("div", {
+    style: { maxWidth: 400, margin: "80px auto", padding: "40px 32px", background: "#fff", borderRadius: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.10)", textAlign: "center" }
+  },
+    React.createElement("div", { style: { fontSize: 40, marginBottom: 12 } }, "🔒"),
+    React.createElement("div", { style: { fontSize: 20, fontWeight: 800, marginBottom: 6, color: "#1F2937" } }, "Admin Access Required"),
+    React.createElement("div", { style: { fontSize: 13, color: "#6B7280", marginBottom: 24 } }, "Diagnostic tools are restricted to system administrators."),
+    React.createElement("form", { onSubmit: submit },
+      React.createElement("input", {
+        type: "password",
+        value: pw,
+        onChange: function(e){ setPw(e.target.value); setErr(""); },
+        placeholder: "Admin password",
+        autoFocus: true,
+        style: { width: "100%", padding: "10px 14px", fontSize: 14, borderRadius: 8, border: "1.5px solid " + (err ? "#EF4444" : "#D1D5DB"), marginBottom: 10, boxSizing: "border-box", outline: "none" }
+      }),
+      err ? React.createElement("div", { style: { color: "#B91C1C", fontSize: 12, marginBottom: 10 } }, err) : null,
+      React.createElement("button", {
+        type: "submit",
+        disabled: busy,
+        style: { width: "100%", padding: "10px", fontSize: 14, fontWeight: 700, borderRadius: 8, border: "none", background: "#1F2937", color: "#fff", cursor: busy ? "wait" : "pointer", marginBottom: 10 }
+      }, busy ? "Verifying…" : "Unlock Diagnostics"),
+      React.createElement("button", {
+        type: "button",
+        onClick: onBack,
+        style: { width: "100%", padding: "9px", fontSize: 13, fontWeight: 600, borderRadius: 8, border: "1.5px solid #D1D5DB", background: "#F9FAFB", color: "#6B7280", cursor: "pointer" }
+      }, "← Back to Dashboard")
+    )
+  );
+}
+
 /* ── DiagnosticsView component ── */
 function DiagnosticsView(_ref_diag) {
   var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr;
@@ -2957,6 +3021,10 @@ function App() {
   var _showDiag = React.useState(false),
     showDiag = _showDiag[0],
     setShowDiag = _showDiag[1];
+  /* diagAuth: session-only flag — never persisted to localStorage */
+  var _diagAuth = React.useState(false),
+    diagAuth = _diagAuth[0],
+    setDiagAuth = _diagAuth[1];
   var refreshLog = function(){
     setLogLoading(true);
     logLoad(300).then(function(res){
@@ -3666,7 +3734,7 @@ function App() {
       display: "flex",
       gap: 6
     }
-  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"], ["diag", "🔍 Diag"]].map(function (_ref6) {
+  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -3723,7 +3791,7 @@ function App() {
     /*#__PURE__*/React.createElement("button", {
       onClick: function(){ setView("diag"); setSyncErr(null); },
       style: { marginLeft: 10, fontSize: 11, padding: "4px 10px", borderRadius: 5, border: "1px solid #EF4444", background: "#fff", color: "#B91C1C", cursor: "pointer", fontWeight: 700 }
-    }, "\uD83D\uDD0D Run Diagnostics")
+    }, "\uD83D\uDD0D Admin Diagnostics")
   ) : null,
   /* \u2500\u2500 Cloud Sync Status bar \u2500\u2500 */
   /*#__PURE__*/React.createElement("div", {
@@ -6082,7 +6150,10 @@ function App() {
       color: C.textMid,
       fontWeight: 600
     }
-  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "diag" && /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr }), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
+  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "diag" && (diagAuth
+  ? /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr })
+  : /*#__PURE__*/React.createElement(DiagAuthGate, { onAuth: function(){ setDiagAuth(true); }, onBack: function(){ setView("dashboard"); } })
+), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: {
       maxWidth: 720
