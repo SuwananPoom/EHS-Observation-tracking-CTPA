@@ -2874,14 +2874,27 @@ function DiagnosticsView(_ref_diag) {
     ),
 
     /* RLS reference */
-    secBox("Required RLS Policies — paste in Supabase SQL Editor if tests fail with HTTP 403", null,
-      React.createElement("pre", { style: { background: "#1E293B", color: "#E2E8F0", borderRadius: 8, padding: "12px 14px", fontSize: 10, overflowX: "auto", lineHeight: 1.6, margin: 0 } },
-"-- ctpa_state: anon needs SELECT + UPDATE + INSERT\nALTER TABLE public.ctpa_state ENABLE ROW LEVEL SECURITY;\nDROP POLICY IF EXISTS \"state_select\" ON public.ctpa_state;\nDROP POLICY IF EXISTS \"state_update\" ON public.ctpa_state;\nDROP POLICY IF EXISTS \"state_insert\" ON public.ctpa_state;\nCREATE POLICY \"state_select\" ON public.ctpa_state FOR SELECT USING (true);\nCREATE POLICY \"state_update\" ON public.ctpa_state FOR UPDATE USING (true) WITH CHECK (true);\nCREATE POLICY \"state_insert\" ON public.ctpa_state FOR INSERT WITH CHECK (true);\n\n-- ctpa_log: anon needs SELECT + INSERT\nALTER TABLE public.ctpa_log ENABLE ROW LEVEL SECURITY;\nDROP POLICY IF EXISTS \"log_select\" ON public.ctpa_log;\nDROP POLICY IF EXISTS \"log_insert\" ON public.ctpa_log;\nCREATE POLICY \"log_select\" ON public.ctpa_log FOR SELECT USING (true);\nCREATE POLICY \"log_insert\" ON public.ctpa_log FOR INSERT WITH CHECK (true);"
-      )
-    )
+    (function(){
+      var SQL_RLS = ['-- ════════════════════════════════════════════════','-- CTPA BKK22 — Complete RLS Fix','-- Run in: Supabase Dashboard → SQL Editor → New query','-- Safe to run multiple times (idempotent)','-- ════════════════════════════════════════════════','','-- 1. Enable RLS on ctpa_state','ALTER TABLE public.ctpa_state ENABLE ROW LEVEL SECURITY;','','-- 2. Drop ALL existing policies (catches legacy names)','DROP POLICY IF EXISTS "state_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "state_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_select" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_insert" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_update" ON public.ctpa_state;','DROP POLICY IF EXISTS "allow_delete" ON public.ctpa_state;','DROP POLICY IF EXISTS "Enable read access for all users" ON public.ctpa_state;','','-- 3. Re-create all 4 policies for anon','CREATE POLICY "state_select" ON public.ctpa_state','  FOR SELECT USING (true);','','CREATE POLICY "state_insert" ON public.ctpa_state','  FOR INSERT WITH CHECK (true);','','-- CRITICAL: UPDATE needs BOTH USING and WITH CHECK.','-- Missing WITH CHECK (true) causes HTTP 403 on every PATCH.','CREATE POLICY "state_update" ON public.ctpa_state','  FOR UPDATE USING (true) WITH CHECK (true);','','CREATE POLICY "state_delete" ON public.ctpa_state','  FOR DELETE USING (true);','','-- 4. Ensure bkk22 row exists (PATCH silently fails if row missing)','INSERT INTO public.ctpa_state (id, data, updated_at)',"VALUES ('bkk22', '[]'::jsonb, now())",'ON CONFLICT (id) DO NOTHING;','','-- 5. Verify: must show 4 policies + 1 bkk22 row','SELECT policyname, cmd, qual, with_check',"FROM pg_policies WHERE tablename = 'ctpa_state' ORDER BY cmd;",'','SELECT id, updated_at, jsonb_array_length(data) AS obs_count',"FROM public.ctpa_state WHERE id = 'bkk22';",'','-- 6. Smoke-test PATCH (must return 1 row with no errors)','UPDATE public.ctpa_state SET updated_at = now()',"WHERE id = 'bkk22' RETURNING id, updated_at;"].join("\n");
+      var _cpSt = React.useState(false), cpOk = _cpSt[0], setCpOk = _cpSt[1];
+      function copySQL(){
+        try{ navigator.clipboard.writeText(SQL_RLS).then(function(){ setCpOk(true); setTimeout(function(){ setCpOk(false); },2500); }); }catch(e){}
+      }
+      return secBox("RLS Fix SQL — copy and run in Supabase SQL Editor",
+        "Fixes SELECT, INSERT, UPDATE (with WITH CHECK), DELETE for anon. Idempotent — safe to re-run.",
+        React.createElement("div", null,
+          React.createElement("button", {
+            onClick: copySQL,
+            style: { marginBottom: 10, padding: "6px 16px", background: cpOk ? C.green : "#0EA5E9", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer" }
+          }, cpOk ? "\u2705 Copied!" : "\uD83D\uDCCB Copy SQL"),
+          React.createElement("pre", {
+            style: { background: "#0F172A", color: "#E2E8F0", borderRadius: 8, padding: "12px 14px", fontSize: 10, overflowX: "auto", lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap" }
+          }, SQL_RLS)
+        )
+      );
+    })()
   );
 }
-
 
 
 /* ══ APP ════════════════════════════════════════════ */
