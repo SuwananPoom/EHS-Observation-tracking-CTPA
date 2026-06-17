@@ -541,6 +541,50 @@ function cloudMergeSave(localArr, deletedIds){
   });
 }
 
+/* directDeleteFromCloud: read fresh from Supabase → remove obs → write back → verify gone.
+   Returns { ok, before, after, verified, err } with full console proof. */
+function directDeleteFromCloud(id){
+  if(!cloudOn()) return Promise.resolve({ ok: false, err: "Cloud not configured" });
+  console.log("[DELETE] Starting direct delete for", id);
+  return cloudLoad().then(function(row){
+    var arr = (row && row.data && Array.isArray(row.data)) ? row.data : [];
+    var before = arr.length;
+    console.log("[DELETE] Read", before, "obs from Supabase. Target:", id,
+      "| found:", arr.some(function(o){ return o.id === id; }));
+
+    var filtered = arr.filter(function(o){ return o.id !== id; });
+    if(filtered.length === before){
+      console.warn("[DELETE]", id, "not found in Supabase — already deleted or never existed");
+      return { ok: true, before: before, after: before, verified: true, alreadyGone: true };
+    }
+    console.log("[DELETE] Writing", filtered.length, "obs back (removed", before - filtered.length, "record)");
+
+    return cloudSave(filtered).then(function(saveOk){
+      console.log("[DELETE] cloudSave result:", saveOk);
+      if(!saveOk){
+        return { ok: false, before: before, after: filtered.length, verified: false,
+          err: "PATCH to Supabase failed: " + (__lastCloudSaveErr || "unknown") };
+      }
+      /* Verification read — confirm obs is actually gone */
+      return cloudLoad().then(function(row2){
+        var arr2 = (row2 && row2.data && Array.isArray(row2.data)) ? row2.data : [];
+        var stillThere = arr2.some(function(o){ return o.id === id; });
+        console.log("[DELETE] Verification: Supabase now has", arr2.length, "obs |", id,
+          stillThere ? "STILL PRESENT ❌" : "CONFIRMED GONE ✅");
+        if(stillThere){
+          return { ok: false, before: before, after: arr2.length, verified: false,
+            err: "Verification failed: " + id + " still in Supabase after PATCH. RLS may be blocking writes." };
+        }
+        return { ok: true, before: before, after: arr2.length, verified: true, finalArr: arr2 };
+      });
+    });
+  }).catch(function(e){
+    var msg = (e && e.message) || "Network error";
+    console.error("[DELETE] directDeleteFromCloud error:", msg);
+    return { ok: false, err: msg };
+  });
+}
+
 /* ===== Supabase Realtime — WebSocket subscription for instant cross-device sync =====
    When any device saves to ctpa_state, Supabase emits a postgres_changes event.
    This device receives it and immediately calls pull() — no page refresh needed.
@@ -4521,84 +4565,101 @@ function App() {
   var _delInProgress = React.useRef({});
   var _useState_delBusy = React.useState(null), delBusyId = _useState_delBusy[0], setDelBusyId = _useState_delBusy[1];
   var delO = function delO(id) {
-    /* Guard: prevent double-click — also reflected in UI as disabled button */
+    /* Guard: prevent double-click */
     if(_delInProgress.current[id]){
-      console.warn("[CTPA] delO: already deleting", id, "— ignoring duplicate call");
+      console.warn("[DELETE] Already deleting", id, "— ignoring duplicate call");
       return;
     }
     _delInProgress.current[id] = true;
     setDelBusyId(id);
 
     var delTarget = obs.find(function(o){ return o.id === id; });
-    var filtered = obs.filter(function(o){ return o.id !== id; });
 
-    /* 1. Persist tombstone immediately — pull() and sv() will ALWAYS filter this ID */
+    /* 1. Persist tombstone so pull() never re-adds this obs */
     addDeletedId(id);
 
-    /* 2. Update local state + localStorage optimistically */
-    setObs(filtered);
-    try { localStorage.setItem(SKEY, JSON.stringify(filtered)); } catch(e){}
+    /* 2. Hide from UI immediately (optimistic) */
+    var localFiltered = obs.filter(function(o){ return o.id !== id; });
+    setObs(localFiltered);
+    try { localStorage.setItem(SKEY, JSON.stringify(localFiltered)); } catch(e){}
     setView("list");
     setDet(null);
 
-    /* 3. Save to cloud FIRST — only log on confirmed success */
-    if(cloudOn()){
-      setSyncBusy(true);
-      cloudMergeSave(filtered, getDeletedIds()).then(function(result){
-        setSyncBusy(false);
-        delete _delInProgress.current[id];
-        setDelBusyId(null);
-        if(!result.ok){
-          var errDetail = __lastCloudSaveErr || "unknown error";
-          console.error("[CTPA] delO cloud save failed:", errDetail);
-          /* Rollback local state on failure; keep tombstone so pull() won't restore */
-          setObs(function(cur){ return cur.some(function(o){ return o.id === id; }) ? cur : obs; });
-          setSyncErr("Delete failed — " + errDetail + ". Tap ↻ Sync to retry.");
-          toast$("❌ Delete failed — cloud not updated", "err");
-        } else {
-          setSyncErr(null);
-          /* Log only after confirmed Supabase success */
-          logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + (delTarget ? " | " + obsContext(delTarget) : ""));
-          /* Update state with merged result */
-          var migrated = ctpaMigrate(result.merged);
-          setObs(migrated);
-          try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e){}
-          setCloudObsCount(migrated.length);
-          console.log("[CTPA] delO: deleted", id, "| cloud now has", migrated.length, "obs");
-          toast$(id + " deleted");
-          /* Clean up ctpa_photos for the deleted observation */
-          ["pb","pa"].forEach(function(slot){
-            var photos = delTarget ? (delTarget[slot] || []) : [];
-            photos.forEach(function(p, idx){
-              var delUrl = photosApiBase() +
-                "?site=eq." + encodeURIComponent(CLOUD.row) +
-                "&obs_id=eq." + encodeURIComponent(id) +
-                "&slot=eq." + encodeURIComponent(slot) +
-                "&idx=eq." + idx;
-              fetch(delUrl, { method: "DELETE", headers: cloudHeaders() })
-                .then(function(r){ console.log("[CTPA] delO: ctpa_photos cleanup", id, slot, idx, r.ok ? "✅" : "❌ HTTP " + r.status); })
-                .catch(function(e){ console.warn("[CTPA] delO: ctpa_photos cleanup error:", e && e.message); });
-            });
-          });
-        }
-      }).catch(function(e){
-        setSyncBusy(false);
-        delete _delInProgress.current[id];
-        setDelBusyId(null);
-        var msg = (e && e.message) || "Network error";
-        setSyncErr("Delete failed — " + msg);
-        toast$("❌ Delete failed — " + msg, "err");
-        console.error("[CTPA] delO exception:", msg, e);
-        setObs(obs);
-        try { localStorage.setItem(SKEY, JSON.stringify(obs)); } catch(e2){}
-      });
-    } else {
+    if(!cloudOn()){
       delete _delInProgress.current[id];
       setDelBusyId(null);
-      /* Offline: log immediately since we can't confirm cloud */
       logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + " (offline)");
-      toast$(id + " deleted (offline — will sync when connected)");
+      toast$(id + " deleted (offline)");
+      return;
     }
+
+    setSyncBusy(true);
+    /* 3. Direct atomic delete: read Supabase → remove → write → verify */
+    directDeleteFromCloud(id).then(function(result){
+      setSyncBusy(false);
+      delete _delInProgress.current[id];
+      setDelBusyId(null);
+
+      console.log("[DELETE] Result for", id, ":", JSON.stringify({
+        ok: result.ok, before: result.before, after: result.after,
+        verified: result.verified, alreadyGone: result.alreadyGone, err: result.err
+      }));
+
+      if(!result.ok){
+        /* Delete failed — restore UI and show error */
+        addDeletedId(id); /* keep tombstone */
+        setObs(obs); /* restore original obs array */
+        try { localStorage.setItem(SKEY, JSON.stringify(obs)); } catch(e){}
+        var errMsg = result.err || "Unknown error";
+        setSyncErr("Delete failed: " + errMsg);
+        toast$("❌ Delete failed — " + errMsg, "err");
+        return;
+      }
+
+      /* 4. Success — use verified array from Supabase as final state */
+      var finalArr = result.finalArr ? ctpaMigrate(result.finalArr) : localFiltered;
+      /* Apply tombstone filter to verified array as extra safety */
+      var tombstones = getDeletedIds();
+      if(tombstones.length > 0){
+        finalArr = finalArr.filter(function(o){ return tombstones.indexOf(o.id) === -1; });
+      }
+      setObs(finalArr);
+      try { localStorage.setItem(SKEY, JSON.stringify(finalArr)); } catch(e){}
+      setCloudObsCount(finalArr.length);
+      setSyncErr(null);
+
+      /* 5. Log ONLY after verified Supabase success */
+      logEvent("DELETE_OBSERVATION", id,
+        "Deleted by " + (ctpaUser() || "Anonymous") +
+        " | before:" + result.before + " after:" + result.after +
+        (delTarget ? " | " + obsContext(delTarget) : ""));
+
+      toast$(id + " deleted ✅ (verified in Supabase: " + result.before + "→" + result.after + " obs)");
+
+      /* 6. Clean up ctpa_photos */
+      ["pb","pa"].forEach(function(slot){
+        var photos = delTarget ? (delTarget[slot] || []) : [];
+        photos.forEach(function(p, idx){
+          var delUrl = photosApiBase() +
+            "?site=eq." + encodeURIComponent(CLOUD.row) +
+            "&obs_id=eq." + encodeURIComponent(id) +
+            "&slot=eq." + encodeURIComponent(slot) +
+            "&idx=eq." + idx;
+          fetch(delUrl, { method: "DELETE", headers: cloudHeaders() })
+            .catch(function(){});
+        });
+      });
+    }).catch(function(e){
+      setSyncBusy(false);
+      delete _delInProgress.current[id];
+      setDelBusyId(null);
+      var msg = (e && e.message) || "Network error";
+      setSyncErr("Delete failed — " + msg);
+      toast$("❌ Delete failed — " + msg, "err");
+      console.error("[DELETE] Exception:", msg, e);
+      setObs(obs);
+      try { localStorage.setItem(SKEY, JSON.stringify(obs)); } catch(e2){}
+    });
   };
   var openEdit = function openEdit(item) {
     setEdit(item);
