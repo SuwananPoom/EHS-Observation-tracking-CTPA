@@ -3343,26 +3343,37 @@ function DiagnosticsView(_ref_diag) {
         fetch(countUrl, { headers: cloudHeaders(), cache: "no-store" })
           .then(function(r){ return r.json().then(function(rows){ return rows.length; }); })
           .then(function(beforeCount){
+            console.log("[ClearLog] Before count:", beforeCount);
+            var delHeaders = Object.assign({ "Prefer": "count=exact" }, cloudHeaders());
             return fetch(base + "/ctpa_log?site=eq.bkk22", {
               method: "DELETE",
-              headers: cloudHeaders(),
+              headers: delHeaders,
               cache: "no-store"
             }).then(function(r){
-              if(r.status === 403 || r.status === 401){
+              var contentRange = r.headers.get("content-range") || "";
+              console.log("[ClearLog] DELETE status:", r.status, "content-range:", contentRange);
+              if(r.status === 401 || r.status === 403){
                 setClBusy(false);
-                setClResult({ ok: false, msg: "HTTP " + r.status + " — DELETE policy not enabled on ctpa_log. Run the SQL below in Supabase SQL Editor first, then retry.", beforeCount: beforeCount });
+                setClResult({ ok: false, msg: "HTTP " + r.status + " — RLS DELETE policy missing on ctpa_log. Run Step 4 SQL below in Supabase SQL Editor, then retry.", beforeCount: beforeCount });
                 return;
               }
               return fetch(countUrl, { headers: cloudHeaders(), cache: "no-store" })
                 .then(function(r2){ return r2.json().then(function(rows){ return rows.length; }); })
                 .then(function(afterCount){
+                  console.log("[ClearLog] After count:", afterCount, "Deleted:", beforeCount - afterCount);
                   setClBusy(false);
-                  setClResult({ ok: true, beforeCount: beforeCount, afterCount: afterCount,
-                    msg: "✅ Deleted " + (beforeCount - afterCount) + " log records. Remaining: " + afterCount });
+                  if(afterCount === beforeCount && beforeCount > 0){
+                    setClResult({ ok: false, beforeCount: beforeCount, afterCount: afterCount,
+                      msg: "⚠️ DELETE returned HTTP " + r.status + " but 0 rows deleted. RLS policy is blocking DELETE for the anon key. Run Step 4 SQL below in Supabase SQL Editor to add DELETE policy, then retry." });
+                  } else {
+                    setClResult({ ok: true, beforeCount: beforeCount, afterCount: afterCount,
+                      msg: "✅ Deleted " + (beforeCount - afterCount) + " log records. Remaining: " + afterCount });
+                  }
                 });
             });
           })
           .catch(function(e){
+            console.error("[ClearLog] Error:", e);
             setClBusy(false);
             setClResult({ ok: false, msg: "Network error: " + (e && e.message || "unknown") });
           });
