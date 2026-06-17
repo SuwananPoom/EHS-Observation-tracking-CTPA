@@ -3585,55 +3585,91 @@ function DiagnosticsView(_ref_diag) {
         setResetBusy(true); setResetResult(null);
         var hdrs = { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": "application/json" };
         var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/";
+        var beforeObs   = previewData ? previewData.obsArr.length   : 0;
+        var beforeLogs  = previewData ? previewData.logArr.length   : 0;
+        var beforePhotos= previewData ? previewData.photoMeta.length: 0;
         var steps = [];
 
-        /* 1. Clear observations (set data = []) */
+        /* 1. Clear observations (PATCH data = []) */
         steps.push(
           fetch(base + "ctpa_state?id=eq." + CLOUD.row, {
             method: "PATCH",
             headers: Object.assign({ "Prefer": "return=minimal" }, hdrs),
             body: JSON.stringify({ data: [] })
-          }).then(function(r){ return { step: "Observations cleared", ok: r.ok, status: r.status }; })
+          }).then(function(r){
+            console.log("[Reset] PATCH ctpa_state status:", r.status);
+            return { step: "ctpa_state.data = []", sql: "UPDATE ctpa_state SET data = '[]' WHERE id = 'bkk22';", ok: r.ok, status: r.status, before: beforeObs, deleted: beforeObs };
+          })
         );
 
         /* 2. Delete activity logs */
         steps.push(
           fetch(base + "ctpa_log?site=eq." + encodeURIComponent(CLOUD.row), {
             method: "DELETE",
-            headers: hdrs
-          }).then(function(r){ return { step: "Activity logs deleted", ok: r.ok, status: r.status }; })
+            headers: Object.assign({ "Prefer": "count=exact" }, hdrs)
+          }).then(function(r){
+            var cr = r.headers.get("content-range") || "";
+            console.log("[Reset] DELETE ctpa_log status:", r.status, "content-range:", cr);
+            var deleted = 0;
+            /* content-range: 0/N means N rows deleted */
+            var m = cr.match(/\/(\d+)/);
+            if(m) deleted = parseInt(m[1], 10);
+            var rlsBlocked = (r.ok && deleted === 0 && beforeLogs > 0);
+            return { step: "DELETE FROM ctpa_log WHERE site='bkk22'", sql: "DELETE FROM public.ctpa_log WHERE site = 'bkk22';", ok: r.ok && !rlsBlocked, status: r.status, before: beforeLogs, deleted: deleted, rlsBlocked: rlsBlocked };
+          })
         );
 
-        /* 3. Delete photos from ctpa_photos (if table exists) */
+        /* 3. Delete photos from ctpa_photos */
         steps.push(
           fetch(base + "ctpa_photos?site=eq." + encodeURIComponent(CLOUD.row), {
             method: "DELETE",
-            headers: hdrs
-          }).then(function(r){ return { step: "Photo records deleted", ok: r.ok || r.status === 404, status: r.status }; })
-          .catch(function(){ return { step: "Photo records (ctpa_photos skipped)", ok: true, status: "N/A" }; })
+            headers: Object.assign({ "Prefer": "count=exact" }, hdrs)
+          }).then(function(r){
+            var cr = r.headers.get("content-range") || "";
+            console.log("[Reset] DELETE ctpa_photos status:", r.status, "content-range:", cr);
+            var deleted = 0;
+            var m = cr.match(/\/(\d+)/);
+            if(m) deleted = parseInt(m[1], 10);
+            return { step: "DELETE FROM ctpa_photos WHERE site='bkk22'", sql: "DELETE FROM public.ctpa_photos WHERE site = 'bkk22';", ok: r.ok || r.status === 404, status: r.status, before: beforePhotos, deleted: deleted };
+          })
+          .catch(function(){ return { step: "DELETE FROM ctpa_photos WHERE site='bkk22'", sql: "DELETE FROM public.ctpa_photos WHERE site = 'bkk22';", ok: true, status: "N/A (table absent)", before: 0, deleted: 0 }; })
         );
 
-        Promise.all(steps).then(function(results){
-          var allOk = results.every(function(r){ return r.ok; });
+        Promise.all(steps).then(function(stepResults){
+          /* 4. Post-reset verification — re-fetch counts */
+          return Promise.all([
+            fetch(base + "ctpa_state?id=eq." + CLOUD.row + "&select=data", { headers: hdrs })
+              .then(function(r){ return r.json(); }).then(function(rows){ return rows && rows[0] && Array.isArray(rows[0].data) ? rows[0].data.length : 0; }).catch(function(){ return "err"; }),
+            fetch(base + "ctpa_log?site=eq." + encodeURIComponent(CLOUD.row) + "&select=id", { headers: hdrs })
+              .then(function(r){ return r.json(); }).then(function(rows){ return Array.isArray(rows) ? rows.length : 0; }).catch(function(){ return "err"; }),
+            fetch(base + "ctpa_photos?site=eq." + encodeURIComponent(CLOUD.row) + "&select=obs_id", { headers: hdrs })
+              .then(function(r){ return r.ok ? r.json() : []; }).then(function(rows){ return Array.isArray(rows) ? rows.length : 0; }).catch(function(){ return "err"; })
+          ]).then(function(verif){
+            return { stepResults: stepResults, verif: { obs: verif[0], logs: verif[1], photos: verif[2] } };
+          });
+        }).then(function(payload){
+          var stepResults = payload.stepResults;
+          var verif = payload.verif;
+          var allOk = stepResults.every(function(r){ return r.ok; });
 
-          /* 4. Clear localStorage + per-photo cache on this device */
+          /* 5. Clear localStorage + per-photo cache on this device */
+          var localCleared = 0;
           try {
             localStorage.removeItem(typeof SKEY !== "undefined" ? SKEY : "ctpa_bkk22_v25_v25c");
-            /* Remove all ctpa_ph_ photo cache keys */
+            localCleared++;
             var toRemove = [];
             for(var i = 0; i < localStorage.length; i++){
               var k = localStorage.key(i);
               if(k && k.indexOf("ctpa_ph_") === 0) toRemove.push(k);
             }
-            toRemove.forEach(function(k){ localStorage.removeItem(k); });
+            toRemove.forEach(function(k){ localStorage.removeItem(k); localCleared++; });
           } catch(e){}
 
           setResetBusy(false);
-          setResetResult({ ok: allOk, steps: results });
+          setResetResult({ ok: allOk, steps: stepResults, verif: verif, localCleared: localCleared });
           if(allOk){
             setResetPhase("done");
-            /* write a fresh health-check log entry */
-            logEvent("SYSTEM_RESET", null, "Pre go-live data reset completed by " + (ctpaUser() || "Admin (Diagnostics)"));
+            logEvent("SYSTEM_RESET", null, "Go-live data reset completed by " + (ctpaUser() || "Admin (Diagnostics)") + " | obs:" + stepResults[0].deleted + " logs:" + stepResults[1].deleted + " photos:" + stepResults[2].deleted);
           }
         }).catch(function(e){
           setResetBusy(false);
@@ -3709,22 +3745,61 @@ function DiagnosticsView(_ref_diag) {
           ),
 
           /* Phase: done */
-          resetPhase === "done" && React.createElement("div", { style: { background: "#F0FDF4", border: "1.5px solid #BBF7D0", borderRadius: 8, padding: "14px 16px" } },
-            React.createElement("div", { style: { fontWeight: 800, color: "#15803D", fontSize: 14, marginBottom: 6 } }, "✅ Reset Complete — System Ready for Go-Live"),
-            React.createElement("div", { style: { fontSize: 11, color: "#166534" } }, "• Observations: reset to 0\n• Next observation will be OBS-001\n• Activity Log: cleared\n• Photos: cleared\n• This device cache: cleared\n• Reload the app to start fresh")
+          resetPhase === "done" && resetResult && React.createElement("div", { style: { background: "#F0FDF4", border: "1.5px solid #BBF7D0", borderRadius: 8, padding: "14px 16px", marginTop: 10 } },
+            React.createElement("div", { style: { fontWeight: 800, color: "#15803D", fontSize: 14, marginBottom: 10 } }, "✅ GO-LIVE RESET COMPLETE — System Ready for Production"),
+
+            /* Deletion summary table */
+            React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#166534", marginBottom: 6 } }, "Records Deleted:"),
+            resetResult.steps && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11, marginBottom: 12 } },
+              React.createElement("thead", null,
+                React.createElement("tr", { style: { background: "#DCFCE7" } },
+                  ["SQL Executed", "Before", "Deleted", "HTTP"].map(function(h,i){
+                    return React.createElement("th", { key: i, style: { padding: "5px 8px", textAlign: i===0?"left":"center", fontWeight: 700, color: "#14532D", borderBottom: "1px solid #BBF7D0" } }, h);
+                  })
+                )
+              ),
+              React.createElement("tbody", null,
+                resetResult.steps.map(function(r, i){
+                  return React.createElement("tr", { key: i, style: { borderBottom: "1px solid #BBF7D0" } },
+                    React.createElement("td", { style: { padding: "5px 8px", fontFamily: "monospace", fontSize: 10, color: "#0F172A" } }, r.sql || r.step),
+                    React.createElement("td", { style: { padding: "5px 8px", textAlign: "center", color: "#64748B" } }, r.before != null ? r.before : "—"),
+                    React.createElement("td", { style: { padding: "5px 8px", textAlign: "center", fontWeight: 700, color: r.ok ? "#15803D" : RED_TXT } }, r.deleted != null ? r.deleted : "—"),
+                    React.createElement("td", { style: { padding: "5px 8px", textAlign: "center", color: "#64748B" } }, r.status)
+                  );
+                })
+              )
+            ),
+
+            /* Verification results */
+            resetResult.verif && React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#166534", marginBottom: 6 } }, "Verification (post-reset SELECT):"),
+              React.createElement("pre", { style: { background: "#0F172A", color: "#E2E8F0", borderRadius: 7, padding: "10px 12px", fontSize: 10, margin: "0 0 10px 0", lineHeight: 1.7 } },
+                "SELECT COUNT(*) FROM ctpa_state  WHERE id='bkk22' → data[] len = " + resetResult.verif.obs + "\n" +
+                "SELECT COUNT(*) FROM ctpa_log    WHERE site='bkk22'            = " + resetResult.verif.logs + "\n" +
+                "SELECT COUNT(*) FROM ctpa_photos WHERE site='bkk22'            = " + resetResult.verif.photos
+              )
+            ),
+
+            /* What was NOT changed */
+            React.createElement("div", { style: { fontSize: 10, color: "#166534", lineHeight: 1.8, borderTop: "1px solid #BBF7D0", paddingTop: 8 } },
+              "Unchanged: Supabase tables · RLS policies · UI/UX · Approval workflow · GC/PMC codes · Dropdown lists · Risk levels · Categories · Status types · User roles · Export functions",
+              React.createElement("br", null),
+              React.createElement("strong", null, "Next observation will be OBS-001. Reload the app on all devices to start fresh.")
+            )
           ),
 
-          /* Step results */
-          resetResult && React.createElement("div", { style: { marginTop: 10 } },
+          /* Step results (error case) */
+          resetResult && !resetResult.ok && React.createElement("div", { style: { marginTop: 10 } },
             resetResult.steps ? resetResult.steps.map(function(r, i){
               return React.createElement("div", { key: i, style: { display: "flex", gap: 8, alignItems: "center", padding: "5px 8px", borderRadius: 6, marginBottom: 4,
                 background: r.ok ? "#F0FDF4" : RED_BG, border: "1px solid " + (r.ok ? "#BBF7D0" : RED_BOR) } },
                 React.createElement("span", null, r.ok ? "✅" : "❌"),
                 React.createElement("span", { style: { fontSize: 11, fontWeight: 600 } }, r.step),
+                r.rlsBlocked && React.createElement("span", { style: { fontSize: 10, color: "#92400E", marginLeft: 4 } }, "— RLS blocked: run Step 4 SQL in Supabase SQL Editor"),
                 React.createElement("span", { style: { fontSize: 10, color: "#64748B", marginLeft: "auto" } }, "HTTP " + r.status)
               );
             }) : null,
-            !resetResult.ok && resetResult.msg && React.createElement("div", { style: { fontSize: 11, color: RED_TXT, padding: "6px 10px", background: RED_BG, borderRadius: 6, marginTop: 4 } }, resetResult.msg)
+            resetResult.msg && React.createElement("div", { style: { fontSize: 11, color: RED_TXT, padding: "6px 10px", background: RED_BG, borderRadius: 6, marginTop: 4 } }, resetResult.msg)
           )
         )
       );
