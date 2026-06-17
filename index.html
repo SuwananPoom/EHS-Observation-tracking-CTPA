@@ -436,13 +436,13 @@ function logEvent(action, obsId, detail){
   var rec = {
     site: CLOUD.row,
     who: ctpaUser() || "Anonymous",
-    action: action,            // "visit" | "create" | "edit" | "delete" | "submit_closure" | "approve_closure" | "reject_closure"
+    action: action,
     obs_id: obsId || null,
     detail: detail || null,
     device: ctpaDevice(),
     at: new Date().toISOString()
   };
-  logLocalPush(rec);           // always keep a local copy
+  logLocalPush(rec);
   if(!cloudOn()) return Promise.resolve(false);
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_log";
   return fetch(u, {
@@ -450,6 +450,15 @@ function logEvent(action, obsId, detail){
     headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
     body: JSON.stringify([rec])
   }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+}
+/* Build a short observation context string for log detail lines */
+function obsContext(o){
+  if(!o) return "";
+  var typeLabel = (OBS_TYPE[o.obsType] || {}).label || o.obsType || "";
+  var pz = parseZone(o.zone || "");
+  var area = (pz.area === "Other" ? pz.other : pz.area) || o.zone || "";
+  var desc = (o.desc || "").slice(0, 80) + ((o.desc || "").length > 80 ? "…" : "");
+  return [typeLabel, area, desc].filter(Boolean).join(" | ");
 }
 function logLoad(limit){
   /* Activity Log is Supabase-only (single source of truth).
@@ -3743,7 +3752,7 @@ function App() {
       clientApprovedBy: "", clientApprovedDate: "",
       lpApprovedBy: "", lpApprovedDate: ""
     });
-    logEvent("submit_closure", id, "submitted for closure by " + (ctpaUser() || "Anonymous"));
+    logEvent("SUBMIT_CLOSURE", id, "Submitted for closure by " + (ctpaUser() || "Anonymous"));
     toast$("Submitted for closure");
   };
   /* an approver (GC Manager or PMC Manager) signs off on a pending closure.
@@ -3774,7 +3783,7 @@ function App() {
       patch.status = "PENDING_VERIFY";
     }
     applyTo(id, patch);
-    logEvent("approve_closure", id, roleLabel(approverRole) + " approved by " + who + (clientDone && lpDone ? " (closure complete)" : " (awaiting other party)") + (comment ? " — " + comment : ""));
+    logEvent("APPROVE_CLOSURE", id, "Approved by " + who + " (" + roleLabel(approverRole) + ")" + (clientDone && lpDone ? " — Closure complete" : " — Awaiting other party") + (comment ? " | Comment: " + comment : ""));
     toast$(clientDone && lpDone ? "Closure approved by both parties (GC Manager + PMC Manager)" : roleLabel(approverRole) + " sign-off recorded — awaiting other party");
   };
   /* either approver rejects the closure (observation returns to OPEN; sign-offs cleared) */
@@ -3792,7 +3801,7 @@ function App() {
       clientApprovedBy: "", clientApprovedDate: "",
       lpApprovedBy: "", lpApprovedDate: ""
     });
-    logEvent("reject_closure", id, "rejected by " + who + " (" + roleLabel(approverRole) + ")" + (comment ? " — " + comment : ""));
+    logEvent("REJECT_CLOSURE", id, "Rejected by " + who + " (" + roleLabel(approverRole) + ")" + (comment ? " | Reason: " + comment : ""));
     toast$("Closure rejected");
   };
   var upPh = function upPh(id, k, photos) {
@@ -3800,15 +3809,20 @@ function App() {
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, photos)) : o;
     });
     ps(nx);
-    setDet(nx.find(function (o) {
-      return o.id === id;
-    }));
+    setDet(nx.find(function (o) { return o.id === id; }));
+    /* log each newly added photo */
+    var prev = (obs.find(function(o){ return o.id === id; }) || {})[k] || [];
+    var added = photos.slice(prev.length);
+    added.forEach(function(p){
+      logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
+    });
   };
   var delO = function delO(id) {
     ps(obs.filter(function (o) {
       return o.id !== id;
     }));
-    logEvent("delete", id, null);
+    var delTarget = obs.find(function(o){ return o.id === id; });
+    logEvent("DELETE_OBSERVATION", id, "Deleted observation" + (delTarget ? " | " + obsContext(delTarget) : ""));
     toast$("Deleted");
     setView("list");
     setDet(null);
@@ -3912,7 +3926,7 @@ function App() {
           changes.push(k + ": " + fromV + " → " + toV);
         }
       });
-      logEvent("edit", edit.id, changes.length ? changes.join("; ") : "edited");
+      logEvent("UPDATE_OBSERVATION", edit.id, changes.length ? "Updated: " + changes.join(" | ") : "Edited observation");
       toast$(edit.id + " updated");
     } else {
       toast$("Generating ID…");
@@ -3935,7 +3949,7 @@ function App() {
         });
         var created = [ni].concat(_toConsumableArray(obs));
         ps(created);
-        logEvent("create", ni.id, "new observation");
+        logEvent("CREATE_OBSERVATION", ni.id, "Created observation | " + obsContext(ni));
         toast$(ni.id + " created");
         setEdit(null);
         setForm(blk);
@@ -4145,8 +4159,27 @@ function App() {
   }, ["When", "Who", "Action", "Observation", "Detail", "Device"].map(function(h){
     return /*#__PURE__*/React.createElement("th", { key: h, style: { padding: "10px 12px", fontSize: 11, color: C.greenDk, fontWeight: 700, whiteSpace: "nowrap" } }, h);
   }))), /*#__PURE__*/React.createElement("tbody", null, logRows.map(function(r, i){
-    var actColor = r.action === "delete" || r.action === "reject_closure" ? C.red : (r.action === "create" || r.action === "approve_closure" ? C.green : (r.action === "edit" || r.action === "submit_closure" ? C.amberDk : C.slate));
-    var actLabel = { visit: "Visit", create: "Create", edit: "Edit", delete: "Delete", submit_closure: "Submit Closure", approve_closure: "Approve Closure", reject_closure: "Reject Closure" }[r.action] || r.action;
+    var _actCfg = {
+      CREATE_OBSERVATION: { label: "Create", color: C.green },
+      UPDATE_OBSERVATION: { label: "Update", color: C.amberDk },
+      DELETE_OBSERVATION: { label: "Delete", color: C.red },
+      SUBMIT_CLOSURE:     { label: "Submit Closure", color: C.amberDk },
+      APPROVE_CLOSURE:    { label: "Approve Closure", color: C.green },
+      REJECT_CLOSURE:     { label: "Reject Closure", color: C.red },
+      UPLOAD_PHOTO:       { label: "Upload Photo", color: "#0EA5E9" },
+      CLOSE_OBSERVATION:  { label: "Close", color: C.green },
+      visit:              { label: "Visit", color: C.slate },
+      /* legacy action names (existing records) */
+      create:             { label: "Create", color: C.green },
+      edit:               { label: "Update", color: C.amberDk },
+      delete:             { label: "Delete", color: C.red },
+      submit_closure:     { label: "Submit Closure", color: C.amberDk },
+      approve_closure:    { label: "Approve Closure", color: C.green },
+      reject_closure:     { label: "Reject Closure", color: C.red }
+    };
+    var _actEntry = _actCfg[r.action] || { label: r.action, color: C.slate };
+    var actColor = _actEntry.color;
+    var actLabel = _actEntry.label;
     var when = "";
     try { when = new Date(r.at).toLocaleString(); } catch(e){ when = r.at; }
     return /*#__PURE__*/React.createElement("tr", { key: i, style: { borderTop: "1px solid " + C.border } },
