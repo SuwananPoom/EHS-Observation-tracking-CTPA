@@ -2725,7 +2725,7 @@ function runObsWorkflowTest(currentObs) {
     return step("8. Activity log write — INSERT ctpa_log", {
       table: "ctpa_log", column: "site, who, action, device", operation: "POST (INSERT)"
     }, function() {
-      var logPayload = [{ site: "bkk22", who: "DIAG", action: "obs_workflow_test", obs_id: testId, detail: "diagnostic pass", device: "diagnostic" }];
+      var logPayload = [{ site: "bkk22", who: "DIAG", action: "obs_workflow_test", obs_id: null, detail: "diagnostic pass (test obs: " + testId + ")", device: "diagnostic" }];
       return diagFetch(base + "/rest/v1/ctpa_log", {
         method: "POST",
         headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
