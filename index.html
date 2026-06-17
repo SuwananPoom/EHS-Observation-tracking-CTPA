@@ -446,18 +446,21 @@ function cloudSave(arr){
 /* cloudMergeSave: read current cloud data → merge localArr into it → write back.
    Prevents one device from overwriting observations added by other devices.
    Merge rule: localArr is authoritative for obs IDs it contains (edits/deletes/status).
-   Cloud obs with IDs not in localArr are preserved (added by other devices). */
-function cloudMergeSave(localArr){
+   Cloud obs with IDs not in localArr are preserved (added by other devices).
+   deletedIds: array of obs IDs intentionally deleted — NEVER re-added from cloud. */
+function cloudMergeSave(localArr, deletedIds){
   if(!cloudOn()) return Promise.resolve({ ok: false, merged: localArr });
-  console.log("[CTPA] cloudMergeSave start | local obs:", localArr.length);
+  var delSet = {};
+  (deletedIds || []).forEach(function(id){ if(id) delSet[id] = true; });
+  console.log("[CTPA] cloudMergeSave start | local obs:", localArr.length, "| deletedIds:", Object.keys(delSet));
   return cloudLoad().then(function(row){
     var cloudArr = (row && row.data && Array.isArray(row.data)) ? row.data : [];
     console.log("[CTPA] cloudMergeSave | cloud obs:", cloudArr.length);
     /* Build ID set from localArr */
     var localIdSet = {};
     localArr.forEach(function(o){ if(o.id) localIdSet[o.id] = true; });
-    /* Keep cloud obs whose IDs are not present in localArr (added by other devices) */
-    var cloudOnly = cloudArr.filter(function(o){ return o.id && !localIdSet[o.id]; });
+    /* Keep cloud obs whose IDs are not present in localArr AND were not intentionally deleted */
+    var cloudOnly = cloudArr.filter(function(o){ return o.id && !localIdSet[o.id] && !delSet[o.id]; });
     /* Merged = local (authoritative for touched obs) + cloudOnly (other devices' new obs) */
     var merged = localArr.concat(cloudOnly);
     /* Sort by OBS number descending so newest appear first */
@@ -4064,14 +4067,61 @@ function App() {
     });
   };
   var delO = function delO(id) {
-    ps(obs.filter(function (o) {
-      return o.id !== id;
-    }));
     var delTarget = obs.find(function(o){ return o.id === id; });
-    logEvent("DELETE_OBSERVATION", id, "Deleted observation" + (delTarget ? " | " + obsContext(delTarget) : ""));
-    toast$("Deleted");
+    var filtered = obs.filter(function(o){ return o.id !== id; });
+    /* 1. Update local state immediately (optimistic) */
+    setObs(filtered);
+    try { localStorage.setItem(SKEY, JSON.stringify(filtered)); } catch(e){}
     setView("list");
     setDet(null);
+    logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + (delTarget ? " | " + obsContext(delTarget) : ""));
+    /* 2. Save to cloud — pass deletedIds so cloudMergeSave never re-adds this obs */
+    if(cloudOn()){
+      setSyncBusy(true);
+      cloudMergeSave(filtered, [id]).then(function(result){
+        setSyncBusy(false);
+        if(!result.ok){
+          var errDetail = __lastCloudSaveErr || "unknown error";
+          console.error("[CTPA] delO cloud save failed:", errDetail);
+          setSyncErr("Delete saved locally but cloud sync failed — " + errDetail + ". Tap ↻ Sync to retry.");
+          toast$("⚠ Saved locally — cloud sync pending", "err");
+        } else {
+          setSyncErr(null);
+          /* Update state with merged result (ensures other devices' obs are preserved) */
+          var migrated = ctpaMigrate(result.merged);
+          setObs(migrated);
+          try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e){}
+          setCloudObsCount(migrated.length);
+          console.log("[CTPA] delO: deleted", id, "| cloud now has", migrated.length, "obs");
+          toast$(id + " deleted");
+          /* 3. Clean up ctpa_photos for the deleted observation */
+          ["pb","pa"].forEach(function(slot){
+            var photos = delTarget ? (delTarget[slot] || []) : [];
+            photos.forEach(function(p, idx){
+              var delUrl = photosApiBase() +
+                "?site=eq." + encodeURIComponent(CLOUD.row) +
+                "&obs_id=eq." + encodeURIComponent(id) +
+                "&slot=eq." + encodeURIComponent(slot) +
+                "&idx=eq." + idx;
+              fetch(delUrl, { method: "DELETE", headers: cloudHeaders() })
+                .then(function(r){ console.log("[CTPA] delO: ctpa_photos cleanup", id, slot, idx, r.ok ? "✅" : "❌ HTTP " + r.status); })
+                .catch(function(e){ console.warn("[CTPA] delO: ctpa_photos cleanup error:", e && e.message); });
+            });
+          });
+        }
+      }).catch(function(e){
+        setSyncBusy(false);
+        var msg = (e && e.message) || "Network error";
+        setSyncErr("Delete failed — " + msg);
+        toast$("Delete cloud sync failed — " + msg, "err");
+        console.error("[CTPA] delO exception:", msg, e);
+        /* Rollback local state so user doesn't see phantom delete */
+        setObs(obs);
+        try { localStorage.setItem(SKEY, JSON.stringify(obs)); } catch(e2){}
+      });
+    } else {
+      toast$(id + " deleted (offline — will sync when connected)");
+    }
   };
   var openEdit = function openEdit(item) {
     setEdit(item);
