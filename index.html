@@ -4443,18 +4443,20 @@ function App() {
     });
   };
   var _delInProgress = React.useRef({});
+  var _useState_delBusy = React.useState(null), delBusyId = _useState_delBusy[0], setDelBusyId = _useState_delBusy[1];
   var delO = function delO(id) {
-    /* Guard: prevent double-click / duplicate delete of the same obs */
+    /* Guard: prevent double-click — also reflected in UI as disabled button */
     if(_delInProgress.current[id]){
       console.warn("[CTPA] delO: already deleting", id, "— ignoring duplicate call");
       return;
     }
     _delInProgress.current[id] = true;
+    setDelBusyId(id);
 
     var delTarget = obs.find(function(o){ return o.id === id; });
     var filtered = obs.filter(function(o){ return o.id !== id; });
 
-    /* 1. Persist tombstone immediately — pull() and sv() will respect it */
+    /* 1. Persist tombstone immediately — pull() and sv() will ALWAYS filter this ID */
     addDeletedId(id);
 
     /* 2. Update local state + localStorage optimistically */
@@ -4463,32 +4465,32 @@ function App() {
     setView("list");
     setDet(null);
 
-    /* 3. Log exactly once */
-    logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + (delTarget ? " | " + obsContext(delTarget) : ""));
-
-    /* 4. Save to cloud — pass full tombstone list so cloudMergeSave never re-adds */
+    /* 3. Save to cloud FIRST — only log on confirmed success */
     if(cloudOn()){
       setSyncBusy(true);
       cloudMergeSave(filtered, getDeletedIds()).then(function(result){
         setSyncBusy(false);
         delete _delInProgress.current[id];
+        setDelBusyId(null);
         if(!result.ok){
           var errDetail = __lastCloudSaveErr || "unknown error";
           console.error("[CTPA] delO cloud save failed:", errDetail);
-          setSyncErr("Delete saved locally but cloud sync failed — " + errDetail + ". Tap ↻ Sync to retry.");
-          toast$("⚠ Saved locally — cloud sync pending", "err");
+          /* Rollback local state on failure; keep tombstone so pull() won't restore */
+          setObs(function(cur){ return cur.some(function(o){ return o.id === id; }) ? cur : obs; });
+          setSyncErr("Delete failed — " + errDetail + ". Tap ↻ Sync to retry.");
+          toast$("❌ Delete failed — cloud not updated", "err");
         } else {
           setSyncErr(null);
-          /* Tombstone can be cleared now — cloud no longer has this obs */
-          removeDeletedId(id);
-          /* Update state with merged result (ensures other devices' obs are preserved) */
+          /* Log only after confirmed Supabase success */
+          logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + (delTarget ? " | " + obsContext(delTarget) : ""));
+          /* Update state with merged result */
           var migrated = ctpaMigrate(result.merged);
           setObs(migrated);
           try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e){}
           setCloudObsCount(migrated.length);
           console.log("[CTPA] delO: deleted", id, "| cloud now has", migrated.length, "obs");
           toast$(id + " deleted");
-          /* 5. Clean up ctpa_photos for the deleted observation */
+          /* Clean up ctpa_photos for the deleted observation */
           ["pb","pa"].forEach(function(slot){
             var photos = delTarget ? (delTarget[slot] || []) : [];
             photos.forEach(function(p, idx){
@@ -4506,16 +4508,19 @@ function App() {
       }).catch(function(e){
         setSyncBusy(false);
         delete _delInProgress.current[id];
+        setDelBusyId(null);
         var msg = (e && e.message) || "Network error";
         setSyncErr("Delete failed — " + msg);
-        toast$("Delete cloud sync failed — " + msg, "err");
+        toast$("❌ Delete failed — " + msg, "err");
         console.error("[CTPA] delO exception:", msg, e);
-        /* Rollback local state; keep tombstone so pull() won't restore it */
         setObs(obs);
         try { localStorage.setItem(SKEY, JSON.stringify(obs)); } catch(e2){}
       });
     } else {
       delete _delInProgress.current[id];
+      setDelBusyId(null);
+      /* Offline: log immediately since we can't confirm cloud */
+      logEvent("DELETE_OBSERVATION", id, "Deleted by " + (ctpaUser() || "Anonymous") + " (offline)");
       toast$(id + " deleted (offline — will sync when connected)");
     }
   };
@@ -7632,20 +7637,22 @@ function App() {
       cursor: "pointer"
     }
   }, "\u270F Edit"), /*#__PURE__*/React.createElement("button", {
+    disabled: delBusyId === det.id,
     onClick: function onClick() {
+      if (delBusyId === det.id) return;
       if (window.confirm("Delete " + det.id + "?")) delO(det.id);
     },
     style: {
       padding: "10px 16px",
       borderRadius: 11,
-      border: "1.5px solid " + C.red,
-      background: C.redBg,
+      border: "1.5px solid " + (delBusyId === det.id ? "#9CA3AF" : C.red),
+      background: delBusyId === det.id ? "#F3F4F6" : C.redBg,
       fontSize: 11,
-      cursor: "pointer",
-      color: C.redDk,
+      cursor: delBusyId === det.id ? "wait" : "pointer",
+      color: delBusyId === det.id ? "#9CA3AF" : C.redDk,
       fontWeight: 700
     }
-  }, "Delete"))))), cc && function () {
+  }, delBusyId === det.id ? "Deleting\u2026" : "Delete"))))), cc && function () {
     var item = obs.find(function (o) {
       return o.id === cc;
     });
