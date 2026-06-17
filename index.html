@@ -3586,6 +3586,131 @@ function DiagnosticsView(_ref_diag) {
       );
     })(),
 
+    /* ── Force Purge by ID ── */
+    (function(){
+      var _pgState = React.useState(null), pgResult = _pgState[0], setPgResult = _pgState[1];
+      var _pgBusy  = React.useState(false), pgBusy  = _pgBusy[0],  setPgBusy  = _pgBusy[1];
+      var _pgInput = React.useState("OBS-002, OBS-003, OBS-004"), pgInput = _pgInput[0], setPgInput = _pgInput[1];
+      var _pgConfirm = React.useState(""), pgConfirm = _pgConfirm[0], setPgConfirm = _pgConfirm[1];
+
+      function runPurge(){
+        if(pgConfirm !== "PURGE"){
+          setPgResult({ ok: false, msg: 'Type PURGE in the confirmation box to proceed.' });
+          return;
+        }
+        var ids = pgInput.split(/[\s,]+/).map(function(s){ return s.trim(); }).filter(Boolean);
+        if(!ids.length){ setPgResult({ ok: false, msg: 'Enter at least one OBS ID.' }); return; }
+        setPgBusy(true); setPgResult(null);
+        var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/";
+
+        /* Step 1: Read current Supabase data */
+        console.log("[PURGE] Starting purge for:", ids);
+        fetch(base + "ctpa_state?id=eq." + CLOUD.row + "&select=data", { headers: cloudHeaders(), cache: "no-store" })
+          .then(function(r){ return r.json(); })
+          .then(function(rows){
+            var arr = (rows && rows[0] && Array.isArray(rows[0].data)) ? rows[0].data : [];
+            var before = arr.length;
+            var found = ids.filter(function(id){ return arr.some(function(o){ return o.id === id; }); });
+            var notFound = ids.filter(function(id){ return !arr.some(function(o){ return o.id === id; }); });
+            console.log("[PURGE] Supabase before:", before, "| found:", found, "| not found:", notFound);
+
+            var filtered = arr.filter(function(o){ return ids.indexOf(o.id) === -1; });
+
+            /* Step 2: Write filtered array back */
+            return fetch(base + "ctpa_state?id=eq." + CLOUD.row, {
+              method: "PATCH",
+              headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+              body: JSON.stringify({ data: filtered }),
+              cache: "no-store"
+            }).then(function(r){
+              console.log("[PURGE] PATCH status:", r.status);
+              if(!r.ok){
+                return r.text().then(function(t){
+                  setPgBusy(false);
+                  setPgResult({ ok: false, msg: "PATCH failed HTTP " + r.status + ": " + t.slice(0,200), before: before, found: found });
+                });
+              }
+
+              /* Step 3: Verify */
+              return fetch(base + "ctpa_state?id=eq." + CLOUD.row + "&select=data", { headers: cloudHeaders(), cache: "no-store" })
+                .then(function(r2){ return r2.json(); })
+                .then(function(rows2){
+                  var arr2 = (rows2 && rows2[0] && Array.isArray(rows2[0].data)) ? rows2[0].data : [];
+                  var stillThere = ids.filter(function(id){ return arr2.some(function(o){ return o.id === id; }); });
+                  console.log("[PURGE] Verification: after=" + arr2.length, "| still present:", stillThere);
+
+                  /* Step 4: Clear localStorage and add tombstones */
+                  ids.forEach(function(id){ addDeletedId(id); });
+                  try { localStorage.setItem(SKEY, JSON.stringify(arr2)); } catch(e){}
+
+                  setPgBusy(false);
+                  setPgResult({
+                    ok: stillThere.length === 0,
+                    before: before, after: arr2.length,
+                    found: found, notFound: notFound,
+                    purged: before - arr2.length,
+                    stillThere: stillThere,
+                    msg: stillThere.length === 0
+                      ? "✅ Purge confirmed. Supabase: " + before + " → " + arr2.length + " obs. Deleted: " + found.join(", ")
+                      : "❌ Verification failed — still in Supabase: " + stillThere.join(", ") + ". RLS may be blocking PATCH."
+                  });
+                });
+            });
+          })
+          .catch(function(e){
+            setPgBusy(false);
+            setPgResult({ ok: false, msg: "Error: " + (e && e.message || "network") });
+          });
+      }
+
+      var RED = "#B91C1C", RED_BG = "#FEF2F2", RED_BOR = "#FECACA";
+      return secBox("Force Purge Observations by ID", "Permanently removes specific obs IDs directly from Supabase ctpa_state.data array. Use this to remove records that survive normal delete.",
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 11, color: "#92400E", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 7, padding: "8px 12px", marginBottom: 10 } },
+            "⚠️ Irreversible. This directly PATCHes the Supabase JSON array. Download backup first if needed."
+          ),
+          React.createElement("div", { style: { marginBottom: 8 } },
+            React.createElement("label", { style: { fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 } }, "IDs to purge (comma-separated):"),
+            React.createElement("input", {
+              value: pgInput, onChange: function(e){ setPgInput(e.target.value); },
+              placeholder: "OBS-002, OBS-003, OBS-004",
+              style: { width: "100%", padding: "7px 10px", border: "1px solid #CBD5E1", borderRadius: 7, fontSize: 12, fontFamily: "monospace", boxSizing: "border-box" }
+            })
+          ),
+          React.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 10 } },
+            React.createElement("input", {
+              value: pgConfirm, onChange: function(e){ setPgConfirm(e.target.value); },
+              placeholder: "Type PURGE to confirm",
+              style: { flex: 1, padding: "7px 10px", border: "1.5px solid " + (pgConfirm === "PURGE" ? "#BBF7D0" : RED_BOR),
+                borderRadius: 7, fontSize: 12, fontFamily: "monospace",
+                background: pgConfirm === "PURGE" ? "#F0FDF4" : "#FFF" }
+            }),
+            React.createElement("button", {
+              onClick: runPurge, disabled: pgBusy || pgConfirm !== "PURGE",
+              style: { padding: "7px 18px", background: pgBusy || pgConfirm !== "PURGE" ? "#9CA3AF" : RED,
+                color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                cursor: pgBusy || pgConfirm !== "PURGE" ? "not-allowed" : "pointer" }
+            }, pgBusy ? "Purging…" : "🗑️ Purge from Supabase")
+          ),
+          pgResult && React.createElement("div", { style: {
+            padding: "10px 14px", borderRadius: 7, fontSize: 12,
+            background: pgResult.ok ? "#F0FDF4" : RED_BG,
+            border: "1px solid " + (pgResult.ok ? "#BBF7D0" : RED_BOR),
+            color: pgResult.ok ? "#15803D" : RED, fontWeight: 600
+          } },
+            pgResult.msg,
+            pgResult.before != null && React.createElement("div", { style: { marginTop: 6, fontSize: 11, fontWeight: 400 } },
+              "Before: " + pgResult.before + " obs | After: " + pgResult.after + " obs | Purged: " + pgResult.purged,
+              pgResult.notFound && pgResult.notFound.length > 0 && React.createElement("span", null, " | Not found in Supabase: " + pgResult.notFound.join(", "))
+            ),
+            pgResult.ok && React.createElement("div", { style: { marginTop: 6, fontSize: 11, fontWeight: 400 } },
+              "Tombstones added to localStorage. Reload the app on all devices to reflect the change."
+            )
+          )
+        )
+      );
+    })(),
+
     /* ── Supabase Raw Lookup ── */
     (function(){
       var _lkState = React.useState(null), lkResult = _lkState[0], setLkResult = _lkState[1];
