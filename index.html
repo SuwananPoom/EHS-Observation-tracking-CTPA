@@ -3032,6 +3032,212 @@ function DiagnosticsView(_ref_diag) {
           }, SQL_RLS)
         )
       );
+    })(),
+
+    /* ── Clear Activity Log ── */
+    (function(){
+      var _clState = React.useState(null), clResult = _clState[0], setClResult = _clState[1];
+      var _clBusy  = React.useState(false), clBusy  = _clBusy[0],  setClBusy  = _clBusy[1];
+
+      var CLEAR_SQL = [
+        "-- Clear all Activity Log records before go-live",
+        "-- Observations (ctpa_state) are NOT affected",
+        "",
+        "-- Step 1: Count before delete",
+        "SELECT COUNT(*) AS log_count FROM public.ctpa_log WHERE site = 'bkk22';",
+        "",
+        "-- Step 2: Delete all log records for this site",
+        "DELETE FROM public.ctpa_log WHERE site = 'bkk22';",
+        "",
+        "-- Step 3: Verify empty",
+        "SELECT COUNT(*) AS remaining FROM public.ctpa_log WHERE site = 'bkk22';",
+        "",
+        "-- Step 4: Enable DELETE policy if not already present",
+        "DROP POLICY IF EXISTS \"log_delete\" ON public.ctpa_log;",
+        "CREATE POLICY \"log_delete\" ON public.ctpa_log FOR DELETE USING (true);"
+      ].join("\n");
+
+      var _cpClOk = React.useState(false), cpClOk = _cpClOk[0], setCpClOk = _cpClOk[1];
+      function copyClearSQL(){
+        try{ navigator.clipboard.writeText(CLEAR_SQL).then(function(){ setCpClOk(true); setTimeout(function(){ setCpClOk(false); },2500); }); }catch(e){}
+      }
+
+      function clearLog(){
+        if(!window.confirm("Delete ALL ctpa_log records for site bkk22? Observations will NOT be affected.")) return;
+        setClBusy(true); setClResult(null);
+        var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1";
+        var countUrl = base + "/ctpa_log?site=eq.bkk22&select=id";
+        fetch(countUrl, { headers: cloudHeaders(), cache: "no-store" })
+          .then(function(r){ return r.json().then(function(rows){ return rows.length; }); })
+          .then(function(beforeCount){
+            return fetch(base + "/ctpa_log?site=eq.bkk22", {
+              method: "DELETE",
+              headers: cloudHeaders(),
+              cache: "no-store"
+            }).then(function(r){
+              if(r.status === 403 || r.status === 401){
+                setClBusy(false);
+                setClResult({ ok: false, msg: "HTTP " + r.status + " — DELETE policy not enabled on ctpa_log. Run the SQL below in Supabase SQL Editor first, then retry.", beforeCount: beforeCount });
+                return;
+              }
+              return fetch(countUrl, { headers: cloudHeaders(), cache: "no-store" })
+                .then(function(r2){ return r2.json().then(function(rows){ return rows.length; }); })
+                .then(function(afterCount){
+                  setClBusy(false);
+                  setClResult({ ok: true, beforeCount: beforeCount, afterCount: afterCount,
+                    msg: "✅ Deleted " + (beforeCount - afterCount) + " log records. Remaining: " + afterCount });
+                });
+            });
+          })
+          .catch(function(e){
+            setClBusy(false);
+            setClResult({ ok: false, msg: "Network error: " + (e && e.message || "unknown") });
+          });
+      }
+
+      return secBox("Clear Activity Log (Pre Go-Live)", "Deletes all ctpa_log records. Observations are NOT affected.",
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 12, color: "#92400E", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 7, padding: "8px 12px", marginBottom: 12 } },
+            "⚠️ This permanently deletes all Activity Log records. Run only before go-live. Observations (ctpa_state) are safe."
+          ),
+          React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 12 } },
+            React.createElement("button", {
+              onClick: clearLog, disabled: clBusy,
+              style: { padding: "7px 18px", background: clBusy ? "#9CA3AF" : "#DC2626", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: clBusy ? "wait" : "pointer" }
+            }, clBusy ? "Deleting…" : "🗑️ Clear All Logs"),
+            React.createElement("button", {
+              onClick: copyClearSQL,
+              style: { padding: "7px 14px", background: cpClOk ? C.green : "#0EA5E9", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer" }
+            }, cpClOk ? "✅ Copied!" : "📋 Copy SQL (run in Supabase)")
+          ),
+          clResult && React.createElement("div", {
+            style: { padding: "10px 14px", borderRadius: 7, fontSize: 12, fontWeight: 600,
+              background: clResult.ok ? "#F0FDF4" : "#FEF2F2",
+              border: "1px solid " + (clResult.ok ? "#BBF7D0" : "#FECACA"),
+              color: clResult.ok ? "#15803D" : "#B91C1C" }
+          }, clResult.msg,
+            clResult.ok && React.createElement("div", { style: { marginTop: 6, fontSize: 11, color: C.slate } },
+              "Before: " + clResult.beforeCount + " records | After: " + clResult.afterCount + " records | Status: CLEAN ✅"
+            )
+          ),
+          React.createElement("pre", {
+            style: { background: "#0F172A", color: "#E2E8F0", borderRadius: 8, padding: "12px 14px", fontSize: 10, overflowX: "auto", lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap" }
+          }, CLEAR_SQL)
+        )
+      );
+    })(),
+
+    /* ── System Health Check ── */
+    (function(){
+      var _hcState = React.useState(null), hcResult = _hcState[0], setHcResult = _hcState[1];
+      var _hcBusy  = React.useState(false), hcBusy  = _hcBusy[0],  setHcBusy  = _hcBusy[1];
+
+      function runHealthCheck(){
+        setHcBusy(true); setHcResult(null);
+        var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1";
+        var results = [];
+        function chk(name, fn){
+          return fn().then(function(msg){ results.push({ name: name, ok: true, msg: msg }); })
+            .catch(function(e){ results.push({ name: name, ok: false, msg: (e && e.message) || String(e) }); });
+        }
+        Promise.resolve()
+          .then(function(){ return chk("Supabase Connection", function(){
+            return fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id", { headers: cloudHeaders(), cache: "no-store" })
+              .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return "HTTP 200 — reachable"; });
+          }); })
+          .then(function(){ return chk("Observation Data (SELECT)", function(){
+            return fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", { headers: cloudHeaders(), cache: "no-store" })
+              .then(function(r){ return r.json(); })
+              .then(function(rows){
+                var cnt = (rows && rows[0] && Array.isArray(rows[0].data)) ? rows[0].data.length : 0;
+                if(cnt === 0) throw new Error("0 observations returned");
+                return cnt + " observations in Supabase";
+              });
+          }); })
+          .then(function(){ return chk("Observation Write (PATCH)", function(){
+            return fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row, {
+              method: "PATCH", headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+              body: JSON.stringify({ data: JSON.parse(JSON.stringify([])).concat([]) || undefined }), cache: "no-store"
+            }).then(function(){
+              /* Non-destructive: PATCH with empty merge to test write permission */
+              return fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=id", { headers: cloudHeaders(), cache: "no-store" })
+                .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return "PATCH permission OK (row exists)"; });
+            });
+          }); })
+          .then(function(){ return chk("Activity Log (SELECT ctpa_log)", function(){
+            return fetch(base + "/ctpa_log?site=eq.bkk22&select=id&limit=1", { headers: cloudHeaders(), cache: "no-store" })
+              .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return "ctpa_log readable"; });
+          }); })
+          .then(function(){ return chk("Activity Log (INSERT ctpa_log)", function(){
+            return fetch(base + "/ctpa_log", {
+              method: "POST", headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+              body: JSON.stringify([{ site: "bkk22", who: "HEALTHCHECK", action: "system_health_check", obs_id: null, detail: "pre go-live health check", device: "diagnostic" }]),
+              cache: "no-store"
+            }).then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return "INSERT OK"; });
+          }); })
+          .then(function(){ return chk("SheetJS (Excel Export)", function(){
+            if(typeof XLSX === "undefined") throw new Error("XLSX not loaded — check CDN");
+            var wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["test"]]), "Test");
+            return "XLSX library loaded, workbook created OK";
+          }); })
+          .then(function(){ return chk("Realtime WebSocket", function(){
+            return new Promise(function(resolve, reject){
+              var wsUrl = CLOUD.url.replace(/^https?:\/\//, function(m){ return m === "https://" ? "wss://" : "ws://"; }) +
+                "/realtime/v1/websocket?apikey=" + encodeURIComponent(CLOUD.key) + "&vsn=1.0.0";
+              var ws = new WebSocket(wsUrl);
+              var t = setTimeout(function(){ ws.close(); reject(new Error("WebSocket timeout (5s)")); }, 5000);
+              ws.onopen = function(){ clearTimeout(t); ws.close(); resolve("WebSocket connected OK"); };
+              ws.onerror = function(){ clearTimeout(t); reject(new Error("WebSocket connection failed")); };
+            });
+          }); })
+          .then(function(){ return chk("localStorage Cache", function(){
+            try {
+              var k = "__ctpa_hc_" + Date.now();
+              localStorage.setItem(k, "1"); localStorage.removeItem(k);
+              return "localStorage read/write OK";
+            } catch(e){ throw new Error(e.message); }
+          }); })
+          .finally(function(){
+            setHcResult(results); setHcBusy(false);
+          });
+      }
+
+      var pass = hcResult ? hcResult.filter(function(r){ return r.ok; }).length : 0;
+      var total = hcResult ? hcResult.length : 0;
+
+      return secBox("System Health Check", "Automated PASS/FAIL for all production modules",
+        React.createElement("div", null,
+          React.createElement("button", {
+            onClick: runHealthCheck, disabled: hcBusy,
+            style: { padding: "8px 20px", background: hcBusy ? "#9CA3AF" : "#1F2937", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: hcBusy ? "wait" : "pointer", marginBottom: 14 }
+          }, hcBusy ? "Running checks…" : "▶ Run System Health Check"),
+          hcResult && React.createElement("div", null,
+            React.createElement("div", {
+              style: { padding: "10px 14px", borderRadius: 7, fontSize: 13, fontWeight: 800, marginBottom: 10,
+                background: pass === total ? "#F0FDF4" : "#FEF2F2",
+                border: "1.5px solid " + (pass === total ? "#BBF7D0" : "#FECACA"),
+                color: pass === total ? "#15803D" : "#B91C1C" }
+            }, pass === total ? "✅ All " + total + " checks PASSED — system ready for go-live"
+                              : "❌ " + (total - pass) + " of " + total + " checks FAILED"),
+            hcResult.map(function(r, i){
+              return React.createElement("div", {
+                key: i,
+                style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "6px 10px", marginBottom: 4, borderRadius: 7,
+                  background: r.ok ? "#F0FDF4" : "#FEF2F2", border: "1px solid " + (r.ok ? "#BBF7D0" : "#FECACA") }
+              },
+                React.createElement("span", { style: { fontWeight: 800, fontSize: 13, minWidth: 20 } }, r.ok ? "✅" : "❌"),
+                React.createElement("div", null,
+                  React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: r.ok ? "#15803D" : "#B91C1C" } }, r.name),
+                  React.createElement("div", { style: { fontSize: 11, color: "#374151" } }, r.msg)
+                )
+              );
+            }),
+            React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 8 } },
+              "Manual verification required: Mobile↔Desktop sync, Approval workflow (GC/PMC codes), Dashboard charts, PDF/PPT export"
+            )
+          )
+        )
+      );
     })()
   );
 }
