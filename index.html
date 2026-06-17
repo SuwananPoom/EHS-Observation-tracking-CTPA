@@ -2291,18 +2291,18 @@ function Lightbox(_ref) {
     style: {
       textAlign: "center"
     }
-  }, /*#__PURE__*/React.createElement("img", {
-    src: photos[i].src,
-    alt: "",
-    style: {
-      maxWidth: "90vw",
-      maxHeight: "76vh",
-      objectFit: "contain",
-      borderRadius: 10,
-      display: "block",
-      margin: "0 auto"
-    }
-  }), /*#__PURE__*/React.createElement("div", {
+  }, photos[i].src && photos[i].src.length > 32
+    ? /*#__PURE__*/React.createElement("img", {
+        src: photos[i].src,
+        alt: "",
+        style: { maxWidth: "90vw", maxHeight: "76vh", objectFit: "contain", borderRadius: 10, display: "block", margin: "0 auto" }
+      })
+    : /*#__PURE__*/React.createElement("div", {
+        style: { color: "#94A3B8", fontSize: 13, padding: "40px 24px", textAlign: "center", lineHeight: 1.8 }
+      }, "📷 Photo not available on this device", /*#__PURE__*/React.createElement("br", null),
+        /*#__PURE__*/React.createElement("span", { style: { fontSize: 11 } }, photos[i].name || "", /*#__PURE__*/React.createElement("br", null),
+          "Open the app on the device where this photo was taken, then tap ↻ Sync.")),
+  /*#__PURE__*/React.createElement("div", {
     style: {
       color: "rgba(255,255,255,.5)",
       fontSize: 11,
@@ -2527,22 +2527,30 @@ function Strip(_ref2) {
         position: "relative",
         borderRadius: 7,
         overflow: "hidden",
-        border: "2px solid " + ac,
-        cursor: "pointer"
+        border: "2px solid " + (p.src && p.src.length > 32 ? ac : "#CBD5E1"),
+        cursor: "pointer",
+        background: p.src && p.src.length > 32 ? "transparent" : "#F8FAFC"
       },
       onClick: function onClick() {
         return setLb(ix);
       }
-    }, /*#__PURE__*/React.createElement("img", {
-      src: p.src,
-      alt: "",
+    }, p.src && p.src.length > 32
+      ? /*#__PURE__*/React.createElement("img", {
+          src: p.src,
+          alt: "",
+          onError: function(e){ e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); },
+          style: { width: "100%", height: 56, objectFit: "cover", display: "block" }
+        })
+      : null,
+    /*#__PURE__*/React.createElement("div", {
       style: {
-        width: "100%",
-        height: 56,
-        objectFit: "cover",
-        display: "block"
+        display: (p.src && p.src.length > 32) ? "none" : "flex",
+        flexDirection: "column", alignItems: "center", justifyContent: "center",
+        width: "100%", height: 56,
+        fontSize: 9, color: "#94A3B8", textAlign: "center", padding: "0 4px",
+        boxSizing: "border-box", lineHeight: 1.3
       }
-    }), /*#__PURE__*/React.createElement("button", {
+    }, "📷", /*#__PURE__*/React.createElement("span", null, p.name ? p.name.slice(0,12) + (p.name.length > 12 ? "…" : "") : "loading…")), /*#__PURE__*/React.createElement("button", {
       onClick: function onClick(e) {
         e.stopPropagation();
         onRm(p.id);
@@ -3599,7 +3607,7 @@ function DiagnosticsView(_ref_diag) {
 
           /* 4. Clear localStorage + per-photo cache on this device */
           try {
-            localStorage.removeItem("ctpa_obs_bkk22");
+            localStorage.removeItem(typeof SKEY !== "undefined" ? SKEY : "ctpa_bkk22_v25_v25c");
             /* Remove all ctpa_ph_ photo cache keys */
             var toRemove = [];
             for(var i = 0; i < localStorage.length; i++){
@@ -4504,6 +4512,13 @@ function App() {
           id: newId,
           pb: fBef,
           pa: fAft
+        });
+        /* cache all photos from the create form under the new ID */
+        ["pb","pa"].forEach(function(slot){
+          (ni[slot]||[]).forEach(function(p, idx){
+            if(p && p.src){ cachePhotoLocal(ni.id, slot, idx, p.src); }
+            savePhotoToCloud(ni.id, slot, idx, p);
+          });
         });
         var created = [ni].concat(_toConsumableArray(obs));
         ps(created);
@@ -7021,7 +7036,20 @@ function App() {
       pa: fAft
     },
     onUp: function onUp(k, v) {
-      if (k === "pb") setFBef(v);else setFAft(v);
+      var prev = k === "pb" ? fBef : fAft;
+      if (k === "pb") setFBef(v); else setFAft(v);
+      /* cache any newly-added photos locally and upload to ctpa_photos */
+      var added = v.slice(prev.length);
+      var obsId = edit ? edit.id : null;
+      if(obsId){
+        added.forEach(function(p, i){
+          var idx = prev.length + i;
+          if(p && p.src){ cachePhotoLocal(obsId, k, idx, p.src); }
+          savePhotoToCloud(obsId, k, idx, p).then(function(ok){
+            console.log("[CTPA] edit form photo cached:", obsId, k, idx, ok ? "✅ cloud" : "⚠ local only");
+          });
+        });
+      }
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -7229,7 +7257,37 @@ function App() {
       padding: "11px 14px",
       borderLeft: "3px solid " + C.green
     }
-  }, det.rect || "—")), /*#__PURE__*/React.createElement(PhotoBlock, {
+  }, det.rect || "—")),
+  (function(){
+    /* If any photos are missing src, offer a one-tap reload from ctpa_photos */
+    var missing = ["pb","pa"].some(function(s){ return (det[s]||[]).some(function(p){ return !p.src || p.src.length < 32; }); });
+    if(!missing || !cloudOn()) return null;
+    var _rld = React.useState(false), reloading = _rld[0], setReloading = _rld[1];
+    return /*#__PURE__*/React.createElement("div", { style: { margin: "0 0 10px", padding: "8px 12px", background: "#FEF9C3", border: "1px solid #FDE68A", borderRadius: 8, display: "flex", alignItems: "center", gap: 10 } },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: "#92400E", flex: 1 } }, "📷 Photos uploaded on another device — tap to load"),
+      /*#__PURE__*/React.createElement("button", {
+        disabled: reloading,
+        onClick: function(){
+          setReloading(true);
+          /* Build a shallow copy of det so fetchPhotosForExport can mutate it */
+          var tmp = Object.assign({}, det, { pb: (det.pb||[]).map(function(p){ return Object.assign({},p); }), pa: (det.pa||[]).map(function(p){ return Object.assign({},p); }) });
+          fetchPhotosForExport([tmp]).then(function(){
+            var p0 = tmp;
+            /* Also cache fetched photos locally */
+            ["pb","pa"].forEach(function(s){
+              (p0[s]||[]).forEach(function(p,i){ if(p && p.src && p.src.length > 32) cachePhotoLocal(det.id, s, i, p.src); });
+            });
+            setDet(p0);
+            /* Update obs array too */
+            setObs(function(cur){ return cur.map(function(o){ return o.id === det.id ? p0 : o; }); });
+            setReloading(false);
+          }).catch(function(){ setReloading(false); });
+        },
+        style: { padding: "5px 12px", background: "#92400E", color: "#fff", border: "none", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: reloading ? "wait" : "pointer", whiteSpace: "nowrap" }
+      }, reloading ? "Loading…" : "↻ Load Photos")
+    );
+  })(),
+  /*#__PURE__*/React.createElement(PhotoBlock, {
     item: det,
     onUp: function onUp(k, v) {
       return upPh(det.id, k, v);
