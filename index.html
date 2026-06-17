@@ -168,6 +168,8 @@ function photosApiBase(){
 
 /* Save one photo to ctpa_photos table (upsert by site+obs_id+slot+idx) */
 function savePhotoToCloud(obsId, slot, idx, photo){
+  /* Always cache locally first — survives cloud failures and pull() overwrites */
+  if(photo && photo.src) cachePhotoLocal(obsId, slot, idx, photo.src);
   if(!cloudOn() || !photo || !photo.src) return Promise.resolve(false);
   var rec = {
     site:   CLOUD.row,
@@ -206,6 +208,46 @@ function savePhotoToCloud(obsId, slot, idx, photo){
   }).catch(function(e){
     console.warn("[CTPA] savePhotoToCloud failed:", e && e.message);
     return false;
+  });
+}
+
+/* ── Local photo cache — separate from the main obs array ───────────────────
+   Stores photo base64 in individual localStorage keys:
+     ctpa_ph_{obsId}|{slot}|{idx}
+   These keys are NEVER overwritten by pull() or cloudMergeSave, so photos
+   added on this device always survive cloud sync cycles.
+   ──────────────────────────────────────────────────────────────────────────── */
+var PH_PREFIX = "ctpa_ph_";
+function photoLocalKey(obsId, slot, idx){ return PH_PREFIX + obsId + "|" + slot + "|" + idx; }
+
+function cachePhotoLocal(obsId, slot, idx, src){
+  if(!src || src.length < 32) return;
+  try { localStorage.setItem(photoLocalKey(obsId, slot, idx), src); } catch(e){}
+}
+function getCachedPhotoSrc(obsId, slot, idx){
+  try { return localStorage.getItem(photoLocalKey(obsId, slot, idx)) || null; } catch(e){ return null; }
+}
+
+/* Merge individually-cached photos back into an obs array.
+   Called after restorePhotos so same-device photos always display. */
+function mergeLocalPhotoCache(obsArr){
+  return obsArr.map(function(o){
+    var changed = false;
+    var nb = (o.pb||[]).map(function(p, i){
+      if(p && (!p.src || p.src.length < 32)){
+        var cached = getCachedPhotoSrc(o.id, "pb", i);
+        if(cached){ changed = true; return Object.assign({}, p, { src: cached }); }
+      }
+      return p;
+    });
+    var na = (o.pa||[]).map(function(p, i){
+      if(p && (!p.src || p.src.length < 32)){
+        var cached = getCachedPhotoSrc(o.id, "pa", i);
+        if(cached){ changed = true; return Object.assign({}, p, { src: cached }); }
+      }
+      return p;
+    });
+    return changed ? Object.assign({}, o, { pb: nb, pa: na }) : o;
   });
 }
 
@@ -3690,8 +3732,9 @@ function App() {
         setSyncErr(null);
         __ctpaLastWrite = 0;
         setLastWriteTime(new Date());
-        /* Update local state and cache with merged result so this device sees all obs */
-        var migrated = ctpaMigrate(result.merged);
+        /* Update local state and cache with merged result so this device sees all obs.
+           mergeLocalPhotoCache restores any photo src that survived in per-photo cache keys. */
+        var migrated = mergeLocalPhotoCache(ctpaMigrate(result.merged));
         setObs(migrated);
         try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e) {}
         setCloudObsCount(migrated.length);
@@ -3718,21 +3761,20 @@ function App() {
       var d = r ? JSON.parse(r) : null;
       if (d && d.length > 0) {
         setObs(ctpaMigrate(d));   // show cached data instantly (no blank screen)
-        /* Backfill: upload any photos that have src locally but haven't yet
-           been saved to ctpa_photos (e.g. photos added before this feature) */
-        if(cloudOn()){
-          d.forEach(function(o){
-            ["pb","pa"].forEach(function(slot){
-              (o[slot]||[]).forEach(function(p, idx){
-                if(p && p.src && p.src.length > 32){
-                  savePhotoToCloud(o.id, slot, idx, p).then(function(ok){
-                    if(ok) console.log("[CTPA] backfill photo uploaded:", o.id, slot, idx);
-                  });
-                }
-              });
+        /* Backfill: re-cache any photos that have src in this localStorage snapshot.
+           Also uploads to ctpa_photos for cross-device access. */
+        d.forEach(function(o){
+          ["pb","pa"].forEach(function(slot){
+            (o[slot]||[]).forEach(function(p, idx){
+              if(p && p.src && p.src.length > 32){
+                cachePhotoLocal(o.id, slot, idx, p.src);
+                if(cloudOn()) savePhotoToCloud(o.id, slot, idx, p).then(function(ok){
+                  if(ok) console.log("[CTPA] startup backfill uploaded:", o.id, slot, idx);
+                });
+              }
             });
           });
-        }
+        });
       }
       // Seed data is intentionally NOT pre-loaded anymore — cloud is the source
     } catch (e) {
@@ -3763,24 +3805,35 @@ function App() {
              Photos uploaded on other devices appear as metadata only until those
              devices implement Supabase Storage. */
           setObs(function(localObs){
+            /* 1. Restore from current React state (same-device photos in memory) */
             var restored = restorePhotos(cloudMigrated, localObs);
-            /* Check if any photos are still missing src after local restore */
+            /* 2. Restore from per-photo localStorage cache (survives page refresh) */
+            var withCache = mergeLocalPhotoCache(restored);
+            /* 3. Count photos still missing src (need ctpa_photos cloud fetch) */
             var missingCount = 0;
-            restored.forEach(function(o){
+            withCache.forEach(function(o){
               ["pb","pa"].forEach(function(slot){
                 (o[slot]||[]).forEach(function(p){ if(p && (!p.src || p.src.length < 32)) missingCount++; });
               });
             });
             if(missingCount > 0 && cloudOn()){
               /* Fetch missing photo src from ctpa_photos table, then update state */
-              fetchPhotosForExport(restored).then(function(withPhotos){
+              fetchPhotosForExport(withCache).then(function(withPhotos){
+                /* Cache any newly fetched photos so future page loads are instant */
+                withPhotos.forEach(function(o){
+                  ["pb","pa"].forEach(function(slot){
+                    (o[slot]||[]).forEach(function(p, i){
+                      if(p && p.src && p.src.length > 32) cachePhotoLocal(o.id, slot, i, p.src);
+                    });
+                  });
+                });
                 setObs(withPhotos);
                 try { localStorage.setItem(SKEY, JSON.stringify(withPhotos)); } catch(e){}
-                console.log("[CTPA] pull(): restored", missingCount, "photo src values from ctpa_photos");
+                console.log("[CTPA] pull(): fetched", missingCount, "photo src values from ctpa_photos");
               });
             }
-            try { localStorage.setItem(SKEY, JSON.stringify(restored)); } catch(e){}
-            return restored;
+            try { localStorage.setItem(SKEY, JSON.stringify(withCache)); } catch(e){}
+            return withCache;
           });
         } else {
           /* Cloud row is empty/null/missing — diagnose and log the exact reason */
@@ -4057,9 +4110,11 @@ function App() {
     });
     ps(nx0);
     setDet(nx0.find(function(o){ return o.id === id; }));
-    /* save newly-added photos to ctpa_photos table for cross-device export */
+    /* cache each new photo immediately — also upload to ctpa_photos for cross-device */
     added.forEach(function(p, i){
       var idx = prev.length + i;
+      /* per-photo localStorage key survives pull() / cloudMergeSave overwrites */
+      if(p && p.src) cachePhotoLocal(id, k, idx, p.src);
       savePhotoToCloud(id, k, idx, p).then(function(ok){
         console.log("[CTPA] savePhotoToCloud", id, k, idx, ok ? "✅" : "❌ (will retry on next upload)");
       });
