@@ -3503,7 +3503,214 @@ function DiagnosticsView(_ref_diag) {
           )
         )
       );
+    })(),
+
+    /* ── Pre Go-Live Data Reset ── */
+    (function(){
+      var RED_BG   = "#FEF2F2", RED_BOR = "#FECACA", RED_TXT = "#B91C1C";
+      var _confirm = React.useState(""), resetConfirm = _confirm[0], setResetConfirm = _confirm[1];
+      var _busy    = React.useState(false), resetBusy = _busy[0], setResetBusy = _busy[1];
+      var _result  = React.useState(null), resetResult = _result[0], setResetResult = _result[1];
+      var _phase   = React.useState("idle"), resetPhase = _phase[0], setResetPhase = _phase[1];
+      /* "idle" | "preview" | "done" */
+      var _preview = React.useState(null), previewData = _preview[0], setPreviewData = _preview[1];
+
+      var CONFIRM_WORD = "RESET CONFIRMED";
+
+      /* Step 1 — fetch counts + full backup blob without deleting anything */
+      function loadPreview(){
+        setResetBusy(true); setResetResult(null);
+        var hdrs = { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": "application/json" };
+        var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/";
+        Promise.all([
+          /* obs */
+          fetch(base + "ctpa_state?id=eq." + CLOUD.row + "&select=data", { headers: hdrs })
+            .then(function(r){ return r.json(); }).then(function(rows){ return rows && rows[0] && rows[0].data ? rows[0].data : []; }),
+          /* logs */
+          fetch(base + "ctpa_log?site=eq." + encodeURIComponent(CLOUD.row) + "&select=*&order=at.desc&limit=9999", { headers: hdrs })
+            .then(function(r){ return r.json(); }).then(function(rows){ return Array.isArray(rows) ? rows : []; }),
+          /* photos (may not exist yet) */
+          fetch(base + "ctpa_photos?site=eq." + encodeURIComponent(CLOUD.row) + "&select=obs_id,slot,idx,name&limit=9999", { headers: hdrs })
+            .then(function(r){ return r.ok ? r.json() : []; }).then(function(rows){ return Array.isArray(rows) ? rows : []; })
+        ]).then(function(results){
+          var obsArr = results[0], logArr = results[1], photoMeta = results[2];
+          setPreviewData({ obsArr: obsArr, logArr: logArr, photoMeta: photoMeta });
+          setResetBusy(false);
+          setResetPhase("preview");
+        }).catch(function(e){
+          setResetBusy(false);
+          setResetResult({ ok: false, msg: "Failed to load preview: " + (e && e.message || "network error") });
+        });
+      }
+
+      /* Download backup JSON */
+      function downloadBackup(){
+        if(!previewData) return;
+        var blob = new Blob([JSON.stringify({
+          backup_at: new Date().toISOString(),
+          site: CLOUD.row,
+          observations: previewData.obsArr,
+          activity_log: previewData.logArr,
+          photo_metadata: previewData.photoMeta
+        }, null, 2)], { type: "application/json" });
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "CTPA_Backup_" + new Date().toISOString().slice(0,10) + ".json";
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+
+      /* Step 2 — execute reset */
+      function executeReset(){
+        if(resetConfirm !== CONFIRM_WORD){ setResetResult({ ok: false, msg: "Type the confirmation phrase exactly to proceed." }); return; }
+        setResetBusy(true); setResetResult(null);
+        var hdrs = { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": "application/json" };
+        var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/";
+        var steps = [];
+
+        /* 1. Clear observations (set data = []) */
+        steps.push(
+          fetch(base + "ctpa_state?id=eq." + CLOUD.row, {
+            method: "PATCH",
+            headers: Object.assign({ "Prefer": "return=minimal" }, hdrs),
+            body: JSON.stringify({ data: [] })
+          }).then(function(r){ return { step: "Observations cleared", ok: r.ok, status: r.status }; })
+        );
+
+        /* 2. Delete activity logs */
+        steps.push(
+          fetch(base + "ctpa_log?site=eq." + encodeURIComponent(CLOUD.row), {
+            method: "DELETE",
+            headers: hdrs
+          }).then(function(r){ return { step: "Activity logs deleted", ok: r.ok, status: r.status }; })
+        );
+
+        /* 3. Delete photos from ctpa_photos (if table exists) */
+        steps.push(
+          fetch(base + "ctpa_photos?site=eq." + encodeURIComponent(CLOUD.row), {
+            method: "DELETE",
+            headers: hdrs
+          }).then(function(r){ return { step: "Photo records deleted", ok: r.ok || r.status === 404, status: r.status }; })
+          .catch(function(){ return { step: "Photo records (ctpa_photos skipped)", ok: true, status: "N/A" }; })
+        );
+
+        Promise.all(steps).then(function(results){
+          var allOk = results.every(function(r){ return r.ok; });
+
+          /* 4. Clear localStorage + per-photo cache on this device */
+          try {
+            localStorage.removeItem("ctpa_obs_bkk22");
+            /* Remove all ctpa_ph_ photo cache keys */
+            var toRemove = [];
+            for(var i = 0; i < localStorage.length; i++){
+              var k = localStorage.key(i);
+              if(k && k.indexOf("ctpa_ph_") === 0) toRemove.push(k);
+            }
+            toRemove.forEach(function(k){ localStorage.removeItem(k); });
+          } catch(e){}
+
+          setResetBusy(false);
+          setResetResult({ ok: allOk, steps: results });
+          if(allOk){
+            setResetPhase("done");
+            /* write a fresh health-check log entry */
+            logEvent("SYSTEM_RESET", null, "Pre go-live data reset completed by " + (ctpaUser() || "Admin (Diagnostics)"));
+          }
+        }).catch(function(e){
+          setResetBusy(false);
+          setResetResult({ ok: false, msg: "Reset error: " + (e && e.message || "network") });
+        });
+      }
+
+      var obsCount   = previewData ? previewData.obsArr.length   : "—";
+      var logCount   = previewData ? previewData.logArr.length   : "—";
+      var photoCount = previewData ? previewData.photoMeta.length : "—";
+
+      return secBox("Pre Go-Live Data Reset", "Deletes all observations, logs, and photo records. Does NOT change code, UI, tables, or settings.",
+        React.createElement("div", null,
+
+          /* Warning banner */
+          React.createElement("div", { style: { background: RED_BG, border: "1.5px solid " + RED_BOR, borderRadius: 8, padding: "12px 16px", marginBottom: 14 } },
+            React.createElement("div", { style: { fontWeight: 800, color: RED_TXT, fontSize: 13, marginBottom: 4 } }, "⚠ IRREVERSIBLE — READ CAREFULLY"),
+            React.createElement("div", { style: { fontSize: 11, color: "#7F1D1D", lineHeight: 1.7 } },
+              "This will permanently delete:\n",
+              React.createElement("br", null),
+              "• All Observation records (data reset to [ ])\n",
+              React.createElement("br", null),
+              "• All Activity Log entries (ctpa_log)\n",
+              React.createElement("br", null),
+              "• All Photo records (ctpa_photos)\n",
+              React.createElement("br", null),
+              "• This device's localStorage cache + photo keys\n",
+              React.createElement("br", null),
+              React.createElement("br", null),
+              "NOT deleted: tables, code, UI, workflows, user settings, Supabase Storage"
+            )
+          ),
+
+          /* Phase: idle */
+          resetPhase === "idle" && React.createElement("button", {
+            onClick: loadPreview, disabled: resetBusy,
+            style: { padding: "9px 22px", background: resetBusy ? "#9CA3AF" : "#1E3A8A", color: "#fff", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: resetBusy ? "wait" : "pointer" }
+          }, resetBusy ? "Loading current data…" : "Step 1 — Load Current Data & Prepare Backup"),
+
+          /* Phase: preview */
+          resetPhase === "preview" && previewData && React.createElement("div", null,
+            /* Counts */
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 } },
+              [["Observations", obsCount, "#1E3A8A"], ["Activity Logs", logCount, "#92400E"], ["Photo Records", photoCount, "#065F46"]].map(function(row, i){
+                return React.createElement("div", { key: i, style: { background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "10px 14px", textAlign: "center" } },
+                  React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: row[2] } }, row[1]),
+                  React.createElement("div", { style: { fontSize: 10, color: "#64748B", marginTop: 2 } }, row[0] + " will be deleted")
+                );
+              })
+            ),
+            /* Download backup */
+            React.createElement("button", {
+              onClick: downloadBackup,
+              style: { width: "100%", padding: "9px 0", background: "#0F172A", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 14 }
+            }, "📥 Download Backup JSON (CTPA_Backup_" + new Date().toISOString().slice(0,10) + ".json)"),
+            /* Confirmation input */
+            React.createElement("div", { style: { marginBottom: 10 } },
+              React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: RED_TXT, marginBottom: 5 } },
+                "Type  " + CONFIRM_WORD + "  exactly to enable reset:"
+              ),
+              React.createElement("input", {
+                type: "text", value: resetConfirm,
+                onChange: function(e){ setResetConfirm(e.target.value); },
+                placeholder: CONFIRM_WORD,
+                style: { width: "100%", padding: "8px 12px", border: "1.5px solid " + (resetConfirm === CONFIRM_WORD ? "#BBF7D0" : RED_BOR), borderRadius: 7, fontSize: 13, fontFamily: "monospace", boxSizing: "border-box", background: resetConfirm === CONFIRM_WORD ? "#F0FDF4" : "#FFF" }
+              })
+            ),
+            React.createElement("button", {
+              onClick: executeReset,
+              disabled: resetBusy || resetConfirm !== CONFIRM_WORD,
+              style: { width: "100%", padding: "11px 0", background: (resetBusy || resetConfirm !== CONFIRM_WORD) ? "#9CA3AF" : RED_TXT, color: "#fff", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 800, cursor: (resetBusy || resetConfirm !== CONFIRM_WORD) ? "not-allowed" : "pointer" }
+            }, resetBusy ? "Resetting…" : "Step 2 — Execute Reset (PERMANENT)")
+          ),
+
+          /* Phase: done */
+          resetPhase === "done" && React.createElement("div", { style: { background: "#F0FDF4", border: "1.5px solid #BBF7D0", borderRadius: 8, padding: "14px 16px" } },
+            React.createElement("div", { style: { fontWeight: 800, color: "#15803D", fontSize: 14, marginBottom: 6 } }, "✅ Reset Complete — System Ready for Go-Live"),
+            React.createElement("div", { style: { fontSize: 11, color: "#166534" } }, "• Observations: reset to 0\n• Next observation will be OBS-001\n• Activity Log: cleared\n• Photos: cleared\n• This device cache: cleared\n• Reload the app to start fresh")
+          ),
+
+          /* Step results */
+          resetResult && React.createElement("div", { style: { marginTop: 10 } },
+            resetResult.steps ? resetResult.steps.map(function(r, i){
+              return React.createElement("div", { key: i, style: { display: "flex", gap: 8, alignItems: "center", padding: "5px 8px", borderRadius: 6, marginBottom: 4,
+                background: r.ok ? "#F0FDF4" : RED_BG, border: "1px solid " + (r.ok ? "#BBF7D0" : RED_BOR) } },
+                React.createElement("span", null, r.ok ? "✅" : "❌"),
+                React.createElement("span", { style: { fontSize: 11, fontWeight: 600 } }, r.step),
+                React.createElement("span", { style: { fontSize: 10, color: "#64748B", marginLeft: "auto" } }, "HTTP " + r.status)
+              );
+            }) : null,
+            !resetResult.ok && resetResult.msg && React.createElement("div", { style: { fontSize: 11, color: RED_TXT, padding: "6px 10px", background: RED_BG, borderRadius: 6, marginTop: 4 } }, resetResult.msg)
+          )
+        )
+      );
     })()
+
   );
 }
 
