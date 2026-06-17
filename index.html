@@ -3890,15 +3890,31 @@ function DiagnosticsView(_ref_diag) {
         var beforePhotos= previewData ? previewData.photoMeta.length: 0;
         var steps = [];
 
-        /* 1. Clear observations (PATCH data = []) */
+        /* 1. Clear observations (PATCH data = []), then verify */
         steps.push(
           fetch(base + "ctpa_state?id=eq." + CLOUD.row, {
             method: "PATCH",
-            headers: Object.assign({ "Prefer": "return=minimal" }, hdrs),
+            headers: Object.assign({ "Prefer": "return=representation" }, hdrs),
             body: JSON.stringify({ data: [] })
           }).then(function(r){
-            console.log("[Reset] PATCH ctpa_state status:", r.status);
-            return { step: "ctpa_state.data = []", sql: "UPDATE ctpa_state SET data = '[]' WHERE id = 'bkk22';", ok: r.ok, status: r.status, before: beforeObs, deleted: beforeObs };
+            return r.text().then(function(body){
+              console.log("[Reset] PATCH ctpa_state HTTP", r.status, "body:", body.slice(0, 200));
+              if(!r.ok){
+                return { step: "ctpa_state.data = []", sql: "UPDATE ctpa_state SET data = '[]' WHERE id = 'bkk22';",
+                  ok: false, status: r.status, before: beforeObs, deleted: 0,
+                  err: "PATCH HTTP " + r.status + ": " + body.slice(0, 200) };
+              }
+              /* Verify: read back and confirm data is empty */
+              return fetch(base + "ctpa_state?id=eq." + CLOUD.row + "&select=data", { headers: hdrs, cache: "no-store" })
+                .then(function(r2){ return r2.json(); })
+                .then(function(rows){
+                  var remaining = rows && rows[0] && Array.isArray(rows[0].data) ? rows[0].data.length : 0;
+                  console.log("[Reset] ctpa_state verify: remaining obs =", remaining);
+                  return { step: "ctpa_state.data = []", sql: "UPDATE ctpa_state SET data = '[]' WHERE id = 'bkk22';",
+                    ok: remaining === 0, status: r.status, before: beforeObs, deleted: beforeObs - remaining,
+                    err: remaining > 0 ? remaining + " obs still remain after PATCH — RLS may be blocking." : null };
+                });
+            });
           })
         );
 
@@ -3952,24 +3968,28 @@ function DiagnosticsView(_ref_diag) {
           var verif = payload.verif;
           var allOk = stepResults.every(function(r){ return r.ok; });
 
-          /* 5. Clear localStorage + per-photo cache on this device */
+          /* 5. Clear ALL ctpa localStorage keys on this device */
           var localCleared = 0;
           try {
-            localStorage.removeItem(typeof SKEY !== "undefined" ? SKEY : "ctpa_bkk22_v25_v25c");
-            localCleared++;
             var toRemove = [];
             for(var i = 0; i < localStorage.length; i++){
               var k = localStorage.key(i);
-              if(k && k.indexOf("ctpa_ph_") === 0) toRemove.push(k);
+              if(k && (k === SKEY || k === DEL_KEY || k.indexOf("ctpa_ph_") === 0 || k.indexOf("ctpa_") === 0))
+                toRemove.push(k);
             }
             toRemove.forEach(function(k){ localStorage.removeItem(k); localCleared++; });
           } catch(e){}
 
+          /* 6. Reset live app state immediately — no reload needed */
+          if(typeof setObs === "function") try { setObs([]); } catch(_){}
+
           setResetBusy(false);
+          var obsStep = stepResults[0];
+          var allOk = stepResults.every(function(r){ return r.ok; }) && verif.obs === 0;
           setResetResult({ ok: allOk, steps: stepResults, verif: verif, localCleared: localCleared });
           if(allOk){
             setResetPhase("done");
-            logEvent("SYSTEM_RESET", null, "Go-live data reset completed by " + (ctpaUser() || "Admin (Diagnostics)") + " | obs:" + stepResults[0].deleted + " logs:" + stepResults[1].deleted + " photos:" + stepResults[2].deleted);
+            logEvent("SYSTEM_RESET", null, "Go-live reset by " + (ctpaUser() || "Admin") + " | obs cleared:" + obsStep.deleted + " logs:" + stepResults[1].deleted + " photos:" + stepResults[2].deleted);
           }
         }).catch(function(e){
           setResetBusy(false);
