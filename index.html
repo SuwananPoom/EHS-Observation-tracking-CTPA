@@ -433,12 +433,16 @@ function logLocalGet(){
   try{ var a = JSON.parse(localStorage.getItem("ctpa_log_local") || "[]"); return Array.isArray(a) ? a : []; }catch(e){ return []; }
 }
 function logEvent(action, obsId, detail){
+  /* ctpa_log.obs_id has a FK constraint — storing a non-existent ID causes
+     HTTP 409. Work around by keeping obs_id null and prepending the ID to
+     detail as "OBS-NNN :: rest of detail" so the display can extract it. */
+  var detailWithId = obsId ? (obsId + " :: " + (detail || "")) : (detail || null);
   var rec = {
     site: CLOUD.row,
     who: ctpaUser() || "Anonymous",
     action: action,
-    obs_id: obsId || null,
-    detail: detail || null,
+    obs_id: null,
+    detail: detailWithId,
     device: ctpaDevice(),
     at: new Date().toISOString()
   };
@@ -4182,12 +4186,20 @@ function App() {
     var actLabel = _actEntry.label;
     var when = "";
     try { when = new Date(r.at).toLocaleString(); } catch(e){ when = r.at; }
+    /* obs_id stored in detail as "OBS-NNN :: rest" to avoid FK violation */
+    var _dispObsId = r.obs_id || "";
+    var _dispDetail = r.detail || "";
+    if(!_dispObsId && _dispDetail.indexOf(" :: ") !== -1){
+      var _parts = _dispDetail.split(" :: ");
+      _dispObsId = _parts[0];
+      _dispDetail = _parts.slice(1).join(" :: ");
+    }
     return /*#__PURE__*/React.createElement("tr", { key: i, style: { borderTop: "1px solid " + C.border } },
       /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", whiteSpace: "nowrap", color: C.textMid } }, when),
       /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, color: C.text } }, r.who || "Anonymous"),
       /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", fontWeight: 700, color: actColor, whiteSpace: "nowrap" } }, actLabel),
-      /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", color: C.textMid, whiteSpace: "nowrap" } }, r.obs_id || "\u2014"),
-      /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", color: C.slate } }, r.detail || "\u2014"),
+      /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", color: C.textMid, whiteSpace: "nowrap" } }, _dispObsId || "\u2014"),
+      /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", color: C.slate } }, _dispDetail || "\u2014"),
       /*#__PURE__*/React.createElement("td", { style: { padding: "9px 12px", color: C.slate, whiteSpace: "nowrap" } }, r.device || "\u2014"));
   }))))), view === "dashboard" && /*#__PURE__*/React.createElement("div", {
     className: "fade-in"
