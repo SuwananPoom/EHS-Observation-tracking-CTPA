@@ -696,6 +696,14 @@ function logEvent(action, obsId, detail){
   }).then(function(r){ return r.ok; }).catch(function(){ return false; });
 }
 /* Build a short observation context string for log detail lines */
+/* Display transform: map legacy approver codes to current role labels.
+   "MS" was used in seed/early data; current label is "GC". */
+function fmtApprover(name){
+  if(!name) return name;
+  var map = { "MS": "GC", "DAYONE": "GC" };
+  return map[name] || name;
+}
+
 function obsContext(o){
   if(!o) return "";
   var typeLabel = (OBS_TYPE[o.obsType] || {}).label || o.obsType || "";
@@ -1100,8 +1108,8 @@ function exportExcel(rows, onErr) {
         fmtD(o.due),
         fmtD(o.closed),
         v(o.closedBy),
-        v(o.clientApprovedBy),
-        v(o.lpApprovedBy),
+        v(fmtApprover(o.clientApprovedBy)),
+        v(fmtApprover(o.lpApprovedBy)),
         v(o.desc),
         v(o.rect),
         (o.pb && o.pb.length ? o.pb.length : 0) + " photo(s)",
@@ -6834,7 +6842,7 @@ function App() {
       if (ap === "PENDING REVIEW" && o.submittedForClosureBy) {
         info = "\uD83D\uDCE4 Submitted by " + o.submittedForClosureBy + (o.submittedForClosureDate ? " \u2022 " + o.submittedForClosureDate : "");
       } else if (ap === "APPROVED CLOSED" && (o.approvedBy || o.approvedDate)) {
-        info = "\u2714 Approved by " + (o.approvedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
       } else if (ap === "REJECTED" && (o.rejectedBy || o.rejectedDate)) {
         info = "\u2716 Rejected by " + (o.rejectedBy || "\u2014") + (o.rejectedDate ? " \u2022 " + o.rejectedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
       }
@@ -7745,7 +7753,8 @@ function App() {
     var ap = apOf(det);
     var A = APPROVAL[ap] || APPROVAL["OPEN"];
     var signRow = function signRow(label, by, date) {
-      return /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 11, padding: "6px 10px", borderRadius: 8, background: by ? C.greenBg : "#fff", border: "1px solid " + (by ? C.green : C.border), marginBottom: 6 } }, /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: by ? C.greenDk : C.slate } }, (by ? "\u2714 " : "\u25CB ") + label), /*#__PURE__*/React.createElement("span", { style: { color: by ? C.greenDk : C.slate, textAlign: "right" } }, by ? by + (date ? " \u2022 " + date : "") : "Awaiting sign-off"));
+      var byLabel = fmtApprover(by);
+      return /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 11, padding: "6px 10px", borderRadius: 8, background: by ? C.greenBg : "#fff", border: "1px solid " + (by ? C.green : C.border), marginBottom: 6 } }, /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: by ? C.greenDk : C.slate } }, (by ? "\u2714 " : "\u25CB ") + label), /*#__PURE__*/React.createElement("span", { style: { color: by ? C.greenDk : C.slate, textAlign: "right" } }, by ? byLabel + (date ? " \u2022 " + date : "") : "Awaiting sign-off"));
     };
     var slots = ap === "PENDING REVIEW" || ap === "APPROVED CLOSED" ? /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } }, signRow("GC Manager", det.clientApprovedBy, det.clientApprovedDate), signRow("PMC Manager", det.lpApprovedBy, det.lpApprovedDate)) : null;
     var badge = /*#__PURE__*/React.createElement("div", {
