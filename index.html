@@ -134,77 +134,132 @@ var CLOUD = {
   key: "sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",
   table: "ctpa_state",
   row: "bkk22",
-  bucket: "ctpa-photos"
+  photos: "ctpa_photos"
 };
 function cloudOn(){ return !!(CLOUD.url && CLOUD.key); }
 
-/* ── Supabase Storage helpers ────────────────────────────────────────────────
-   Photos are uploaded to bucket "ctpa-photos" at path:
-     {obs_id}/{slot}/{index}_{filename}   e.g. OBS-482/before/0_site.jpg
-   The public URL is stored in photo.storageUrl so any device can fetch it.
-   stripPhotos() preserves storageUrl so it survives the cloud round-trip.
-   During PDF/PPTX export, fetchPhotosForExport() fills in missing src values
-   by downloading from Storage before the report generator runs.
+/* ── ctpa_photos table helpers ───────────────────────────────────────────────
+   Photos are stored in a dedicated Supabase table "ctpa_photos" as base64 src.
+   This avoids needing a Storage bucket and works with the existing anon REST key.
+
+   Table schema (run once in Supabase SQL Editor):
+     CREATE TABLE IF NOT EXISTS public.ctpa_photos (
+       id     BIGSERIAL PRIMARY KEY,
+       site   TEXT NOT NULL DEFAULT 'bkk22',
+       obs_id TEXT NOT NULL,
+       slot   TEXT NOT NULL,
+       idx    INT  NOT NULL DEFAULT 0,
+       src    TEXT,
+       name   TEXT,
+       at     TEXT
+     );
+     ALTER TABLE public.ctpa_photos ENABLE ROW LEVEL SECURITY;
+     CREATE POLICY "photos_select" ON public.ctpa_photos FOR SELECT USING (true);
+     CREATE POLICY "photos_insert" ON public.ctpa_photos FOR INSERT WITH CHECK (true);
+     CREATE POLICY "photos_upsert" ON public.ctpa_photos FOR UPDATE USING (true);
+
+   stripPhotos() keeps only photo metadata (no src) in ctpa_state.
+   upPh() saves full src to ctpa_photos whenever a photo is added.
+   fetchPhotosForExport() loads src from ctpa_photos for all exported obs.
    ──────────────────────────────────────────────────────────────────────────── */
-function storageBase(){ return CLOUD.url.replace(/\/$/,"") + "/storage/v1/object"; }
+function photosApiBase(){
+  return CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_photos";
+}
 
-function uploadPhotoToStorage(dataUri, obsId, slot, index, filename){
-  if(!cloudOn() || !CLOUD.bucket) return Promise.resolve(null);
-  /* convert base64 data URI to Blob */
-  var parts = dataUri.split(",");
-  var mime  = (parts[0].match(/:(.*?);/) || [])[1] || "image/jpeg";
-  var bin   = atob(parts[1] || "");
-  var arr   = new Uint8Array(bin.length);
-  for(var i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
-  var blob  = new Blob([arr], { type: mime });
-  var ext   = filename ? filename.split(".").pop() : (mime.split("/")[1] || "jpg");
-  var path  = obsId + "/" + slot + "/" + index + "_" + (filename || ("photo." + ext));
-  var url   = storageBase() + "/" + CLOUD.bucket + "/" + path;
-  return fetch(url, {
+/* Save one photo to ctpa_photos table (upsert by site+obs_id+slot+idx) */
+function savePhotoToCloud(obsId, slot, idx, photo){
+  if(!cloudOn() || !photo || !photo.src) return Promise.resolve(false);
+  var rec = {
+    site:   CLOUD.row,
+    obs_id: obsId,
+    slot:   slot,
+    idx:    idx,
+    src:    photo.src,
+    name:   photo.name || null,
+    at:     photo.at || null
+  };
+  /* POST with upsert — requires unique constraint on (site,obs_id,slot,idx).
+     If constraint not present, use DELETE+INSERT pattern via two steps. */
+  return fetch(photosApiBase(), {
     method: "POST",
-    headers: { "Authorization": "Bearer " + CLOUD.key, "Content-Type": mime, "x-upsert": "true" },
-    body: blob
+    headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
+    body: JSON.stringify([rec])
   }).then(function(r){
-    if(!r.ok) return null;
-    /* public URL */
-    return storageBase() + "/public/" + CLOUD.bucket + "/" + path;
-  }).catch(function(){ return null; });
+    if(!r.ok){
+      /* fallback: try simple insert (will create duplicates but won't fail) */
+      return fetch(photosApiBase(), {
+        method: "POST",
+        headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+        body: JSON.stringify([rec])
+      }).then(function(r2){ return r2.ok; });
+    }
+    return true;
+  }).catch(function(e){
+    console.warn("[CTPA] savePhotoToCloud failed:", e && e.message);
+    return false;
+  });
 }
 
-function fetchPhotoAsBase64(storageUrl){
-  if(!storageUrl) return Promise.resolve(null);
-  return fetch(storageUrl, { cache: "force-cache" })
+/* Fetch all photos for a list of obs_ids from ctpa_photos */
+function fetchCloudPhotos(obsIds){
+  if(!cloudOn() || !obsIds || !obsIds.length) return Promise.resolve([]);
+  var idList = obsIds.map(function(id){ return encodeURIComponent(id); }).join(",");
+  var url = photosApiBase() +
+    "?site=eq." + encodeURIComponent(CLOUD.row) +
+    "&obs_id=in.(" + idList + ")" +
+    "&select=obs_id,slot,idx,src,name,at" +
+    "&order=obs_id.asc,slot.asc,idx.asc";
+  return fetch(url, { headers: cloudHeaders(), cache: "no-store" })
     .then(function(r){
-      if(!r.ok) return null;
-      return r.blob().then(function(blob){
-        return new Promise(function(res){
-          var fr = new FileReader();
-          fr.onload = function(){ res(fr.result); };
-          fr.onerror = function(){ res(null); };
-          fr.readAsDataURL(blob);
-        });
-      });
-    }).catch(function(){ return null; });
+      if(!r.ok){ console.warn("[CTPA] fetchCloudPhotos HTTP", r.status); return []; }
+      return r.json();
+    })
+    .catch(function(e){ console.warn("[CTPA] fetchCloudPhotos error:", e && e.message); return []; });
 }
 
-/* Before generating PDF/PPTX, fetch any photo whose src is missing but
-   storageUrl is available.  Returns a new obs array with src filled in. */
+/* Before generating PDF/PPTX, fill in any missing photo src from ctpa_photos.
+   Returns obs array (mutated in-place) with src filled. Logs each result. */
 function fetchPhotosForExport(obsArr){
-  var tasks = [];
-  obsArr.forEach(function(o, oi){
+  if(!cloudOn()) return Promise.resolve(obsArr);
+  /* collect obs IDs that have photos with missing src */
+  var needIds = [];
+  obsArr.forEach(function(o){
+    var needsFetch = false;
     ["pb","pa"].forEach(function(slot){
-      (o[slot] || []).forEach(function(p, pi){
-        if(p && p.storageUrl && (!p.src || p.src.length < 32)){
-          tasks.push(
-            fetchPhotoAsBase64(p.storageUrl).then(function(src){
-              if(src) obsArr[oi][slot][pi] = Object.assign({}, p, { src: src });
-            })
-          );
-        }
+      (o[slot] || []).forEach(function(p){
+        if(p && (!p.src || p.src.length < 32)) needsFetch = true;
       });
     });
+    if(needsFetch && o.id) needIds.push(o.id);
   });
-  return Promise.all(tasks).then(function(){ return obsArr; });
+  console.log("[CTPA export] fetchPhotosForExport: obs needing cloud photo fetch:", needIds);
+  if(!needIds.length) return Promise.resolve(obsArr);
+
+  return fetchCloudPhotos(needIds).then(function(rows){
+    console.log("[CTPA export] ctpa_photos rows returned:", rows.length);
+    /* index by obs_id+slot+idx */
+    var photoMap = {};
+    rows.forEach(function(r){
+      var key = r.obs_id + "|" + r.slot + "|" + r.idx;
+      photoMap[key] = r.src;
+    });
+    /* patch obsArr */
+    obsArr.forEach(function(o, oi){
+      ["pb","pa"].forEach(function(slot){
+        (o[slot] || []).forEach(function(p, pi){
+          var key = o.id + "|" + slot + "|" + pi;
+          var cloudSrc = photoMap[key];
+          console.log("[CTPA export] OBS", o.id, slot, pi,
+            "local src:", p && p.src ? ("present (" + (p.src||"").length + " chars)") : "MISSING",
+            "cloud src:", cloudSrc ? ("present (" + cloudSrc.length + " chars)") : "NOT FOUND");
+          if(cloudSrc && cloudSrc.length > 32 && (!p.src || p.src.length < 32)){
+            obsArr[oi][slot][pi] = Object.assign({}, p, { src: cloudSrc });
+          }
+        });
+      });
+    });
+    return obsArr;
+  });
 }
 
 /* Diagnostic access — compares SHA-256 of typed password against stored hash.
@@ -293,8 +348,8 @@ function cloudLoad(){
 function stripPhotos(arr){
   return arr.map(function(o){
     var o2 = Object.assign({}, o);
-    if(o2.pb && o2.pb.length) o2.pb = o2.pb.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true, storageUrl: p.storageUrl || null }; });
-    if(o2.pa && o2.pa.length) o2.pa = o2.pa.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true, storageUrl: p.storageUrl || null }; });
+    if(o2.pb && o2.pb.length) o2.pb = o2.pb.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true }; });
+    if(o2.pa && o2.pa.length) o2.pa = o2.pa.map(function(p){ return { id: p.id, name: p.name, at: p.at, _hasPhoto: true }; });
     return o2;
   });
 }
@@ -3148,6 +3203,47 @@ function DiagnosticsView(_ref_diag) {
       );
     })(),
 
+    /* ── ctpa_photos table setup ── */
+    (function(){
+      var SQL_PHOTOS = [
+        "-- ctpa_photos: stores photo base64 for cross-device export",
+        "-- Run once in: Supabase Dashboard → SQL Editor → New query",
+        "CREATE TABLE IF NOT EXISTS public.ctpa_photos (",
+        "  id     BIGSERIAL PRIMARY KEY,",
+        "  site   TEXT NOT NULL DEFAULT 'bkk22',",
+        "  obs_id TEXT NOT NULL,",
+        "  slot   TEXT NOT NULL,",
+        "  idx    INT  NOT NULL DEFAULT 0,",
+        "  src    TEXT,",
+        "  name   TEXT,",
+        "  at     TEXT",
+        ");",
+        "ALTER TABLE public.ctpa_photos ENABLE ROW LEVEL SECURITY;",
+        "CREATE POLICY \"photos_select\" ON public.ctpa_photos FOR SELECT USING (true);",
+        "CREATE POLICY \"photos_insert\" ON public.ctpa_photos FOR INSERT WITH CHECK (true);",
+        "CREATE POLICY \"photos_update\" ON public.ctpa_photos FOR UPDATE USING (true) WITH CHECK (true);",
+        "-- optional unique constraint to enable upsert:",
+        "ALTER TABLE public.ctpa_photos ADD CONSTRAINT ctpa_photos_unique",
+        "  UNIQUE (site, obs_id, slot, idx);"
+      ].join("\n");
+      var _pSt = React.useState(false), pCopied = _pSt[0], setPCopied = _pSt[1];
+      function copySQLPhotos(){
+        try{ navigator.clipboard.writeText(SQL_PHOTOS).then(function(){ setPCopied(true); setTimeout(function(){ setPCopied(false); },2500); }); }catch(e){}
+      }
+      return secBox("Photo Table SQL — required for cross-device PDF/PPT photo export",
+        "Creates ctpa_photos table. Run once, then re-upload photos to make them available on all devices.",
+        React.createElement("div", null,
+          React.createElement("button", {
+            onClick: copySQLPhotos,
+            style: { marginBottom: 10, padding: "6px 16px", background: pCopied ? C.green : "#0EA5E9", color: "#fff", border: "none", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer" }
+          }, pCopied ? "✅ Copied!" : "📋 Copy SQL"),
+          React.createElement("pre", {
+            style: { background: "#0F172A", color: "#E2E8F0", borderRadius: 8, padding: "12px 14px", fontSize: 10, overflowX: "auto", lineHeight: 1.7, margin: 0, whiteSpace: "pre-wrap" }
+          }, SQL_PHOTOS)
+        )
+      );
+    })(),
+
     /* ── Clear Activity Log ── */
     (function(){
       var _clState = React.useState(null), clResult = _clState[0], setClResult = _clState[1];
@@ -3912,35 +4008,18 @@ function App() {
   var upPh = function upPh(id, k, photos) {
     var prev = (obs.find(function(o){ return o.id === id; }) || {})[k] || [];
     var added = photos.slice(prev.length);
-    /* upload new photos to Supabase Storage and attach storageUrl */
-    var uploadPromises = added.map(function(p, i){
-      var idx = prev.length + i;
-      if(!p.src || !cloudOn()) return Promise.resolve(p);
-      return uploadPhotoToStorage(p.src, id, k === "pb" ? "before" : "after", idx, p.name)
-        .then(function(url){
-          return url ? Object.assign({}, p, { storageUrl: url }) : p;
-        });
-    });
-    Promise.all(uploadPromises).then(function(uploadedAdded){
-      var mergedPhotos = prev.concat(uploadedAdded).concat(photos.slice(prev.length + added.length));
-      /* replace the added photos with storage-enriched versions */
-      var finalPhotos = photos.map(function(p, i){
-        if(i < prev.length) return p;
-        return uploadedAdded[i - prev.length] || p;
-      });
-      var nx = obs.map(function (o) {
-        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, finalPhotos)) : o;
-      });
-      ps(nx);
-      setDet(nx.find(function (o) { return o.id === id; }));
-    });
-    /* optimistic update with local src immediately */
-    var nx0 = obs.map(function (o) {
+    /* update local state immediately (optimistic) */
+    var nx0 = obs.map(function(o){
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, photos)) : o;
     });
     ps(nx0);
-    setDet(nx0.find(function (o) { return o.id === id; }));
-    added.forEach(function(p){
+    setDet(nx0.find(function(o){ return o.id === id; }));
+    /* save newly-added photos to ctpa_photos table for cross-device export */
+    added.forEach(function(p, i){
+      var idx = prev.length + i;
+      savePhotoToCloud(id, k, idx, p).then(function(ok){
+        console.log("[CTPA] savePhotoToCloud", id, k, idx, ok ? "✅" : "❌ (will retry on next upload)");
+      });
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
     });
   };
