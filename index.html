@@ -178,22 +178,31 @@ function savePhotoToCloud(obsId, slot, idx, photo){
     name:   photo.name || null,
     at:     photo.at || null
   };
-  /* POST with upsert — requires unique constraint on (site,obs_id,slot,idx).
-     If constraint not present, use DELETE+INSERT pattern via two steps. */
+  /* Try upsert first (requires unique constraint on site+obs_id+slot+idx).
+     If that constraint doesn't exist yet, fall back to a DELETE+INSERT to avoid duplicates. */
   return fetch(photosApiBase(), {
     method: "POST",
     headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
     body: JSON.stringify([rec])
   }).then(function(r){
-    if(!r.ok){
-      /* fallback: try simple insert (will create duplicates but won't fail) */
-      return fetch(photosApiBase(), {
-        method: "POST",
-        headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
-        body: JSON.stringify([rec])
-      }).then(function(r2){ return r2.ok; });
-    }
-    return true;
+    if(r.ok) return true;
+    /* constraint missing — delete existing row then insert */
+    var delUrl = photosApiBase() +
+      "?site=eq." + encodeURIComponent(rec.site) +
+      "&obs_id=eq." + encodeURIComponent(rec.obs_id) +
+      "&slot=eq." + encodeURIComponent(rec.slot) +
+      "&idx=eq." + rec.idx;
+    return fetch(delUrl, { method: "DELETE", headers: cloudHeaders() })
+      .then(function(){
+        return fetch(photosApiBase(), {
+          method: "POST",
+          headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+          body: JSON.stringify([rec])
+        }).then(function(r2){
+          if(!r2.ok) return r2.text().then(function(t){ console.warn("[CTPA] savePhotoToCloud INSERT failed:", r2.status, t.slice(0,200)); return false; });
+          return true;
+        });
+      });
   }).catch(function(e){
     console.warn("[CTPA] savePhotoToCloud failed:", e && e.message);
     return false;
@@ -3222,6 +3231,7 @@ function DiagnosticsView(_ref_diag) {
         "CREATE POLICY \"photos_select\" ON public.ctpa_photos FOR SELECT USING (true);",
         "CREATE POLICY \"photos_insert\" ON public.ctpa_photos FOR INSERT WITH CHECK (true);",
         "CREATE POLICY \"photos_update\" ON public.ctpa_photos FOR UPDATE USING (true) WITH CHECK (true);",
+        "CREATE POLICY \"photos_delete\" ON public.ctpa_photos FOR DELETE USING (true);",
         "-- optional unique constraint to enable upsert:",
         "ALTER TABLE public.ctpa_photos ADD CONSTRAINT ctpa_photos_unique",
         "  UNIQUE (site, obs_id, slot, idx);"
@@ -3705,6 +3715,21 @@ function App() {
       var d = r ? JSON.parse(r) : null;
       if (d && d.length > 0) {
         setObs(ctpaMigrate(d));   // show cached data instantly (no blank screen)
+        /* Backfill: upload any photos that have src locally but haven't yet
+           been saved to ctpa_photos (e.g. photos added before this feature) */
+        if(cloudOn()){
+          d.forEach(function(o){
+            ["pb","pa"].forEach(function(slot){
+              (o[slot]||[]).forEach(function(p, idx){
+                if(p && p.src && p.src.length > 32){
+                  savePhotoToCloud(o.id, slot, idx, p).then(function(ok){
+                    if(ok) console.log("[CTPA] backfill photo uploaded:", o.id, slot, idx);
+                  });
+                }
+              });
+            });
+          });
+        }
       }
       // Seed data is intentionally NOT pre-loaded anymore — cloud is the source
     } catch (e) {
@@ -3736,6 +3761,21 @@ function App() {
              devices implement Supabase Storage. */
           setObs(function(localObs){
             var restored = restorePhotos(cloudMigrated, localObs);
+            /* Check if any photos are still missing src after local restore */
+            var missingCount = 0;
+            restored.forEach(function(o){
+              ["pb","pa"].forEach(function(slot){
+                (o[slot]||[]).forEach(function(p){ if(p && (!p.src || p.src.length < 32)) missingCount++; });
+              });
+            });
+            if(missingCount > 0 && cloudOn()){
+              /* Fetch missing photo src from ctpa_photos table, then update state */
+              fetchPhotosForExport(restored).then(function(withPhotos){
+                setObs(withPhotos);
+                try { localStorage.setItem(SKEY, JSON.stringify(withPhotos)); } catch(e){}
+                console.log("[CTPA] pull(): restored", missingCount, "photo src values from ctpa_photos");
+              });
+            }
             try { localStorage.setItem(SKEY, JSON.stringify(restored)); } catch(e){}
             return restored;
           });
