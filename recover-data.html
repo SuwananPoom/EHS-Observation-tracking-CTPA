@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Recover Data — EHS Observation Tracker</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:860px;margin:30px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:21px;font-weight:700;margin-bottom:4px}h2{font-size:15px;margin:0 0 8px}
+.sub{color:#64748B;font-size:13px;margin-bottom:20px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;margin-bottom:16px}
+.btn{padding:10px 20px;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-green{background:#10B981}.btn-green:hover{background:#059669}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:14px;max-height:380px;overflow-y:auto;margin-top:10px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+textarea{width:100%;min-height:120px;font-family:monospace;font-size:11px;border:1px solid #CBD5E1;border-radius:8px;padding:10px;box-sizing:border-box}
+.banner{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;border-radius:8px;padding:12px 14px;font-size:13px;margin-bottom:16px}
+code{background:#F1F5F9;padding:1px 5px;border-radius:4px;font-size:12px}
+pre.snip{background:#0F172A;color:#A5F3FC;padding:12px;border-radius:8px;font-size:11px;white-space:pre-wrap;overflow-x:auto}
+</style></head><body>
+<h1>Recover Observation Data</h1>
+<div class="sub">Diagnose what is in the cloud right now, and restore from a backup if needed</div>
+<div class="banner"><b>STOP — do not run any import/fix/remove tool until this check is done.</b> First find out what is actually in the cloud, then restore from a known-good backup.</div>
+
+<div class="card">
+  <h2>Step 1 — Check current cloud data (read-only, safe)</h2>
+  <button class="btn" id="btnCheck" onclick="checkCloud()">Check Cloud Now</button>
+  <div class="log" id="log1">Click to read the current Supabase state.\n</div>
+</div>
+
+<div class="card">
+  <h2>Step 2 — Get the backup from your device (run in the LIVE APP)</h2>
+  <p style="font-size:13px;color:#475569">The app keeps a full local copy in your browser. Open the <b>live app on the device that last showed the data</b>, press <code>F12</code> → Console, paste this, press Enter, then copy the text it prints:</p>
+  <pre class="snip" id="snip">copy(localStorage.getItem("ctpa_bkk22_v25_v25c"));
+console.log("Backup length:", (localStorage.getItem("ctpa_bkk22_v25_v25c")||"").length);</pre>
+  <button class="btn" onclick="copySnip()">Copy snippet</button>
+  <div style="font-size:12px;color:#64748B;margin-top:8px"><code>copy(...)</code> puts the backup JSON on your clipboard. Paste it into Step 3 below.</div>
+</div>
+
+<div class="card">
+  <h2>Step 3 — Restore backup to cloud</h2>
+  <p style="font-size:13px;color:#475569">Paste the JSON array from Step 2 here. It will be validated, then written to Supabase only if it contains more observations than the cloud currently has (safety guard).</p>
+  <textarea id="backup" placeholder='Paste the observation JSON array here, e.g. [{"id":"OBS-001",...}, ...]'></textarea>
+  <div style="margin-top:10px">
+    <button class="btn btn-green" id="btnRestore" onclick="restore()">Validate &amp; Restore to Cloud</button>
+    <label style="margin-left:14px;font-size:12px"><input type="checkbox" id="force"> Force overwrite even if cloud has more records</label>
+  </div>
+  <div class="log" id="log2">Awaiting backup JSON...\n</div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json",Prefer:"return=representation"};}
+function L(id,m,c){var e=document.getElementById(id);var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+function copySnip(){navigator.clipboard.writeText(document.getElementById("snip").textContent);alert("Snippet copied. Paste it into the app's Console.");}
+
+function weekBreakdown(arr){
+  var m={};arr.forEach(function(o){var w=o.week||"(no week)";m[w]=(m[w]||0)+1;});
+  return Object.keys(m).sort().map(function(k){return "  "+k+": "+m[k];}).join("\n");
+}
+
+async function checkCloud(){
+  document.getElementById("btnCheck").disabled=true;
+  document.getElementById("log1").innerHTML="";
+  L("log1","Reading Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    var rows=await r.json();
+    if(!rows||!rows[0]){L("log1","Row bkk22 NOT FOUND.","err");return;}
+    var d=rows[0].data;
+    if(!Array.isArray(d)){L("log1","data field is not an array: "+typeof d,"err");return;}
+    L("log1","Cloud currently holds "+d.length+" observations.",d.length?"ok":"err");
+    if(d.length){
+      L("log1","\nBy week:","info");
+      L("log1",weekBreakdown(d));
+      var ids=d.map(function(o){return o.id;}).filter(Boolean).sort();
+      L("log1","\nID range: "+(ids[0]||"?")+" -> "+(ids[ids.length-1]||"?"),"info");
+    } else {
+      L("log1","\nCloud is EMPTY. Use Step 2 + Step 3 to restore from your device backup.","warn");
+    }
+    window.__cloudCount=d.length;
+  }catch(e){L("log1","ERROR: "+e.message,"err");document.getElementById("btnCheck").disabled=false;}
+}
+
+async function restore(){
+  document.getElementById("log2").innerHTML="";
+  var raw=document.getElementById("backup").value.trim();
+  if(!raw){L("log2","Paste the backup JSON first.","err");return;}
+  var arr;
+  try{arr=JSON.parse(raw);}catch(e){L("log2","Invalid JSON: "+e.message,"err");return;}
+  if(!Array.isArray(arr)){L("log2","Backup must be a JSON array of observations.","err");return;}
+  var valid=arr.filter(function(o){return o&&o.id;});
+  L("log2","Parsed "+arr.length+" records ("+valid.length+" with an id).","info");
+  if(valid.length===0){L("log2","No valid observations found. Aborting.","err");return;}
+  L("log2","By week:\n"+weekBreakdown(valid),"info");
+
+  document.getElementById("btnRestore").disabled=true;
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    var rows=await r.json();
+    var cur=(rows&&rows[0]&&Array.isArray(rows[0].data))?rows[0].data:[];
+    L("log2","\nCloud currently has "+cur.length+" records.","info");
+    var force=document.getElementById("force").checked;
+    if(valid.length<cur.length && !force){
+      L("log2","SAFETY STOP: backup ("+valid.length+") has FEWER records than cloud ("+cur.length+").","warn");
+      L("log2","If you are sure, tick 'Force overwrite' and try again.","warn");
+      document.getElementById("btnRestore").disabled=false;return;
+    }
+    L("log2","Writing "+valid.length+" observations to Supabase...","info");
+    var p=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:valid})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+    L("log2","\n=== RESTORED ===","ok");
+    L("log2","Cloud now holds "+valid.length+" observations.","ok");
+    L("log2","Refresh the app on all devices to confirm.","info");
+  }catch(e){L("log2","ERROR: "+e.message,"err");document.getElementById("btnRestore").disabled=false;}
+}
+</script></body></html>
