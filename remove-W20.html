@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Remove W20 — EHS Observation Tracker</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:780px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{display:inline-block;padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}
+.btn-danger{background:#EF4444;color:#fff}
+.btn-danger:hover{background:#DC2626}
+.btn-danger:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:360px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+.banner{background:#FEF2F2;border:1px solid #FCA5A5;color:#991B1B;border-radius:8px;padding:12px 14px;font-size:13px;font-weight:600;margin-bottom:16px}
+</style>
+</head>
+<body>
+<h1>Remove W20 Batch</h1>
+<div class="sub">Deletes all observations tagged <code>week:W20</code> from the cloud</div>
+
+<div class="banner">⚠ This permanently removes all 17 W20 observations from Supabase. Other weeks (W01, W06, W16) are not affected.</div>
+
+<div class="card">
+  <button class="btn btn-danger" id="btnRemove" onclick="runRemove()">🗑 Remove all W20 observations</button>
+  <div class="log" id="log">Ready. Click the button to remove the W20 batch.\n</div>
+</div>
+
+<script>
+var CLOUD = {
+  url: "https://ocwdnvblpjfzkgzratqb.supabase.co",
+  key: "sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",
+  table: "ctpa_state",
+  row: "bkk22"
+};
+
+function log(msg, cls) {
+  var el = document.getElementById("log");
+  var line = document.createElement("span");
+  if (cls) line.className = cls;
+  line.textContent = msg + "\n";
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function cloudHeaders() {
+  return {
+    "apikey": CLOUD.key,
+    "Authorization": "Bearer " + CLOUD.key,
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+  };
+}
+
+function isW20(o) {
+  return o && o.tags && o.tags.indexOf("week:W20") >= 0;
+}
+
+async function runRemove() {
+  document.getElementById("btnRemove").disabled = true;
+  var el = document.getElementById("log");
+  el.innerHTML = "";
+  log("=== W20 Removal Tool ===", "info");
+  log("Connecting to Supabase...", "info");
+
+  try {
+    var base = CLOUD.url + "/rest/v1";
+    var r = await fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
+      headers: cloudHeaders(), cache: "no-store"
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status + " — cannot reach Supabase");
+    var rows = await r.json();
+    if (!rows || !rows[0]) throw new Error("Row bkk22 not found");
+    var existing = Array.isArray(rows[0].data) ? rows[0].data : [];
+    log("Current observations in cloud: " + existing.length, "ok");
+
+    var w20 = existing.filter(isW20);
+    if (w20.length === 0) {
+      log("No W20 records found — nothing to remove.", "warn");
+      return;
+    }
+    log("Found " + w20.length + " W20 records to remove:", "warn");
+    w20.forEach(function(o){ log("  " + o.id + " — " + (o.description||"").slice(0,60)); });
+
+    var kept = existing.filter(function(o){ return !isW20(o); });
+    log("\nKeeping " + kept.length + " observations. Patching Supabase...", "info");
+
+    var patch = await fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row, {
+      method: "PATCH",
+      headers: cloudHeaders(),
+      body: JSON.stringify({ data: kept })
+    });
+    if (!patch.ok) {
+      var txt = await patch.text();
+      throw new Error("PATCH failed HTTP " + patch.status + ": " + txt);
+    }
+
+    log("\n=== SUCCESS ===", "ok");
+    log("Removed " + w20.length + " W20 observations.", "ok");
+    log("Total observations now: " + kept.length, "ok");
+    log("\nRefresh the main app to confirm.", "info");
+
+  } catch(e) {
+    log("ERROR: " + e.message, "err");
+    document.getElementById("btnRemove").disabled = false;
+  }
+}
+</script>
+</body>
+</html>
