@@ -1,0 +1,87 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CTPA — Remove W06</title>
+<style>
+body{font-family:system-ui,Arial,sans-serif;max-width:700px;margin:20px auto;padding:0 16px;color:#0F172A}
+h1{font-size:18px}
+button{padding:10px 18px;border:none;border-radius:9px;font-weight:700;font-size:14px;cursor:pointer;margin:6px 6px 6px 0}
+.primary{background:#1E3A8A;color:#fff}
+.del{background:#B91C1C;color:#fff}
+.box{background:#F8FAFC;border:1px solid #E2E8F0;border-radius:10px;padding:14px;margin:12px 0;font-size:13px}
+.warn{background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:12px;margin:12px 0;font-size:13px;color:#92400E}
+pre{background:#0F172A;color:#E2E8F0;padding:10px;border-radius:8px;overflow:auto;font-size:11px;max-height:220px}
+.ok{color:#15803D;font-weight:700}.err{color:#B91C1C;font-weight:700}
+table{border-collapse:collapse;width:100%;font-size:11px}
+td,th{border:1px solid #E2E8F0;padding:3px 7px;text-align:left}
+tr.w06{background:#FEF2F2}
+</style></head><body>
+<h1>🗑 CTPA — Remove ALL W06 Observations</h1>
+<div class="box">อ่านข้อมูล Supabase → กรอง W06 ออก → บันทึกกลับ<br>
+ข้อมูล W01–W05 และข้อมูลอื่น ๆ <b>ไม่ถูกแตะต้อง</b></div>
+<button class="primary" onclick="preview()">1 · Preview</button>
+<button class="del" id="delBtn" onclick="doRemove()" disabled>2 · Remove W06 from Supabase</button>
+<div id="status"></div>
+<div id="out"></div>
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key};}
+function base(){return CLOUD.url+"/rest/v1/"+CLOUD.table;}
+var _data=null;
+function load(){
+  return fetch(base()+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"})
+    .then(function(r){return r.json();})
+    .then(function(rows){return(rows&&rows[0]&&Array.isArray(rows[0].data))?rows[0].data:[];});
+}
+function preview(){
+  document.getElementById("status").innerHTML="Reading Supabase…";
+  document.getElementById("out").innerHTML="";
+  document.getElementById("delBtn").disabled=true;
+  load().then(function(cloud){
+    var w06=cloud.filter(function(o){return o.week==="W06";});
+    var keep=cloud.filter(function(o){return o.week!=="W06";});
+    _data={cloud:cloud,keep:keep,w06:w06};
+    var html="<div class='box'>Cloud: <b>"+cloud.length+"</b> obs total<br>"
+      +"W06 to remove: <b>"+w06.length+"</b><br>"
+      +"Will keep: <b>"+keep.length+"</b></div>";
+    if(w06.length===0){
+      html+="<div class='box' style='color:#15803D;font-weight:700'>✅ ไม่พบข้อมูล W06 — ไม่มีอะไรต้องลบ</div>";
+      document.getElementById("out").innerHTML=html;
+      document.getElementById("status").innerHTML="";
+      return;
+    }
+    html+="<div class='warn'>⚠ รายการด้านล่างจะถูกลบออกจาก Supabase ถาวร</div>";
+    var rows=w06.map(function(o){
+      return "<tr class='w06'><td>"+o.id+"</td><td>"+(o.date||"")+"</td><td>"+(o.cat||"")+"</td><td>"+(o.desc||"").slice(0,45)+"</td><td>"+(o.status||"")+"</td></tr>";
+    }).join("");
+    html+="<table><tr><th>ID</th><th>Date</th><th>Category</th><th>Description</th><th>Status</th></tr>"+rows+"</table>";
+    document.getElementById("out").innerHTML=html;
+    document.getElementById("status").innerHTML="<span style='color:#B45309;font-weight:700'>⚠ ตรวจสอบรายการแล้วกด Remove</span>";
+    document.getElementById("delBtn").disabled=false;
+  }).catch(function(e){
+    document.getElementById("status").innerHTML="<span class='err'>Read failed: "+e.message+"</span>";
+  });
+}
+function doRemove(){
+  if(!_data){alert("Click Preview first");return;}
+  if(_data.w06.length===0){alert("No W06 records found.");return;}
+  if(!confirm("ลบ W06 จำนวน "+_data.w06.length+" รายการออกจาก Supabase ถาวร?\nคลิก OK เพื่อยืนยัน")){return;}
+  document.getElementById("delBtn").disabled=true;
+  document.getElementById("status").innerHTML="Saving…";
+  fetch(base()+"?id=eq."+CLOUD.row,{
+    method:"PATCH",
+    headers:Object.assign({"Content-Type":"application/json",Prefer:"return=minimal"},H()),
+    body:JSON.stringify({data:_data.keep})
+  }).then(function(r){
+    if(!r.ok)return r.text().then(function(t){throw new Error("HTTP "+r.status+" "+t);});
+    return load();
+  }).then(function(after){
+    var remain=after.filter(function(o){return o.week==="W06";}).length;
+    document.getElementById("status").innerHTML=
+      "<span class='ok'>✅ Done — Supabase เหลือ "+after.length+" observations (W06 remaining: "+remain+")</span><br>"
+      +"Reload แอป CTPA เพื่อดูผล";
+    document.getElementById("out").innerHTML="";
+  }).catch(function(e){
+    document.getElementById("status").innerHTML="<span class='err'>Failed: "+e.message+"</span>";
+    document.getElementById("delBtn").disabled=false;
+  });
+}
+</script></body></html>
