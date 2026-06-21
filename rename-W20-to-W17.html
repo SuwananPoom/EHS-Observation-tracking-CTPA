@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rename W20 → W17</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:700px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#F59E0B;color:#fff}
+.btn:hover{background:#D97706}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:360px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+</style>
+</head>
+<body>
+<h1>Rename W20 → W17</h1>
+<div class="sub">เปลี่ยน week field ของ observation ทุกรายการที่เป็น W20 ให้เป็น W17</div>
+<div class="card">
+  <button class="btn" id="btn" onclick="run()">เปลี่ยน W20 → W17</button>
+  <div class="log" id="log">พร้อม — กดปุ่มเพื่อเริ่ม\n</div>
+</div>
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json",Prefer:"return=representation"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+async function run(){
+  document.getElementById("btn").disabled=true;
+  document.getElementById("log").innerHTML="";
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var rows=await r.json();
+    if(!rows||!rows[0]) throw new Error("Row bkk22 not found");
+    var obs=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations ในคลาวด์: "+obs.length,"ok");
+
+    var w20=obs.filter(function(o){return o.week==="W20";});
+    if(w20.length===0){log("ไม่พบ W20 records — ไม่มีอะไรต้องเปลี่ยน","warn");return;}
+    log("พบ W20: "+w20.length+" รายการ","info");
+    w20.forEach(function(o){log("  "+o.id+" — "+o.desc.slice(0,60));});
+
+    var updated=obs.map(function(o){
+      if(o.week==="W20") return Object.assign({},o,{week:"W17"});
+      return o;
+    });
+
+    log("\nกำลัง patch "+updated.length+" records (เปลี่ยน W20 → W17)...","info");
+    var p=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:updated})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== สำเร็จ ===","ok");
+    log("เปลี่ยน "+w20.length+" รายการจาก W20 → W17 เรียบร้อย","ok");
+    log("รีเฟรชแอปเพื่อยืนยัน","info");
+  }catch(e){log("ERROR: "+e.message,"err");document.getElementById("btn").disabled=false;}
+}
+</script>
+</body>
+</html>
