@@ -156,7 +156,8 @@ var LP_CODE     = PMC_CODE;
    Password: CTPA@Diag2026  (share only with system admins, never with site users)
    To change: run  crypto.subtle.digest('SHA-256', new TextEncoder().encode('newpass'))
               then convert ArrayBuffer to hex string. */
-var DIAG_PASS_HASH = "9325c5731b3bdba4c718a57854e5718e29ef088eaa5f6166dd35928b2c387206";
+var DIAG_PASS_HASH   = "9325c5731b3bdba4c718a57854e5718e29ef088eaa5f6166dd35928b2c387206";
+var REPORT_PASS_HASH = "f6fd62a0827b3369a1700a8b473d439ffd9f75e25fd4dbf53fb63bce149d4003";
 
 /* ============================================================
    CLOUD SYNC (Supabase) — กรอกค่า 2 บรรทัดนี้หลังสร้างโปรเจกต์
@@ -475,6 +476,15 @@ function checkDiagPass(input){
     .then(function(buf){
       var hex = Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,"0"); }).join("");
       return hex === DIAG_PASS_HASH;
+    })
+    .catch(function(){ return false; });
+}
+function checkReportPass(input){
+  if(!input) return Promise.resolve(false);
+  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(input))
+    .then(function(buf){
+      var hex = Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,"0"); }).join("");
+      return hex === REPORT_PASS_HASH;
     })
     .catch(function(){ return false; });
 }
@@ -3483,6 +3493,54 @@ function DiagAuthGate(_ref_gate) {
   );
 }
 
+/* ── ReportAuthGate: password prompt for Weekly Report Generator ── */
+function ReportAuthGate(_ref_rgate) {
+  var onAuth = _ref_rgate.onAuth, onBack = _ref_rgate.onBack;
+  var _pw  = React.useState(""), pw = _pw[0], setPw = _pw[1];
+  var _err = React.useState(""), err = _err[0], setErr = _err[1];
+  var _busy= React.useState(false), busy = _busy[0], setBusy = _busy[1];
+
+  function submit(e) {
+    if(e && e.preventDefault) e.preventDefault();
+    if(!pw){ setErr("กรุณากรอกรหัสผ่าน"); return; }
+    setBusy(true); setErr("");
+    checkReportPass(pw).then(function(ok){
+      setBusy(false);
+      if(ok){ onAuth(); }
+      else { setErr("รหัสผ่านไม่ถูกต้อง"); setPw(""); }
+    });
+  }
+
+  return React.createElement("div", {
+    style: { maxWidth: 400, margin: "80px auto", padding: "40px 32px", background: "#fff", borderRadius: 16, boxShadow: "0 4px 24px rgba(0,0,0,0.10)", textAlign: "center" }
+  },
+    React.createElement("div", { style: { fontSize: 44, marginBottom: 12 } }, "📊"),
+    React.createElement("div", { style: { fontSize: 20, fontWeight: 800, marginBottom: 6, color: "#1F2937" } }, "Weekly Report Generator"),
+    React.createElement("div", { style: { fontSize: 13, color: "#6B7280", marginBottom: 24 } }, "กรุณากรอกรหัสผ่านเพื่อเข้าถึงหน้า Report"),
+    React.createElement("form", { onSubmit: submit },
+      React.createElement("input", {
+        type: "password",
+        value: pw,
+        onChange: function(e){ setPw(e.target.value); setErr(""); },
+        placeholder: "Report password",
+        autoFocus: true,
+        style: { width: "100%", padding: "10px 14px", fontSize: 14, borderRadius: 8, border: "1.5px solid " + (err ? "#EF4444" : "#D1D5DB"), marginBottom: 10, boxSizing: "border-box", outline: "none" }
+      }),
+      err ? React.createElement("div", { style: { color: "#B91C1C", fontSize: 12, marginBottom: 10 } }, err) : null,
+      React.createElement("button", {
+        type: "submit",
+        disabled: busy,
+        style: { width: "100%", padding: "10px", fontSize: 14, fontWeight: 700, borderRadius: 8, border: "none", background: "#1D4ED8", color: "#fff", cursor: busy ? "wait" : "pointer", marginBottom: 10 }
+      }, busy ? "กำลังตรวจสอบ…" : "🔓 เข้าถึง Report"),
+      React.createElement("button", {
+        type: "button",
+        onClick: onBack,
+        style: { width: "100%", padding: "9px", fontSize: 13, fontWeight: 600, borderRadius: 8, border: "1.5px solid #D1D5DB", background: "#F9FAFB", color: "#6B7280", cursor: "pointer" }
+      }, "← กลับหน้าหลัก")
+    )
+  );
+}
+
 /* ── DiagnosticsView component ── */
 function DiagnosticsView(_ref_diag) {
   var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr;
@@ -4868,6 +4926,9 @@ function App() {
   var _diagAuth = React.useState(false),
     diagAuth = _diagAuth[0],
     setDiagAuth = _diagAuth[1];
+  var _reportAuth = React.useState(false),
+    reportAuth = _reportAuth[0],
+    setReportAuth = _reportAuth[1];
   var refreshLog = function(){
     setLogLoading(true);
     logLoad(300).then(function(res){
@@ -8388,7 +8449,9 @@ function App() {
       color: C.textMid,
       fontWeight: 600
     }
-  }, "Cancel"))), view === "report" && /*#__PURE__*/React.createElement(ReportView, { obs: obs }), view === "diag" && (diagAuth
+  }, "Cancel"))), view === "report" && (reportAuth
+  ? /*#__PURE__*/React.createElement(ReportView, { obs: obs })
+  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && (diagAuth
   ? /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr })
   : /*#__PURE__*/React.createElement(DiagAuthGate, { onAuth: function(){ setDiagAuth(true); }, onBack: function(){ setView("dashboard"); } })
 ), view === "detail" && det && /*#__PURE__*/React.createElement("div", {
