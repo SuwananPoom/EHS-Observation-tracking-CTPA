@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import W24 — EHS Observation Tracker</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{display:inline-block;padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-green{background:#10B981}.btn-green:hover{background:#059669}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:5px 7px;text-align:left}
+td{padding:4px 7px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+tr:nth-child(even) td{background:#F8FAFC}
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700}
+.SERIOUS{background:#FEE2E2;color:#991B1B}.MAJOR{background:#FEF9C3;color:#92400E}.MINOR{background:#DCFCE7;color:#166534}
+.ACT{background:#EDE9FE;color:#5B21B6}.CON{background:#E0F2FE;color:#075985}
+.OPEN{background:#FFF7ED;color:#C2410C}.CLOSED{background:#F0FDF4;color:#166534}
+</style>
+</head>
+<body>
+<h1>Import W24 — 21 Observations (2026-03-27)</h1>
+<div class="sub">Week 24 · Zone A · Customer Site Walk · 20 CLOSED · 1 OPEN</div>
+
+<div class="card">
+  <h2 style="font-size:15px;margin:0 0 12px">Preview — 21 observations</h2>
+  <table>
+    <thead><tr><th>#</th><th>Category</th><th>Description</th><th>Risk</th><th>Type</th><th>Status</th><th>Due</th></tr></thead>
+    <tbody id="preview"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <button class="btn btn-green" id="btnImport" onclick="runImport()">Import 21 W24 Observations to Cloud</button>
+  <div class="log" id="log">Ready. Review preview above then click import.\n</div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json",Prefer:"return=representation"};}
+
+var W24_DATA=[
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"The rebar bending machine was found without warning signage indicating machinery hazards.",rect:"Install appropriate warning signage on or near the rebar bending machine immediately. Ensure the signage clearly indicates potential hazards such as pinch points and moving parts. Brief workers on the hazards associated with the machine before use.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Fire Protection",fc:"Customer Site Walk",desc:"CO2 fire extinguishers were found without inspection tags indicating size/weight for periodic checks.",rect:"Install proper inspection tags on all CO2 fire extinguishers immediately. Ensure the tag includes extinguisher size/capacity, weight, and inspection record. Verify the condition and weight of the extinguishers during inspection.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Access and Egress",fc:"Customer Site Walk",desc:"No designated walkway was provided for workers to access and exit the work area, creating an unsafe condition.",rect:"Provide a designated and safe access/egress walkway for workers immediately. Ensure the walkway is clearly defined, unobstructed, and safe to use. Install temporary pathways or barriers to guide safe movement.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Electrical Safety (HRA)",fc:"Customer Site Walk",desc:"Electrical cables were laid on the ground and loosely hung in an unsafe manner. No S-hooks were provided for proper cable management and storage.",rect:"Immediately remove cables from the ground and organize them properly. Install S-hooks or cable hangers to secure and manage electrical cables safely. Ensure cables are routed in a way that avoids tripping hazards and damage.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Housekeeping",fc:"Customer Site Walk",desc:"No housekeeping or cleaning activities were carried out in the work area, resulting in an untidy and unsafe condition.",rect:"Immediately clean and organize the work area. Remove all debris, waste, and unnecessary materials from the area. Assign responsible personnel to carry out housekeeping activities.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Documentation",fc:"Customer Site Walk",desc:"Damaged information boards were observed in the work areas and unused boards were not properly removed, resulting in an untidy condition.",rect:"Repair or replace all damaged information boards immediately. Remove and properly store any unused boards from the work area. Ensure all boards are in good condition and clearly visible.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Material Storage",fc:"Customer Site Walk",desc:"Drinking water stations were not properly maintained in a clean condition, and work materials/equipment were found stored in the area.",rect:"Immediately clean and sanitize the drinking water station. Remove all work-related materials and equipment from the area. Ensure the area is used only for drinking and rest purposes.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Scaffold",fc:"Customer Site Walk",desc:"The scaffolding was found to be unsafe or incompletely installed.",rect:"Stop work on the scaffolding immediately. Rectify and complete the scaffolding installation in accordance with safety standards before resuming work.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Lifting equipment was not inspected before being brought into the work area and was not properly stored when not in use.",rect:"Inspect all lifting equipment before allowing it into the work area. Remove any non-compliant or uninspected equipment. Ensure proper storage of equipment when not in use.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-25",closed:"2026-03-25",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Access and Egress",fc:"Customer Site Walk",desc:"Opening holes had not been closed. Scaffolding pipes were placed and blocked access to the electrical panel.",rect:"Remove all scaffolding pipes or obstructions blocking access to the electrical panel. Ensure clear and unobstructed access to all electrical panels at all times. Immediately install guardrails, edge protection, or barriers at all exposed edges and openings.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Electrical Safety (HRA)",fc:"Customer Site Walk",desc:"Electrical cables were found laying on the floor without proper management, creating trip hazards and risk of cable damage.",rect:"Ensure all electrical wiring is neatly arranged and secured to avoid trip hazards and damage. Use appropriate cable ties for proper cable management. Ensure cables are not exposed, tangled, or at risk of damage.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Scaffold",fc:"Customer Site Walk",desc:"No red tag was provided for the unsafe scaffolding platform to warn workers against use.",rect:"Install appropriate warning signage and red tag at all access points of the unsafe scaffolding. Clearly indicate that the scaffolding is under modification and not safe for use. Restrict access until the scaffolding is inspected and approved.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-29",closed:"2026-03-29",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"Barricading and signage had not been provided for the temporary storage area.",rect:"Install proper barricades around the temporary storage area immediately. Organize and control access to the area to prevent unauthorized entry. Install appropriate warning signage.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"No signage was displayed for the tower crane and the tower crane information board had been relocated to another location.",rect:"Immediately reinstall proper signage for the tower crane at the designated and visible location. Ensure all required information boards such as load chart, safety instructions, and inspection status are clearly displayed at the crane base.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-29",closed:"2026-03-29",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Working from Heights (HRA)",fc:"Customer Site Walk",desc:"Hand tools had not been provided with tool lanyards to secure them when working at height.",rect:"Provide appropriate tool lanyards for all tools and equipment used at height. Ensure all personnel working at height attach their tools securely before starting work. Conduct immediate inspection to verify compliance.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"PPE",fc:"Customer Site Walk",desc:"Many workers were observed not wearing hand gloves during work activities.",rect:"Immediately enforce the use of appropriate hand gloves for all relevant tasks. Supervisors to monitor compliance and instruct non-compliant workers.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Access and Egress",fc:"Customer Site Walk",desc:"Workers were not maintaining three-point contact when using the staircase.",rect:"Instruct workers to maintain three-point contact and hold the handrail while ascending/descending. Stop unsafe behavior immediately and re-brief workers on safe access procedures. Supervisors to closely monitor compliance during access/egress.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Scaffold",fc:"Customer Site Walk",desc:"Many scaffolding platforms had not maintained mandatory signage such as SWL, level of platform, full body harness requirement, 100% tie-off, and beware of drop object hazard.",rect:"Immediately install all mandatory scaffolding signage including SWL, platform level identification, full body harness requirement, and 100% tie-off notices.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-28",closed:"2026-03-28",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Documentation",fc:"Customer Site Walk",desc:"Final revision of WAH, SIC and scaffolding training slides had not been submitted.",rect:"Training slides are currently being revised to align with project requirements and are expected to be completed by April 3.",risk:"MAJOR",status:"OPEN",by:"MS (Rep)",due:"2026-04-03",closed:"",closedBy:"",week:"W24",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Lifting operation zone was using soft barricading only. Hard barricading is recommended for fixed lifting work activities.",rect:"For lifting operations at fixed locations, use hard barricades. For lifting activities requiring daily relocation, coordinate with supervisor to determine appropriate barricading method.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-27",closed:"2026-03-27",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-27",zone:"Dormitory",company:"DayOne",cat:"Access and Egress",fc:"Customer Site Walk",desc:"Damaged fencing was observed at the dormitory area.",rect:"Immediately repair or replace the damaged fencing to restore site security and safety.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-27",closed:"2026-03-27",closedBy:"DayOne",week:"W24",obsType:"UNSAFE_CON",pb:[],pa:[]}
+];
+
+function padId(n){return "OBS-"+String(n).padStart(3,"0");}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+(function(){
+  var tb=document.getElementById("preview");
+  W24_DATA.forEach(function(o,i){
+    var tr=document.createElement("tr");
+    var rB="<span class='badge "+o.risk+"'>"+o.risk+"</span>";
+    var tB="<span class='badge "+(o.obsType==="UNSAFE_ACT"?"ACT":"CON")+"'>"+(o.obsType==="UNSAFE_ACT"?"Unsafe Act":"Unsafe Con")+"</span>";
+    var sB="<span class='badge "+o.status+"'>"+o.status+"</span>";
+    tr.innerHTML="<td>"+(i+1)+"</td><td>"+o.cat+"</td><td style='max-width:300px;font-size:10px'>"+o.desc+"</td><td>"+rB+"</td><td>"+tB+"</td><td>"+sB+"</td><td style='white-space:nowrap'>"+o.due+"</td>";
+    tb.appendChild(tr);
+  });
+})();
+
+async function runImport(){
+  document.getElementById("btnImport").disabled=true;
+  document.getElementById("log").innerHTML="";
+  log("=== W24 Import Tool ===","info");
+  log("Connecting to Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var rows=await r.json();
+    if(!rows||!rows[0]) throw new Error("Row bkk22 not found");
+    var existing=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations in cloud: "+existing.length,"ok");
+
+    var hasW24=existing.filter(function(o){return o.week==="W24";});
+    if(hasW24.length>0){
+      log("WARNING: "+hasW24.length+" W24 records already exist — aborting to prevent duplicates.","err");
+      log("IDs: "+hasW24.map(function(o){return o.id;}).join(", "),"warn");
+      document.getElementById("btnImport").disabled=false;
+      return;
+    }
+
+    var nextId=existing.length+1;
+    log("Assigning IDs from "+padId(nextId),"info");
+
+    var newObs=W24_DATA.map(function(o,i){
+      return Object.assign({},o,{id:padId(nextId+i)});
+    });
+
+    log("Preparing "+newObs.length+" observations:","info");
+    newObs.forEach(function(o){
+      log("  "+o.id+" ["+o.risk+"] ["+o.obsType+"] "+o.desc.slice(0,65)+"...");
+    });
+
+    var merged=existing.concat(newObs);
+    log("\nPatching Supabase — total "+merged.length+" observations...","info");
+
+    var p=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:merged})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== SUCCESS ===","ok");
+    log("Imported "+newObs.length+" W24 observations.","ok");
+    log("IDs: "+newObs[0].id+" -> "+newObs[newObs.length-1].id,"ok");
+    log("Total observations now: "+merged.length,"ok");
+    log("\nRefresh the main app to confirm.","info");
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnImport").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
