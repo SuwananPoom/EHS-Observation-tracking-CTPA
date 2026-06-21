@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import W19 — EHS Observation Tracker</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{display:inline-block;padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-green{background:#10B981}.btn-green:hover{background:#059669}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:6px 8px;text-align:left}
+td{padding:5px 8px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+tr:nth-child(even) td{background:#F8FAFC}
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700}
+.SERIOUS{background:#FEE2E2;color:#991B1B}.MAJOR{background:#FEF9C3;color:#92400E}.MINOR{background:#DCFCE7;color:#166534}
+.ACT{background:#EDE9FE;color:#5B21B6}.CON{background:#E0F2FE;color:#075985}
+</style>
+</head>
+<body>
+<h1>Import W19 — 22 Observations (2026-02-20)</h1>
+<div class="sub">Week 19 · Customer Site Walk · All records: CLOSED · Finding Type: Customer Site Walk</div>
+
+<div class="card">
+  <h2 style="font-size:15px;margin:0 0 12px">Preview — 22 observations to import</h2>
+  <table>
+    <thead><tr><th>#</th><th>OBS-ID</th><th>Category</th><th>Description</th><th>Risk</th><th>Type</th><th>Status</th></tr></thead>
+    <tbody id="preview"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <button class="btn btn-green" id="btnImport" onclick="runImport()">Import 22 W19 Observations to Cloud</button>
+  <div class="log" id="log">Ready. Click button to import after reviewing the preview above.\n</div>
+</div>
+
+<script>
+var CLOUD = {
+  url: "https://ocwdnvblpjfzkgzratqb.supabase.co",
+  key: "sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",
+  table: "ctpa_state",
+  row: "bkk22"
+};
+
+var W19_DATA = [
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Crane lifting operations were conducted without proper barricading of the lifting area.",rect:"Barricades and warning signage installed around lifting area.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Modified crane hook was observed in use which is strictly prohibited.",rect:"Non-compliant hook removed and certified lifting hook installed.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Lifting sling in use without valid inspection and certification by qualified engineer.",rect:"Lifting sling inspected and certified prior to operation.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Equipment Safety",fc:"Customer Site Walk",desc:"Air cylinder pressure gauge was damaged and daily inspection checklist had not been conducted.",rect:"Pressure gauge replaced and daily inspection checklist implemented.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Road",company:"DayOne",cat:"Driving & Traffic (HRA)",fc:"Customer Site Walk",desc:"Speed limit signage was insufficient within site traffic routes.",rect:"Additional speed limit signage installed within the site.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Pedestrian Walkway",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"Safety awareness and safety information signage were insufficient along pedestrian walkway.",rect:"Safety information signage installed along pedestrian walkways.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Material Handling (HRA)",fc:"Customer Site Walk",desc:"Exposed bolt heads observed without protective covers creating potential injury hazards.",rect:"Protective bolt caps installed.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"PPE",fc:"Customer Site Walk",desc:"Non-certified rubber coated fabric gloves observed in use which did not meet safety standards.",rect:"Non-compliant gloves removed and certified PPE issued to workers.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Project Site",company:"DayOne",cat:"Documentation",fc:"Customer Site Walk",desc:"Safety performance target required revision to improve safety management monitoring.",rect:"Safety performance target revised accordingly.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Entrance",company:"DayOne",cat:"Housekeeping",fc:"Customer Site Walk",desc:"Security guard post was not properly cleaned and maintained.",rect:"Security post cleaned and housekeeping standards reinforced.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Area",company:"DayOne",cat:"Fire Protection",fc:"Customer Site Walk",desc:"Fire extinguishers showing rust and corrosion were observed on site.",rect:"Fire extinguishers inspected and corroded units replaced.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Health & Hygiene",fc:"Customer Site Walk",desc:"Medication dispensing from first aid box was not controlled by a designated First Aider.",rect:"First aid control procedure implemented and assigned First Aider designated.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Project Site",company:"DayOne",cat:"Emergency Preparedness",fc:"Customer Site Walk",desc:"Emergency communication and contact information signage was insufficient across site locations.",rect:"Emergency contact signage installed across the site.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Welfare Area",company:"DayOne",cat:"Housekeeping",fc:"Customer Site Walk",desc:"Poor housekeeping observed at drinking water station with unrelated materials stored nearby.",rect:"Area cleaned and materials removed from drinking water station.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Scaffold",fc:"Customer Site Walk",desc:"Open gaps observed in scaffolding platforms and boards were not properly secured.",rect:"Scaffolding platforms corrected and secured.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Work Area",company:"DayOne",cat:"Material Storage",fc:"Customer Site Walk",desc:"Materials and equipment at worksite were not properly organized.",rect:"Materials reorganized and storage areas clearly designated.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Electrical Area",company:"DayOne",cat:"Electrical Safety (HRA)",fc:"Customer Site Walk",desc:"Electrical control panel lacked wiring diagram and warning signage.",rect:"Wiring diagram and warning signage installed.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Entrance",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"Safety signage at the security guard barricade was not clearly visible.",rect:"A3 safety signage installed at the barricade location.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Project Site",company:"DayOne",cat:"Documentation",fc:"Customer Site Walk",desc:"No records were maintained for shift handover briefings and daily inspection activities.",rect:"Shift handover briefing records and daily inspection documentation implemented.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Welfare Area",company:"DayOne",cat:"Emergency Preparedness",fc:"Customer Site Walk",desc:"Emergency stretcher was not properly stored and was not maintained in ready-to-use condition.",rect:"Emergency stretcher relocated and stored properly for immediate use.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Office",company:"DayOne",cat:"Health & Hygiene",fc:"Customer Site Walk",desc:"Site nurse name and contact information were not clearly displayed on the daily information board and medication inspection records were missing.",rect:"Nurse contact information displayed and medication inspection records implemented.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-02-20",zone:"Site Entrance",company:"DayOne",cat:"Equipment Safety",fc:"Customer Site Walk",desc:"Inadequate lighting observed at the security guard post affecting visibility and safety.",rect:"Additional lighting installed at the security guard post.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-02-21",closed:"2026-02-21",closedBy:"DayOne",week:"W19",obsType:"UNSAFE_CON",pb:[],pa:[]}
+];
+
+function cloudHeaders() {
+  return {
+    "apikey": CLOUD.key,
+    "Authorization": "Bearer " + CLOUD.key,
+    "Content-Type": "application/json",
+    "Prefer": "return=representation"
+  };
+}
+
+function log(msg, cls) {
+  var el = document.getElementById("log");
+  var line = document.createElement("span");
+  if (cls) line.className = cls;
+  line.textContent = msg + "\n";
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function padId(n) { return "OBS-" + String(n).padStart(3, "0"); }
+
+function buildPreview() {
+  var tbody = document.getElementById("preview");
+  W19_DATA.forEach(function(o, i) {
+    var startId = 137; // will be updated dynamically
+    var tr = document.createElement("tr");
+    var riskCls = o.risk;
+    var typeCls = o.obsType === "UNSAFE_ACT" ? "ACT" : "CON";
+    var typeLabel = o.obsType === "UNSAFE_ACT" ? "Unsafe Act" : "Unsafe Con";
+    tr.innerHTML = "<td>"+(i+1)+"</td><td>OBS-"+(136+i+1<1000?"0":"")+(136+i+1<100?"0":"")+(136+i+1)+"*</td><td>"+o.cat+"</td><td style='max-width:280px'>"+o.desc+"</td><td><span class='badge "+riskCls+"'>"+o.risk+"</span></td><td><span class='badge "+typeCls+"'>"+typeLabel+"</span></td><td>"+o.status+"</td>";
+    tbody.appendChild(tr);
+  });
+}
+
+buildPreview();
+
+async function runImport() {
+  document.getElementById("btnImport").disabled = true;
+  document.getElementById("log").innerHTML = "";
+  log("=== W19 Import Tool ===", "info");
+  log("Connecting to Supabase...", "info");
+
+  try {
+    var base = CLOUD.url + "/rest/v1";
+    var r = await fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
+      headers: cloudHeaders(), cache: "no-store"
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    var rows = await r.json();
+    if (!rows || !rows[0]) throw new Error("Row bkk22 not found");
+    var existing = Array.isArray(rows[0].data) ? rows[0].data : [];
+    log("Current observations in cloud: " + existing.length, "ok");
+
+    // Duplicate guard: check if any W19 already present
+    var hasW19 = existing.filter(function(o){ return o.week === "W19"; });
+    if (hasW19.length > 0) {
+      log("WARNING: " + hasW19.length + " W19 records already exist in cloud.", "warn");
+      log("IDs: " + hasW19.map(function(o){ return o.id; }).join(", "), "warn");
+      log("Aborting to prevent duplicates. Remove existing W19 records first.", "err");
+      document.getElementById("btnImport").disabled = false;
+      return;
+    }
+
+    // Assign next IDs
+    var nextId = existing.length + 1;
+    log("Assigning IDs starting at OBS-" + String(nextId).padStart(3,"0"), "info");
+
+    var newObs = W19_DATA.map(function(o, i) {
+      var rec = JSON.parse(JSON.stringify(o));
+      rec.id = padId(nextId + i);
+      return rec;
+    });
+
+    log("Preparing " + newObs.length + " observations:", "info");
+    newObs.forEach(function(o) {
+      log("  " + o.id + " [" + o.risk + "] [" + o.obsType + "] " + o.desc.slice(0, 60) + "...");
+    });
+
+    var merged = existing.concat(newObs);
+    log("\nPatching Supabase with " + merged.length + " total observations...", "info");
+
+    var patch = await fetch(base + "/" + CLOUD.table + "?id=eq." + CLOUD.row, {
+      method: "PATCH",
+      headers: cloudHeaders(),
+      body: JSON.stringify({ data: merged })
+    });
+    if (!patch.ok) {
+      var txt = await patch.text();
+      throw new Error("PATCH failed HTTP " + patch.status + ": " + txt);
+    }
+
+    log("\n=== SUCCESS ===", "ok");
+    log("Imported " + newObs.length + " W19 observations.", "ok");
+    log("IDs: " + newObs[0].id + " → " + newObs[newObs.length-1].id, "ok");
+    log("Total observations now: " + merged.length, "ok");
+    log("\nRefresh the main app to confirm.", "info");
+
+  } catch(e) {
+    log("ERROR: " + e.message, "err");
+    document.getElementById("btnImport").disabled = false;
+  }
+}
+</script>
+</body>
+</html>
