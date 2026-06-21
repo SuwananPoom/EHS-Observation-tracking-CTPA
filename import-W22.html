@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import W22 — EHS Observation Tracker</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{display:inline-block;padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-green{background:#10B981}.btn-green:hover{background:#059669}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:5px 7px;text-align:left}
+td{padding:4px 7px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+tr:nth-child(even) td{background:#F8FAFC}
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:700}
+.SERIOUS{background:#FEE2E2;color:#991B1B}.MAJOR{background:#FEF9C3;color:#92400E}.MINOR{background:#DCFCE7;color:#166534}
+.ACT{background:#EDE9FE;color:#5B21B6}.CON{background:#E0F2FE;color:#075985}
+.OPEN{background:#FFF7ED;color:#C2410C}.CLOSED{background:#F0FDF4;color:#166534}
+</style>
+</head>
+<body>
+<h1>Import W22 — 14 Observations (2026-03-13)</h1>
+<div class="sub">Week 22 · Zone A · Customer Site Walk · All 14 CLOSED</div>
+
+<div class="card">
+  <h2 style="font-size:15px;margin:0 0 12px">Preview — 14 observations</h2>
+  <table>
+    <thead><tr><th>#</th><th>Category</th><th>Description</th><th>Risk</th><th>Type</th><th>Status</th><th>Due</th></tr></thead>
+    <tbody id="preview"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <button class="btn btn-green" id="btnImport" onclick="runImport()">Import 14 W22 Observations to Cloud</button>
+  <div class="log" id="log">Ready. Review preview above then click import.\n</div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json",Prefer:"return=representation"};}
+
+var W22_DATA=[
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Load was not properly rigged and securely fastened before lifting; lifting operation was stopped until rigging was corrected.",rect:"Stop lifting activity until load is properly rigged. Assign qualified rigger to inspect and correctly secure the load. Lifting supervisor to verify rigging arrangement prior to lift.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-10",closed:"2026-03-10",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Unsafe lifting activity was observed. Workers were performing lifting operations using improper and unsafe lifting practices.",rect:"Provide on-site guidance to workers on correct and safe lifting procedure. Ensure qualified Lifting Supervisor oversees lifting operation before resuming work. Verify load is properly rigged and appropriate lifting equipment is used.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-10",closed:"2026-03-10",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Damaged or defective lifting equipment was observed in use without prior inspection.",rect:"Immediately remove damaged or defective lifting equipment from service. Replace with certified and properly inspected lifting equipment before resuming operations. Tag defective equipment as Do Not Use.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-10",closed:"2026-03-10",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Housekeeping",fc:"Customer Site Walk",desc:"Poor housekeeping was observed. Personal belongings such as bags and water bottles were improperly stored and hung on the scaffolding, resulting in an untidy work area.",rect:"Remove all personal belongings from scaffolding. Instruct workers to store items in designated storage area. Ensure work area is properly organized and maintained.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-10",closed:"2026-03-10",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Housekeeping",fc:"Customer Site Walk",desc:"Waste was not properly segregated at the worksite. Construction debris such as broken bricks, concrete debris, and wood scraps were not separated and disposed of in designated waste bins.",rect:"Provide clearly labeled waste bins for different types of waste. Conduct toolbox talks to raise awareness about proper waste segregation and site housekeeping.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-10",closed:"2026-03-10",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Health & Hygiene",fc:"Customer Site Walk",desc:"Workers were not using the designated dining area with provided tables and chairs during meal breaks.",rect:"Workers shall be instructed to use the designated dining area with provided tables and chairs during meal breaks.",risk:"MINOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Unsafe lifting was observed and uncertified basket was being used for lifting operations.",rect:"Stop using the equipment until certified equipment is provided. All lifting equipment must have valid inspection certificates before use.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Lifting Operations (HRA)",fc:"Customer Site Walk",desc:"Unauthorised riggers and no competent crane operator, lifting supervisor, rigger, or signalman were provided for lifting of chemical gallon containing 200 litres. Multiple workers were observed standing under the suspended load. Barricading and signage were not provided.",rect:"Only authorized and competent personnel shall be assigned for lifting operations. Barricades and warning signage must be installed to restrict access to lifting area. Workers must not stand or pass under suspended loads.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Electrical Safety (HRA)",fc:"Customer Site Walk",desc:"Exposed electrical cables were found at the security guard house. Competent electrician verification was required.",rect:"Exposed electrical cables shall be properly insulated and protected. A competent and authorized electrician must inspect and verify the electrical installation.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-14",closed:"2026-03-14",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Signage & Barricade",fc:"Customer Site Walk",desc:"No sufficient lighting was provided along walkway, smoking area, and hand wash zone at site after 18:00 hrs. Lighting monitoring report had not been submitted.",rect:"Additional lighting shall be installed along walkways, smoking areas, and hand wash zones to ensure adequate illumination after 18:00 hrs.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-14",closed:"2026-03-14",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Scaffold",fc:"Customer Site Walk",desc:"Loose materials were kept on the scaffolding platforms creating falling hazard.",rect:"Remove loose materials from scaffolding platforms immediately. Ensure only necessary tools and materials required for the task are kept on the platform. Implement proper housekeeping practices at height work areas.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_CON",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Working from Heights (HRA)",fc:"Customer Site Walk",desc:"Many workers working at height were observed not maintaining 100% tie-off and were connecting lanyards to incorrect anchorage points.",rect:"Conduct stand-down and provide instruction on proper 100% tie-off procedures. Workers must maintain 100% tie-off at all times and connect lanyards only to approved anchorage points. Supervisors shall monitor compliance and provide additional training.",risk:"SERIOUS",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Hot Work",fc:"Customer Site Walk",desc:"Hot work was being carried out without an available fire extinguisher and no fire watchman was present.",rect:"Stop hot work activity immediately until proper safety controls are in place. Provide appropriate fire extinguisher at the hot work location. Conduct training for all personnel involved in hot work activities.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]},
+  {date:"2026-03-13",zone:"Zone A",company:"DayOne",cat:"Emergency Preparedness",fc:"Customer Site Walk",desc:"ERT team and nurse were not conducting daily site surveys to check emergency access routes.",rect:"ERT team and Safety Officers will conduct daily inspections of site and emergency access routes. Updates to be shared in ERT Line group. ERT team will coordinate communication and assign a person to guide nurse to incident location.",risk:"MAJOR",status:"CLOSED",by:"MS (Rep)",due:"2026-03-13",closed:"2026-03-13",closedBy:"DayOne",week:"W22",obsType:"UNSAFE_ACT",pb:[],pa:[]}
+];
+
+function padId(n){return "OBS-"+String(n).padStart(3,"0");}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+(function(){
+  var tb=document.getElementById("preview");
+  W22_DATA.forEach(function(o,i){
+    var tr=document.createElement("tr");
+    var rB="<span class='badge "+o.risk+"'>"+o.risk+"</span>";
+    var tB="<span class='badge "+(o.obsType==="UNSAFE_ACT"?"ACT":"CON")+"'>"+(o.obsType==="UNSAFE_ACT"?"Unsafe Act":"Unsafe Con")+"</span>";
+    var sB="<span class='badge "+o.status+"'>"+o.status+"</span>";
+    tr.innerHTML="<td>"+(i+1)+"</td><td>"+o.cat+"</td><td style='max-width:300px;font-size:10px'>"+o.desc+"</td><td>"+rB+"</td><td>"+tB+"</td><td>"+sB+"</td><td style='white-space:nowrap'>"+o.due+"</td>";
+    tb.appendChild(tr);
+  });
+})();
+
+async function runImport(){
+  document.getElementById("btnImport").disabled=true;
+  document.getElementById("log").innerHTML="";
+  log("=== W22 Import Tool ===","info");
+  log("Connecting to Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var rows=await r.json();
+    if(!rows||!rows[0]) throw new Error("Row bkk22 not found");
+    var existing=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations in cloud: "+existing.length,"ok");
+
+    var hasW22=existing.filter(function(o){return o.week==="W22";});
+    if(hasW22.length>0){
+      log("WARNING: "+hasW22.length+" W22 records already exist — aborting to prevent duplicates.","err");
+      log("IDs: "+hasW22.map(function(o){return o.id;}).join(", "),"warn");
+      document.getElementById("btnImport").disabled=false;
+      return;
+    }
+
+    var nextId=existing.length+1;
+    log("Assigning IDs from "+padId(nextId),"info");
+
+    var newObs=W22_DATA.map(function(o,i){
+      return Object.assign({},o,{id:padId(nextId+i)});
+    });
+
+    log("Preparing "+newObs.length+" observations:","info");
+    newObs.forEach(function(o){
+      log("  "+o.id+" ["+o.risk+"] ["+o.obsType+"] "+o.desc.slice(0,65)+"...");
+    });
+
+    var merged=existing.concat(newObs);
+    log("\nPatching Supabase — total "+merged.length+" observations...","info");
+
+    var p=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:merged})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== SUCCESS ===","ok");
+    log("Imported "+newObs.length+" W22 observations.","ok");
+    log("IDs: "+newObs[0].id+" -> "+newObs[newObs.length-1].id,"ok");
+    log("Total observations now: "+merged.length,"ok");
+    log("\nRefresh the main app to confirm.","info");
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnImport").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
