@@ -31,6 +31,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1240,260 +1241,293 @@ var lSt = {
   letterSpacing: "0.06em"
 };
 
-/* ── EXCEL (.xlsx) EXPORT ── */
-function exportExcel(rows, onErr) {
-  try {
-    /* Use xlsx-js-style (XLSXStyle) when available for cell styling; fall back to plain XLSX */
-    var XL = (typeof XLSXStyle !== "undefined") ? XLSXStyle : XLSX;
-    if (typeof XL === "undefined") {
-      var msg = "SheetJS library not loaded. Check internet connection and reload the page.";
-      if (onErr) onErr(msg); else alert(msg); return;
-    }
-    if (!rows || rows.length === 0) {
-      var msg2 = "No observations to export.";
-      if (onErr) onErr(msg2); else alert(msg2); return;
-    }
+/* ── EXCEL (.xlsx) EXPORT — styled headers + colour-coded rows + embedded Before/After photos (ExcelJS) ── */
+function exportExcel(rows, onErr, onProgress) {
+  if (typeof ExcelJS === "undefined") {
+    var m0 = "ExcelJS library not loaded. Check internet connection and reload the page.";
+    if (onErr) onErr(m0); else alert(m0); return;
+  }
+  if (!rows || rows.length === 0) {
+    var m1 = "No observations to export.";
+    if (onErr) onErr(m1); else alert(m1); return;
+  }
 
-    var today = new Date();
-    var dateStr = today.getFullYear() + "-"
-      + String(today.getMonth() + 1).padStart(2, "0") + "-"
-      + String(today.getDate()).padStart(2, "0");
-    var dateFmt = String(today.getDate()).padStart(2,"0") + "/"
-      + String(today.getMonth()+1).padStart(2,"0") + "/" + today.getFullYear();
+  var today = new Date();
+  var dateStr = today.getFullYear() + "-" + String(today.getMonth()+1).padStart(2,"0") + "-" + String(today.getDate()).padStart(2,"0");
+  var dateFmt = String(today.getDate()).padStart(2,"0") + "/" + String(today.getMonth()+1).padStart(2,"0") + "/" + today.getFullYear();
+  var v    = function(x){ return (x==null?"":String(x)).trim() || "-"; };
+  var fmtD = function(d){ if(!d) return "-"; var p=String(d).split("-"); return p.length===3 ? p[2]+"/"+p[1]+"/"+p[0] : d; };
 
-    var v    = function(x) { return (x == null ? "" : String(x)).trim() || "-"; };
-    var fmtD = function(d) {
-      if (!d) return "-";
-      var p = String(d).split("-");
-      return p.length === 3 ? p[2]+"/"+p[1]+"/"+p[0] : d;
-    };
+  /* ── colour palette (ARGB) ── */
+  var C = {
+    navy:"FF1E3A5F", navyDk:"FF0F2744", blue:"FF1D4ED8", sub:"FFE0E7F0",
+    serBg:"FFFEE2E2", serTx:"FFB91C1C", majBg:"FFFEF9C3", majTx:"FFB45309",
+    minBg:"FFDCFCE7", minTx:"FF166534", openBg:"FFFFF7ED", openTx:"FFC2410C",
+    closeBg:"FFF0FDF4", closeTx:"FF166534", pendBg:"FFEFF6FF", pendTx:"FF1D4ED8",
+    even:"FFF8FAFC", odd:"FFFFFFFF", txt:"FF1E293B", white:"FFFFFFFF"
+  };
+  function fill(argb){ return {type:"pattern",pattern:"solid",fgColor:{argb:argb}}; }
+  var thin = {style:"thin",color:{argb:"FFD0D7DE"}};
+  var allBorder = {top:thin,bottom:thin,left:thin,right:thin};
 
-    /* ── Style constants ── */
-    var S = {
-      /* header row: dark navy bg, white bold */
-      HDR: { fill:{patternType:"solid",fgColor:{rgb:"1E3A5F"}},
-             font:{bold:true,color:{rgb:"FFFFFF"},name:"Calibri",sz:11},
-             alignment:{horizontal:"center",vertical:"center",wrapText:false},
-             border:{top:{style:"thin",color:{rgb:"FFFFFF"}},bottom:{style:"thin",color:{rgb:"FFFFFF"}},
-                     left:{style:"thin",color:{rgb:"FFFFFF"}},right:{style:"thin",color:{rgb:"FFFFFF"}}} },
-      /* section header in Summary */
-      SEC: { fill:{patternType:"solid",fgColor:{rgb:"1D4ED8"}},
-             font:{bold:true,color:{rgb:"FFFFFF"},name:"Calibri",sz:11},
-             alignment:{horizontal:"left",vertical:"center"} },
-      /* title row */
-      TTL: { fill:{patternType:"solid",fgColor:{rgb:"0F2744"}},
-             font:{bold:true,color:{rgb:"FFFFFF"},name:"Calibri",sz:14},
-             alignment:{horizontal:"left",vertical:"center"} },
-      /* subtitle */
-      SUB: { fill:{patternType:"solid",fgColor:{rgb:"E0E7F0"}},
-             font:{color:{rgb:"1E3A5F"},name:"Calibri",sz:10,italic:true},
-             alignment:{horizontal:"left",vertical:"center"} },
-      /* risk colours */
-      SERIOUS: { fill:{patternType:"solid",fgColor:{rgb:"FEE2E2"}},
-                 font:{bold:true,color:{rgb:"B91C1C"},name:"Calibri",sz:10} },
-      MAJOR:   { fill:{patternType:"solid",fgColor:{rgb:"FEF9C3"}},
-                 font:{bold:true,color:{rgb:"B45309"},name:"Calibri",sz:10} },
-      MINOR:   { fill:{patternType:"solid",fgColor:{rgb:"DCFCE7"}},
-                 font:{bold:true,color:{rgb:"166534"},name:"Calibri",sz:10} },
-      /* status colours */
-      OPEN:    { fill:{patternType:"solid",fgColor:{rgb:"FFF7ED"}},
-                 font:{color:{rgb:"C2410C"},name:"Calibri",sz:10} },
-      CLOSED:  { fill:{patternType:"solid",fgColor:{rgb:"F0FDF4"}},
-                 font:{color:{rgb:"166534"},name:"Calibri",sz:10} },
-      PEND:    { fill:{patternType:"solid",fgColor:{rgb:"EFF6FF"}},
-                 font:{color:{rgb:"1D4ED8"},name:"Calibri",sz:10} },
-      /* normal data cells */
-      EVEN: { fill:{patternType:"solid",fgColor:{rgb:"F8FAFC"}},
-              font:{color:{rgb:"1E293B"},name:"Calibri",sz:10},
-              alignment:{vertical:"top"} },
-      ODD:  { fill:{patternType:"solid",fgColor:{rgb:"FFFFFF"}},
-              font:{color:{rgb:"1E293B"},name:"Calibri",sz:10},
-              alignment:{vertical:"top"} },
-      WRAP: { fill:{patternType:"solid",fgColor:{rgb:"FFFFFF"}},
-              font:{color:{rgb:"1E293B"},name:"Calibri",sz:10},
-              alignment:{vertical:"top",wrapText:true} },
-      WRAPEVEN: { fill:{patternType:"solid",fgColor:{rgb:"F8FAFC"}},
-                  font:{color:{rgb:"1E293B"},name:"Calibri",sz:10},
-                  alignment:{vertical:"top",wrapText:true} },
-      /* summary number */
-      NUM: { fill:{patternType:"solid",fgColor:{rgb:"FFFFFF"}},
-             font:{bold:true,color:{rgb:"1E293B"},name:"Calibri",sz:11},
-             alignment:{horizontal:"center",vertical:"center"} }
-    };
+  /* ── columns ── */
+  var COLDEF = [
+    {h:"OBS ID",        w:10},
+    {h:"Date",          w:12},
+    {h:"Week",          w:7},
+    {h:"OBS Type",      w:16},
+    {h:"Company",       w:18},
+    {h:"Floor",         w:8},
+    {h:"Area",          w:18},
+    {h:"Category",      w:24},
+    {h:"Finding Category", w:22},
+    {h:"Risk",          w:11},
+    {h:"Status",        w:16},
+    {h:"Raised By",     w:14},
+    {h:"Due Date",      w:12},
+    {h:"Closed Date",   w:12},
+    {h:"Closed By",     w:16},
+    {h:"GC Approved By",w:16},
+    {h:"PMC Approved By",w:16},
+    {h:"Hazard Description", w:48},
+    {h:"Corrective Action",  w:48},
+    {h:"Before Photo",  w:22},
+    {h:"After Photo",   w:22}
+  ];
+  var CI_RISK=10, CI_STATUS=11, CI_DESC=18, CI_RECT=19, CI_BEFORE=20, CI_AFTER=21; /* 1-based */
+  var NPHOTO_COLS = 2;
 
-    /* ── Column definitions ── */
-    var HDR = [
-      "OBS ID","Date","Week","OBS Type",
-      "Company","Floor","Area",
-      "Category","Finding Category",
-      "Risk","Status",
-      "Raised By","Due Date","Closed Date","Closed By",
-      "GC Approved By","PMC Approved By",
-      "Hazard Description","Corrective Action",
-      "Photos Before","Photos After"
+  function obsRowVals(o){
+    var pz = parseZone(o.zone || "");
+    return [
+      v(o.id), fmtD(o.date), v(o.week),
+      v((OBS_TYPE[o.obsType]||{}).label),
+      v(o.company), v(pz.floor),
+      v(pz.area === "Other" ? pz.other : pz.area),
+      v(o.cat), v(o.fc),
+      v((RISK[o.risk]||{}).label),
+      v((STATUS[o.status]||{}).label),
+      v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
+      v(fmtApprover(o.clientApprovedBy)),
+      v(fmtApprover(o.lpApprovedBy)),
+      v(o.desc), v(o.rect),
+      "", ""  /* photo cells filled with images */
     ];
-    /* column index constants */
-    var CI_RISK=9, CI_STATUS=10, CI_DESC=17, CI_RECT=18;
-    var COLS = [
-      {wch:10},{wch:12},{wch:7},{wch:16},
-      {wch:18},{wch:8},{wch:18},
-      {wch:24},{wch:22},
-      {wch:11},{wch:18},
-      {wch:16},{wch:12},{wch:12},{wch:18},
-      {wch:18},{wch:18},
-      {wch:52},{wch:52},
-      {wch:13},{wch:13}
-    ];
+  }
 
-    function obsRow(o) {
-      var pz = parseZone(o.zone || "");
-      return [
-        v(o.id), fmtD(o.date), v(o.week),
-        v((OBS_TYPE[o.obsType]||{}).label),
-        v(o.company), v(pz.floor),
-        v(pz.area === "Other" ? pz.other : pz.area),
-        v(o.cat), v(o.fc),
-        v((RISK[o.risk]||{}).label),
-        v((STATUS[o.status]||{}).label),
-        v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
-        v(fmtApprover(o.clientApprovedBy)),
-        v(fmtApprover(o.lpApprovedBy)),
-        v(o.desc), v(o.rect),
-        (o.pb && o.pb.length ? o.pb.length : 0) + " photo(s)",
-        (o.pa && o.pa.length ? o.pa.length : 0) + " photo(s)"
-      ];
+  /* ── load + downscale one image to a small JPEG (reduces file size) ── */
+  var MAXDIM = 150, JPEG_Q = 0.6;
+  function loadScaled(src){
+    return new Promise(function(resolve){
+      if(!src){ resolve(null); return; }
+      var img = new Image();
+      img.crossOrigin = "anonymous";
+      var done = false;
+      var t = setTimeout(function(){ if(!done){ done=true; resolve(null); } }, 12000);
+      img.onload = function(){
+        if(done) return; done=true; clearTimeout(t);
+        try{
+          var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+          if(!w||!h){ resolve(null); return; }
+          var sc = Math.min(1, MAXDIM/Math.max(w,h));
+          var cw=Math.max(1,Math.round(w*sc)), ch=Math.max(1,Math.round(h*sc));
+          var cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+          var cx=cv.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,cw,ch);
+          cx.drawImage(img,0,0,cw,ch);
+          var durl=cv.toDataURL("image/jpeg",JPEG_Q);
+          resolve({ b64: durl.split(",")[1], w:cw, h:ch });
+        }catch(e){ resolve(null); /* tainted canvas / CORS */ }
+      };
+      img.onerror = function(){ if(!done){ done=true; clearTimeout(t); resolve(null); } };
+      img.src = src;
+    });
+  }
+
+  /* ── resolve first before/after photo source per obs ── */
+  function firstSrc(arr){
+    if(!arr || !arr.length) return null;
+    for(var i=0;i<arr.length;i++){ var s=photoSrc(arr[i]); if(s) return s; }
+    return null;
+  }
+
+  /* ── gather + scale all photos up front (dedupe by src) ── */
+  var jobs = [];
+  rows.forEach(function(o){
+    o.__bSrc = firstSrc(o.pb);
+    o.__aSrc = firstSrc(o.pa);
+    if(o.__bSrc) jobs.push(o.__bSrc);
+    if(o.__aSrc) jobs.push(o.__aSrc);
+  });
+  var uniq = jobs.filter(function(s,i){ return jobs.indexOf(s)===i; });
+  var totalJobs = uniq.length;
+  if(onProgress) onProgress(0, totalJobs);
+
+  var imgCache = {};
+  var loaded = 0;
+  function runQueue(){
+    /* limit concurrency to 6 */
+    var idx = 0;
+    function next(){
+      if(idx >= uniq.length) return Promise.resolve();
+      var myIdx = idx++; var src = uniq[myIdx];
+      return loadScaled(src).then(function(res){
+        imgCache[src] = res;
+        loaded++; if(onProgress) onProgress(loaded, totalJobs);
+        return next();
+      });
     }
+    var workers = [];
+    for(var k=0;k<Math.min(6, uniq.length);k++) workers.push(next());
+    return Promise.all(workers);
+  }
 
-    /* Apply styles to a data sheet (header row + data rows with risk/status colouring) */
-    function styleDataSheet(ws, nDataRows) {
-      var enc = XL.utils.encode_cell;
-      var nCols = HDR.length;
-      /* header row (row 0) */
-      for (var c = 0; c < nCols; c++) {
-        var hAddr = enc({r:0, c:c});
-        if (!ws[hAddr]) ws[hAddr] = {v: HDR[c], t:"s"};
-        ws[hAddr].s = S.HDR;
-      }
-      ws["!rows"] = [{hpt:22}]; /* header row height */
+  return runQueue().then(function(){
+    var wb = new ExcelJS.Workbook();
+    wb.creator = "CTPA EHS Tracker";
+    wb.created = today;
+
+    /* register images on the workbook (reused across sheets) */
+    var imgId = {};
+    Object.keys(imgCache).forEach(function(src){
+      var r = imgCache[src];
+      if(r && r.b64){ imgId[src] = wb.addImage({ base64: r.b64, extension: "jpeg" }); }
+    });
+
+    /* ── helper: build a data sheet ── */
+    function buildSheet(name, dataRows){
+      var ws = wb.addWorksheet(name, { views:[{state:"frozen", ySplit:1}] });
+      ws.columns = COLDEF.map(function(c){ return { header:c.h, width:c.w }; });
+
+      /* header styling */
+      var hr = ws.getRow(1);
+      hr.height = 24;
+      hr.eachCell(function(cell){
+        cell.fill = fill(C.navy);
+        cell.font = { bold:true, color:{argb:C.white}, name:"Calibri", size:11 };
+        cell.alignment = { horizontal:"center", vertical:"middle", wrapText:true };
+        cell.border = { top:{style:"thin",color:{argb:C.white}}, bottom:{style:"thin",color:{argb:C.white}}, left:{style:"thin",color:{argb:C.white}}, right:{style:"thin",color:{argb:C.white}} };
+      });
+
       /* data rows */
-      for (var r = 1; r <= nDataRows; r++) {
-        var isEven = r % 2 === 0;
-        var riskAddr = enc({r:r, c:CI_RISK});
-        var statAddr = enc({r:r, c:CI_STATUS});
-        var riskVal  = ws[riskAddr] ? ws[riskAddr].v : "";
-        var statVal  = ws[statAddr] ? ws[statAddr].v : "";
-        var riskS = riskVal==="Serious"?S.SERIOUS : riskVal==="Major"?S.MAJOR : riskVal==="Minor"?S.MINOR : null;
-        var statS = statVal==="Closed"?S.CLOSED : statVal==="Open"?S.OPEN : S.PEND;
-        for (var c2 = 0; c2 < nCols; c2++) {
-          var addr = enc({r:r, c:c2});
-          if (!ws[addr]) ws[addr] = {v:"", t:"s"};
-          var isWrap = (c2===CI_DESC || c2===CI_RECT);
-          ws[addr].s = c2===CI_RISK ? riskS || (isEven?S.EVEN:S.ODD)
-                     : c2===CI_STATUS ? statS
-                     : isWrap ? (isEven?S.WRAPEVEN:S.WRAP)
-                     : (isEven?S.EVEN:S.ODD);
-        }
-        ws["!rows"].push({hpt: isWrap ? 40 : 18});
-      }
-    }
+      dataRows.forEach(function(o, i){
+        var vals = obsRowVals(o);
+        var rowNum = i + 2;
+        var row = ws.getRow(rowNum);
+        row.values = vals;
+        var hasPhoto = !!(o.__bSrc || o.__aSrc);
+        row.height = hasPhoto ? 74 : 18;
+        var even = (i % 2 === 0);
+        var baseBg = even ? C.even : C.odd;
+        var riskLabel = vals[CI_RISK-1], statLabel = vals[CI_STATUS-1];
+        row.eachCell({ includeEmpty:true }, function(cell, col){
+          if(col > COLDEF.length) return;
+          cell.border = allBorder;
+          if(col === CI_RISK){
+            var rb = riskLabel==="Serious"?C.serBg : riskLabel==="Major"?C.majBg : riskLabel==="Minor"?C.minBg : baseBg;
+            var rt = riskLabel==="Serious"?C.serTx : riskLabel==="Major"?C.majTx : riskLabel==="Minor"?C.minTx : C.txt;
+            cell.fill = fill(rb); cell.font = { bold:true, color:{argb:rt}, name:"Calibri", size:10 };
+            cell.alignment = { horizontal:"center", vertical:"middle" };
+          } else if(col === CI_STATUS){
+            var sb = statLabel==="Closed"?C.closeBg : statLabel==="Open"?C.openBg : C.pendBg;
+            var st = statLabel==="Closed"?C.closeTx : statLabel==="Open"?C.openTx : C.pendTx;
+            cell.fill = fill(sb); cell.font = { color:{argb:st}, name:"Calibri", size:10, bold:true };
+            cell.alignment = { horizontal:"center", vertical:"middle" };
+          } else {
+            cell.fill = fill(baseBg);
+            cell.font = { color:{argb:C.txt}, name:"Calibri", size:10 };
+            var wrap = (col===CI_DESC || col===CI_RECT);
+            cell.alignment = { vertical:"top", wrapText:wrap };
+          }
+        });
 
-    function makeDataSheet(data, obsArr) {
-      var ws = XL.utils.aoa_to_sheet(data);
-      ws["!cols"] = COLS;
-      ws["!freeze"] = {xSplit:0, ySplit:1, topLeftCell:"A2", activePane:"bottomLeft"};
-      ws["!autofilter"] = {ref:"A1:"+XL.utils.encode_col(HDR.length-1)+"1"};
-      styleDataSheet(ws, obsArr.length);
+        /* embed photos anchored to their cells (col is 0-based in anchor) */
+        function place(src, colIdx0){
+          if(!src) return;
+          var id = imgId[src]; if(id===undefined) return;
+          var meta = imgCache[src];
+          var maxW = 140, maxH = 92;
+          var iw = meta ? meta.w : maxW, ih = meta ? meta.h : maxH;
+          var sc = Math.min(maxW/iw, maxH/ih, 1);
+          ws.addImage(id, {
+            tl: { col: colIdx0 + 0.1, row: (rowNum-1) + 0.08 },
+            ext: { width: Math.round(iw*sc), height: Math.round(ih*sc) },
+            editAs: "oneCell"
+          });
+        }
+        place(o.__bSrc, CI_BEFORE-1);
+        place(o.__aSrc, CI_AFTER-1);
+      });
+
+      ws.autoFilter = { from:{row:1,column:1}, to:{row:1,column:COLDEF.length} };
       return ws;
     }
 
-    var wb = XL.utils.book_new();
-
     /* ═══ SHEET 1: Summary ═══ */
-    var total   = rows.length;
-    var nOpen   = rows.filter(function(o){ return o.status==="OPEN"; }).length;
-    var nClosed = rows.filter(function(o){ return o.status==="CLOSED"; }).length;
-    var nOD     = rows.filter(function(o){ return isOD(o); }).length;
-    var nSer    = rows.filter(function(o){ return o.risk==="SERIOUS"; }).length;
-    var nMaj    = rows.filter(function(o){ return o.risk==="MAJOR"; }).length;
-    var nMin    = rows.filter(function(o){ return o.risk==="MINOR"; }).length;
-    var nUA     = rows.filter(function(o){ return o.obsType==="UNSAFE_ACT"; }).length;
-    var nUC     = rows.filter(function(o){ return o.obsType==="UNSAFE_CON"; }).length;
-    var nGO     = rows.filter(function(o){ return o.obsType==="GOOD_OBS"; }).length;
-    var nPV     = rows.filter(function(o){ return o.status==="PENDING_VERIFY"; }).length;
-    var nIP     = rows.filter(function(o){ return o.status==="IN_PROGRESS"; }).length;
+    var total=rows.length;
+    var nOpen=rows.filter(function(o){return o.status==="OPEN";}).length;
+    var nIP=rows.filter(function(o){return o.status==="IN_PROGRESS";}).length;
+    var nPV=rows.filter(function(o){return o.status==="PENDING_VERIFY";}).length;
+    var nClosed=rows.filter(function(o){return o.status==="CLOSED";}).length;
+    var nOD=rows.filter(function(o){return isOD(o);}).length;
+    var nSer=rows.filter(function(o){return o.risk==="SERIOUS";}).length;
+    var nMaj=rows.filter(function(o){return o.risk==="MAJOR";}).length;
+    var nMin=rows.filter(function(o){return o.risk==="MINOR";}).length;
+    var nUA=rows.filter(function(o){return o.obsType==="UNSAFE_ACT";}).length;
+    var nUC=rows.filter(function(o){return o.obsType==="UNSAFE_CON";}).length;
+    var nGO=rows.filter(function(o){return o.obsType==="GOOD_OBS";}).length;
 
-    var summData = [
-      ["CTPA BKK22 — EHS Observation Report", ""],
-      ["Export Date: " + dateFmt + "   |   Observations exported: " + rows.length, ""],
-      ["",""],
-      ["SUMMARY", "Count"],
-      ["Total Observations", total],
-      ["Open", nOpen],
-      ["In Progress", nIP],
-      ["Pending GC Verify", nPV],
-      ["Closed", nClosed],
-      ["Overdue (open past due date)", nOD],
-      ["",""],
-      ["BY RISK LEVEL", "Count"],
-      ["Serious", nSer],
-      ["Major", nMaj],
-      ["Minor", nMin],
-      ["",""],
-      ["BY OBSERVATION TYPE", "Count"],
-      ["Unsafe Act", nUA],
-      ["Unsafe Condition", nUC],
-      ["Good Observation", nGO]
-    ];
-    var wsSumm = XL.utils.aoa_to_sheet(summData);
-    wsSumm["!cols"] = [{wch:38},{wch:10}];
-    wsSumm["!rows"] = [{hpt:28},{hpt:18}];
-    /* Style summary cells */
-    var senc = XL.utils.encode_cell;
-    wsSumm[senc({r:0,c:0})].s = S.TTL;
-    wsSumm[senc({r:0,c:1})].s = S.TTL;
-    wsSumm[senc({r:1,c:0})].s = S.SUB;
-    wsSumm[senc({r:1,c:1})].s = S.SUB;
-    /* section headers and their data */
-    [[3,null],[11,null],[16,null]].forEach(function(pair){
-      var sr=pair[0];
-      wsSumm[senc({r:sr,c:0})].s = S.SEC;
-      wsSumm[senc({r:sr,c:1})].s = S.SEC;
-    });
-    /* risk rows */
-    var riskRows=[[12,S.SERIOUS],[13,S.MAJOR],[14,S.MINOR]];
-    riskRows.forEach(function(p){
-      var rws = {fill:p[1].fill, font:{bold:false,color:p[1].font.color,name:"Calibri",sz:10}, alignment:{vertical:"center"}};
-      wsSumm[senc({r:p[0],c:0})].s = rws;
-      wsSumm[senc({r:p[0],c:1})].s = Object.assign({},rws,{font:Object.assign({},rws.font,{bold:true}),alignment:{horizontal:"center",vertical:"center"}});
-    });
-    /* merge title across 2 cols */
-    wsSumm["!merges"] = [{s:{r:0,c:0},e:{r:0,c:1}},{s:{r:1,c:0},e:{r:1,c:1}}];
-    XL.utils.book_append_sheet(wb, wsSumm, "Summary");
+    var sm = wb.addWorksheet("Summary");
+    sm.columns = [{width:38},{width:12}];
+    function smRow(r, a, b){ var row=sm.getRow(r); row.getCell(1).value=a; row.getCell(2).value=(b==null?"":b); return row; }
+    sm.mergeCells("A1:B1"); sm.mergeCells("A2:B2");
+    var t1=sm.getCell("A1"); t1.value="CTPA BKK22 — EHS Observation Report";
+    t1.fill=fill(C.navyDk); t1.font={bold:true,color:{argb:C.white},name:"Calibri",size:14}; t1.alignment={vertical:"middle"};
+    sm.getRow(1).height=28;
+    var t2=sm.getCell("A2"); t2.value="Export Date: "+dateFmt+"     |     Observations exported: "+rows.length;
+    t2.fill=fill(C.sub); t2.font={italic:true,color:{argb:C.navy},name:"Calibri",size:10}; t2.alignment={vertical:"middle"};
+    sm.getRow(2).height=18;
 
-    /* ═══ SHEET 2: Observation Log ═══ */
-    var logData = [HDR].concat(rows.map(obsRow));
-    XL.utils.book_append_sheet(wb, makeDataSheet(logData, rows), "Observation Log");
+    function section(r, title){ var row=smRow(r,title,"Count"); [1,2].forEach(function(c){ var cl=row.getCell(c); cl.fill=fill(C.blue); cl.font={bold:true,color:{argb:C.white},name:"Calibri",size:11}; }); }
+    function dataLine(r, label, val){ var row=smRow(r,label,val); row.getCell(2).alignment={horizontal:"center"}; return row; }
+    function colourLine(r, label, val, bg, tx){ var row=dataLine(r,label,val); [1,2].forEach(function(c){ var cl=row.getCell(c); cl.fill=fill(bg); cl.font={color:{argb:tx},name:"Calibri",size:10,bold:c===2}; }); }
 
-    /* ═══ SHEET 3: Open Items ═══ */
-    var openRows = rows.filter(function(o){ return o.status !== "CLOSED"; });
-    var openData = [HDR].concat(openRows.map(obsRow));
-    XL.utils.book_append_sheet(wb, makeDataSheet(openData, openRows), "Open Items");
+    section(4,"SUMMARY");
+    dataLine(5,"Total Observations",total);
+    dataLine(6,"Open",nOpen);
+    dataLine(7,"In Progress",nIP);
+    dataLine(8,"Pending GC Verify",nPV);
+    dataLine(9,"Closed",nClosed);
+    dataLine(10,"Overdue (open past due date)",nOD);
+    section(12,"BY RISK LEVEL");
+    colourLine(13,"Serious",nSer,C.serBg,C.serTx);
+    colourLine(14,"Major",nMaj,C.majBg,C.majTx);
+    colourLine(15,"Minor",nMin,C.minBg,C.minTx);
+    section(17,"BY OBSERVATION TYPE");
+    dataLine(18,"Unsafe Act",nUA);
+    dataLine(19,"Unsafe Condition",nUC);
+    dataLine(20,"Good Observation",nGO);
 
-    /* ═══ SHEET 4: Closed Items ═══ */
-    var closedRows = rows.filter(function(o){ return o.status === "CLOSED"; });
-    var closedData = [HDR].concat(closedRows.map(obsRow));
-    XL.utils.book_append_sheet(wb, makeDataSheet(closedData, closedRows), "Closed Items");
+    /* ═══ Data sheets ═══ */
+    buildSheet("Observation Log", rows);
+    buildSheet("Open Items", rows.filter(function(o){ return o.status !== "CLOSED"; }));
+    buildSheet("Closed Items", rows.filter(function(o){ return o.status === "CLOSED"; }));
 
-    /* ── Download ── */
+    /* ── download ── */
     var fileName = "CTPA_Observation_Report_" + dateStr + ".xlsx";
-    XL.writeFile(wb, fileName);
-    console.log("[CTPA] exportExcel: wrote", fileName, "| sheets: 4 | rows:", rows.length);
-
-  } catch(e) {
+    return wb.xlsx.writeBuffer().then(function(buf){
+      var blob = new Blob([buf], { type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = fileName;
+      document.body.appendChild(a); a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 1500);
+      console.log("[CTPA] exportExcel: wrote", fileName, "| rows:", rows.length, "| images:", Object.keys(imgId).length);
+    });
+  }).catch(function(e){
     var errMsg = "Excel export failed: " + (e && e.message ? e.message : String(e));
     console.error("[CTPA] exportExcel ERROR:", e);
     if (onErr) onErr(errMsg); else alert(errMsg);
-  }
+  });
 }
 
 /* ── PRINT (uses data-URI to avoid nested escaping) ── */
@@ -7580,7 +7614,14 @@ function App() {
       gap: 7
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: function onClick() { return exportExcel(filt, function(msg){ setT({ msg: "❌ " + msg, type: "err" }); setTimeout(function(){ setT(null); }, 8000); }); },
+    onClick: function onClick() {
+      setT({ msg: "⏳ Generating Excel with photos…", type: "ok" });
+      var p = exportExcel(filt,
+        function(msg){ setT({ msg: "❌ " + msg, type: "err" }); setTimeout(function(){ setT(null); }, 8000); },
+        function(done, tot){ if(tot>0) setT({ msg: "⏳ Embedding photos " + done + "/" + tot + "…", type: "ok" }); }
+      );
+      if(p && p.then) p.then(function(){ setT({ msg: "✅ Excel downloaded", type: "ok" }); setTimeout(function(){ setT(null); }, 3000); });
+    },
     style: {
       fontSize: 11,
       padding: "6px 14px",
