@@ -3530,7 +3530,7 @@ function ReportAuthGate(_ref_rgate) {
       React.createElement("button", {
         type: "submit",
         disabled: busy,
-        style: { width: "100%", padding: "10px", fontSize: 14, fontWeight: 700, borderRadius: 8, border: "none", background: "#1D4ED8", color: "#fff", cursor: busy ? "wait" : "pointer", marginBottom: 10 }
+        style: { width: "100%", padding: "10px", fontSize: 14, fontWeight: 700, borderRadius: 8, border: "none", background: busy ? "#94A3B8" : C.green, color: "#fff", cursor: busy ? "wait" : "pointer", marginBottom: 10 }
       }, busy ? "กำลังตรวจสอบ…" : "🔓 เข้าถึง Report"),
       React.createElement("button", {
         type: "button",
