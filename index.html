@@ -5007,19 +5007,14 @@ function LoginPage(_ref) {
     React.createElement("div", {
       style: { width: "100%", maxWidth: 420 }
     },
-      /* DayOne Logo — DAY black + ONE green, matching brand */
+      /* DayOne Logo — SVG recreation: DAY black, O=ring, NE green */
       React.createElement("div", { style: { textAlign: "center", marginBottom: 32 } },
-        React.createElement("div", {
-          style: { display: "inline-flex", alignItems: "baseline", lineHeight: 1 }
-        },
-          React.createElement("span", {
-            style: { fontSize: 52, fontWeight: 900, color: "#0F172A", letterSpacing: "-2px", fontFamily: "'Inter','Arial Black',sans-serif" }
-          }, "DAY"),
-          React.createElement("span", {
-            style: { fontSize: 52, fontWeight: 900, color: "#00CC79", letterSpacing: "-2px", fontFamily: "'Inter','Arial Black',sans-serif" }
-          }, "ONE")
-        ),
-        React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 4, letterSpacing: "2px", textTransform: "uppercase" } }, "Technology")
+        React.createElement("img", {
+          src: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2MDAgMTMwIiB3aWR0aD0iNjAwIiBoZWlnaHQ9IjEzMCI+PHRleHQgeD0iMCIgeT0iMTEwIiBmb250LWZhbWlseT0iQXJpYWwgQmxhY2ssSW1wYWN0LHNhbnMtc2VyaWYiIGZvbnQtd2VpZ2h0PSI5MDAiIGZvbnQtc2l6ZT0iMTE4IiBmaWxsPSIjMEQwRDBEIiBsZXR0ZXItc3BhY2luZz0iLTMiPkRBWTwvdGV4dD48dGV4dCB4PSIzMjAiIHk9IjExMCIgZm9udC1mYW1pbHk9IkFyaWFsIEJsYWNrLEltcGFjdCxzYW5zLXNlcmlmIiBmb250LXdlaWdodD0iOTAwIiBmb250LXNpemU9IjExOCIgZmlsbD0iIzAwRTY3NiIgbGV0dGVyLXNwYWNpbmc9Ii0zIj5ORTwvdGV4dD48Y2lyY2xlIGN4PSIyOTgiIGN5PSI2MCIgcj0iNDgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwRTY3NiIgc3Ryb2tlLXdpZHRoPSIxOSIvPjwvc3ZnPg==",
+          alt: "DayOne",
+          style: { height: 60, maxWidth: "100%", objectFit: "contain" }
+        }),
+        React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 6, letterSpacing: "2px", textTransform: "uppercase" } }, "Technology")
       ),
       /* Card */
       React.createElement("form", {
