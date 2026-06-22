@@ -8773,10 +8773,7 @@ function App(_refApp) {
     }
   }, "Cancel"))), view === "report" && (reportAuth
   ? /*#__PURE__*/React.createElement(ReportView, { obs: obs })
-  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && isAdmin() && (diagAuth
-  ? /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr })
-  : /*#__PURE__*/React.createElement(DiagAuthGate, { onAuth: function(){ setDiagAuth(true); }, onBack: function(){ setView("dashboard"); } })
-),
+  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && isAdmin() && /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr }),
 /* ── Admin views (DayOne Admin only) ── */
 view === "admin_users"   && isAdmin() && /*#__PURE__*/React.createElement(AdminUsersView,          { setView: setView }),
 view === "admin_access"  && isAdmin() && /*#__PURE__*/React.createElement(AdminAccessView,         { setView: setView }),
