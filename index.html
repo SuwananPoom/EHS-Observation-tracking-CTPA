@@ -1352,7 +1352,7 @@ function exportExcel(rows, onErr, onProgress) {
   }
 
   /* ── load + downscale one image to a small JPEG (reduces file size) ── */
-  var MAXDIM = 150, JPEG_Q = 0.6;
+  var MAXDIM = 800, JPEG_Q = 0.85;
   function loadScaled(src){
     return new Promise(function(resolve){
       if(!src){ resolve(null); return; }
@@ -1762,30 +1762,30 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
       if (befSrc) {
         sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fill:{ color:"1E3A8A" } });
         sl.addText("BEFORE", { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
-        try { sl.addImage({ data:befSrc, x:photoX+0.1, y:1.12, w:1.82, h:2.15 }); } catch(e) {}
+        try { sl.addImage({ data:befSrc, x:photoX+0.1, y:1.12, w:1.82, h:3.1 }); } catch(e) {}
       } else if (befMeta) {
-        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
-        sl.addText("Before photo\nuploaded on\nanother device", { x:photoX+0.1, y:1.55, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
+        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
+        sl.addText("Before photo\nuploaded on\nanother device", { x:photoX+0.1, y:2.1, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
       } else {
-        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
-        sl.addText("No Before Photo", { x:photoX+0.1, y:1.7, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
+        sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
+        sl.addText("No Before Photo", { x:photoX+0.1, y:2.3, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
       }
       if (aftSrc) {
         var ax = befMeta ? photoX+2.05 : photoX+0.1;
         sl.addShape(pptx.ShapeType.rect, { x:ax, y:0.82, w:1.82, h:0.29, fill:{ color:G } });
         sl.addText("AFTER", { x:ax, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
-        try { sl.addImage({ data:aftSrc, x:ax, y:1.12, w:1.82, h:2.15 }); } catch(e) {}
+        try { sl.addImage({ data:aftSrc, x:ax, y:1.12, w:1.82, h:3.1 }); } catch(e) {}
       } else if (aftMeta) {
         var ax2b = befMeta ? photoX+2.05 : photoX+0.1;
-        sl.addShape(pptx.ShapeType.rect, { x:ax2b, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
-        sl.addText("After photo\nuploaded on\nanother device", { x:ax2b, y:1.55, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
+        sl.addShape(pptx.ShapeType.rect, { x:ax2b, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
+        sl.addText("After photo\nuploaded on\nanother device", { x:ax2b, y:2.1, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
       } else {
         var ax2 = befMeta ? photoX+2.05 : photoX+0.1;
-        sl.addShape(pptx.ShapeType.rect, { x:ax2, y:0.82, w:1.82, h:2.6, fill:{ color:"F1F5F9" } });
-        sl.addText("No After Photo", { x:ax2, y:1.7, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
+        sl.addShape(pptx.ShapeType.rect, { x:ax2, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
+        sl.addText("No After Photo", { x:ax2, y:2.3, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
       }
-      sl.addText("CORRECTIVE ACTION", { x:photoX+0.1, y:3.45, w:3.7, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
-      sl.addText(o.rect || "—",        { x:photoX+0.1, y:3.74, w:3.7, h:1.68, fontSize:8, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+      sl.addText("CORRECTIVE ACTION", { x:photoX+0.1, y:4.33, w:3.7, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
+      sl.addText(o.rect || "—",        { x:photoX+0.1, y:4.62, w:3.7, h:0.8, fontSize:8, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
     } else {
       sl.addText("No Photos",          { x:photoX, y:1.85, w:3.9, h:0.5, fontSize:11, color:"CBD5E1", align:"center", fontFace:"Arial" });
       sl.addText("CORRECTIVE ACTION",  { x:photoX+0.15, y:2.55, w:3.6, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
