@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Restore Deleted OBS — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:18px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:20px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff;margin-right:8px}
+.btn:hover{background:#2563EB}
+.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-green{background:#10B981}.btn-green:hover{background:#059669}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:300px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:7px 10px;text-align:left;font-size:11px}
+td{padding:6px 10px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+tr:hover td{background:#F1F5F9}
+.tag{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700}
+.tag-del{background:#FEE2E2;color:#991B1B}
+</style>
+</head>
+<body>
+<h1>🔄 กู้คืน Observations ที่ถูกซ่อน</h1>
+<div class="sub">ค้นหาและกู้คืน observations ที่มี deleted:true กลับเข้าสู่ระบบ</div>
+
+<div class="card">
+  <button class="btn" id="btnFind" onclick="findDeleted()">🔍 ค้นหา OBS ที่ถูกซ่อน</button>
+  <button class="btn btn-green" id="btnRestore" onclick="restoreAll()" disabled>♻️ กู้คืนทั้งหมด</button>
+  <div class="log" id="log">กดปุ่มเพื่อตรวจสอบ...\n</div>
+  <div id="tableWrap"></div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var deletedObs=[];
+
+async function findDeleted(){
+  document.getElementById("btnFind").disabled=true;
+  document.getElementById("btnRestore").disabled=true;
+  document.getElementById("log").innerHTML="";
+  document.getElementById("tableWrap").innerHTML="";
+  deletedObs=[];
+
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+  try{
+    var r=await fetch(CLOUD.url+"/rest/v1/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("GET HTTP "+r.status);
+    var rows=await r.json();
+    var obs=rows[0].data||[];
+
+    var total=obs.length;
+    var active=obs.filter(function(o){return !o.deleted;});
+    deletedObs=obs.filter(function(o){return !!o.deleted;});
+
+    log("Total records: "+total+" | Active: "+active.length+" | Deleted: "+deletedObs.length,"info");
+
+    if(deletedObs.length===0){
+      log("\n✅ ไม่มี observation ที่ถูกซ่อน ระบบปกติ","ok");
+    } else {
+      log("\nพบ "+deletedObs.length+" observation ที่ถูก soft-delete:","warn");
+      deletedObs.forEach(function(o){
+        log("  "+o.id+" | week="+o.week+" | date="+o.date+" | ลบโดย: "+(o.deletedBy||"—")+" | เมื่อ: "+(o.deletedAt||"—"),"warn");
+        log("  desc: "+((o.desc||"").slice(0,80)),"info");
+      });
+
+      var html="<table><thead><tr><th>ID</th><th>Week</th><th>Date</th><th>Zone</th><th>Risk</th><th>Description</th><th>ลบโดย</th><th>ลบเมื่อ</th></tr></thead><tbody>";
+      deletedObs.forEach(function(o){
+        html+="<tr>";
+        html+="<td><b>"+o.id+"</b> <span class='tag tag-del'>DELETED</span></td>";
+        html+="<td>"+(o.week||"—")+"</td>";
+        html+="<td>"+(o.date||"—")+"</td>";
+        html+="<td>"+(o.zone||"—")+"</td>";
+        html+="<td>"+(o.risk||"—")+"</td>";
+        html+="<td style='max-width:300px'>"+(o.desc||"—").slice(0,100)+(o.desc&&o.desc.length>100?"…":"")+"</td>";
+        html+="<td>"+(o.deletedBy||"—")+"</td>";
+        html+="<td>"+(o.deletedAt||"—")+"</td>";
+        html+="</tr>";
+      });
+      html+="</tbody></table>";
+      document.getElementById("tableWrap").innerHTML=html;
+
+      log("\nกดปุ่ม ♻️ กู้คืนทั้งหมด เพื่อนำกลับเข้าระบบ","info");
+      document.getElementById("btnRestore").disabled=false;
+    }
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+  }
+  document.getElementById("btnFind").disabled=false;
+}
+
+async function restoreAll(){
+  if(!deletedObs.length){log("ไม่มีรายการที่ต้องกู้คืน","warn");return;}
+  if(!confirm("กู้คืน "+deletedObs.length+" observation กลับเข้าระบบ?\n(จะลบ flag deleted:true ออก)")) return;
+
+  document.getElementById("btnRestore").disabled=true;
+  log("\nกำลังโหลดข้อมูลล่าสุด...","info");
+
+  try{
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var r=await fetch(base+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    var rows=await r.json();
+    var obs=JSON.parse(JSON.stringify(rows[0].data));
+
+    /* Remove deleted flags */
+    var restoredIds=new Set(deletedObs.map(function(o){return o.id;}));
+    var count=0;
+    obs=obs.map(function(o){
+      if(restoredIds.has(o.id)){
+        var o2=Object.assign({},o);
+        delete o2.deleted;
+        delete o2.deletedAt;
+        delete o2.deletedBy;
+        count++;
+        log("  ♻️ กู้คืน "+o2.id+" | "+o2.week+" | "+o2.date,"ok");
+        return o2;
+      }
+      return o;
+    });
+
+    log("กำลัง PATCH Supabase ("+count+" รายการ)...","info");
+
+    /* Strip photos before patch */
+    var stripped=obs.map(function(o){
+      var o2=Object.assign({},o);
+      if(o2.pb&&o2.pb.length) o2.pb=o2.pb.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      if(o2.pa&&o2.pa.length) o2.pa=o2.pa.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      return o2;
+    });
+
+    var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:stripped})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    var active=obs.filter(function(o){return !o.deleted;}).length;
+    log("\n=== กู้คืนสำเร็จ ===","ok");
+    log("กู้คืน "+count+" observation เรียบร้อยแล้ว","ok");
+    log("Active observations ตอนนี้: "+active,"ok");
+    log("รีเฟรชแอปเพื่อยืนยัน (Total OBS ควรเป็น "+active+")","info");
+    deletedObs=[];
+    document.getElementById("tableWrap").innerHTML="";
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnRestore").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
