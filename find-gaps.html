@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Find Gap IDs — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}
+.log{font-family:monospace;font-size:13px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+</style>
+</head>
+<body>
+<h2 style="font-size:18px;font-weight:700;margin-bottom:16px">🔎 ค้นหา OBS ID ที่หายไป</h2>
+<div class="card">
+  <button class="btn" onclick="findGaps()">🔍 ตรวจสอบ</button>
+  <div class="log" id="log">กดปุ่มเพื่อตรวจสอบ...</div>
+</div>
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+async function findGaps(){
+  document.getElementById("log").innerHTML="";
+  log("กำลังโหลด...","info");
+  try{
+    var r=await fetch(CLOUD.url+"/rest/v1/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    var rows=await r.json();
+    var obs=rows[0].data||[];
+
+    var ids=obs.filter(function(o){return /^OBS-\d+$/i.test(o.id||"");})
+               .map(function(o){return parseInt(o.id.replace(/^OBS-/i,""),10);})
+               .sort(function(a,b){return a-b;});
+    var min=ids[0], max=ids[ids.length-1];
+
+    log("Records: "+obs.length+" | ID range: OBS-"+String(min).padStart(3,"0")+" → OBS-"+String(max).padStart(3,"0"),"info");
+
+    var gaps=[];
+    for(var i=min;i<=max;i++){
+      if(ids.indexOf(i)===-1) gaps.push(i);
+    }
+
+    if(gaps.length===0){
+      log("\n✅ ไม่มี gap — ID ต่อเนื่องสมบูรณ์","ok");
+    } else {
+      log("\nพบ gap "+gaps.length+" ตำแหน่ง:","warn");
+      gaps.forEach(function(g){
+        log("  ❌ OBS-"+String(g).padStart(3,"0")+" — ไม่มีข้อมูลใน array","err");
+      });
+      log("\nID เหล่านี้ถูกลบออกจาก array โดยสมบูรณ์ในอดีต\nไม่สามารถกู้คืนได้หากไม่มีข้อมูลสำรอง","warn");
+    }
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+  }
+}
+</script>
+</body>
+</html>
