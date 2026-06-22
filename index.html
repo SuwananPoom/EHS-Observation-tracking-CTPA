@@ -4965,39 +4965,41 @@ function LoginPage(_ref) {
       .catch(function(e) { setBusy(false); setErr(e.message || "Network error"); });
   }
 
-  /* Data-center watermark SVG pattern */
+  /* Data-center watermark SVG pattern — grey on white */
   var dcPattern = "data:image/svg+xml," + encodeURIComponent([
-    '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="120" opacity="0.07">',
-    /* server rack unit */
-    '<rect x="20" y="10" width="120" height="18" rx="3" fill="none" stroke="white" stroke-width="1.2"/>',
-    '<rect x="24" y="14" width="8" height="10" rx="1" fill="white"/>',
-    '<circle cx="120" cy="19" r="3" fill="white"/>',
-    '<circle cx="110" cy="19" r="3" fill="white" opacity="0.5"/>',
-    /* second rack unit */
-    '<rect x="20" y="34" width="120" height="18" rx="3" fill="none" stroke="white" stroke-width="1.2"/>',
-    '<rect x="24" y="38" width="8" height="10" rx="1" fill="white"/>',
-    '<circle cx="120" cy="43" r="3" fill="white"/>',
-    '<circle cx="110" cy="43" r="3" fill="white" opacity="0.5"/>',
-    /* third rack unit */
-    '<rect x="20" y="58" width="120" height="18" rx="3" fill="none" stroke="white" stroke-width="1.2"/>',
-    '<rect x="24" y="62" width="8" height="10" rx="1" fill="white"/>',
-    '<circle cx="120" cy="67" r="3" fill="white"/>',
-    '<circle cx="110" cy="67" r="3" fill="white" opacity="0.5"/>',
-    /* cable lines */
-    '<line x1="40" y1="82" x2="40" y2="110" stroke="white" stroke-width="1"/>',
-    '<line x1="80" y1="82" x2="80" y2="110" stroke="white" stroke-width="1"/>',
-    '<line x1="120" y1="82" x2="120" y2="110" stroke="white" stroke-width="1"/>',
-    '<line x1="40" y1="110" x2="120" y2="110" stroke="white" stroke-width="1"/>',
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" opacity="0.06">',
+    '<rect x="20" y="10" width="160" height="22" rx="4" fill="none" stroke="#1E293B" stroke-width="1.5"/>',
+    '<rect x="26" y="15" width="10" height="12" rx="2" fill="#1E293B"/>',
+    '<rect x="40" y="17" width="40" height="2" rx="1" fill="#1E293B"/>',
+    '<rect x="40" y="21" width="30" height="2" rx="1" fill="#1E293B"/>',
+    '<circle cx="160" cy="21" r="4" fill="#1E293B"/>',
+    '<circle cx="148" cy="21" r="4" fill="#1E293B" opacity="0.4"/>',
+    '<rect x="20" y="40" width="160" height="22" rx="4" fill="none" stroke="#1E293B" stroke-width="1.5"/>',
+    '<rect x="26" y="45" width="10" height="12" rx="2" fill="#1E293B"/>',
+    '<rect x="40" y="47" width="50" height="2" rx="1" fill="#1E293B"/>',
+    '<rect x="40" y="51" width="35" height="2" rx="1" fill="#1E293B"/>',
+    '<circle cx="160" cy="51" r="4" fill="#1E293B"/>',
+    '<circle cx="148" cy="51" r="4" fill="#1E293B" opacity="0.4"/>',
+    '<rect x="20" y="70" width="160" height="22" rx="4" fill="none" stroke="#1E293B" stroke-width="1.5"/>',
+    '<rect x="26" y="75" width="10" height="12" rx="2" fill="#1E293B"/>',
+    '<rect x="40" y="77" width="45" height="2" rx="1" fill="#1E293B"/>',
+    '<rect x="40" y="81" width="28" height="2" rx="1" fill="#1E293B"/>',
+    '<circle cx="160" cy="81" r="4" fill="#1E293B"/>',
+    '<circle cx="148" cy="81" r="4" fill="#1E293B" opacity="0.4"/>',
+    '<line x1="50" y1="96" x2="50" y2="140" stroke="#1E293B" stroke-width="1"/>',
+    '<line x1="100" y1="96" x2="100" y2="140" stroke="#1E293B" stroke-width="1"/>',
+    '<line x1="150" y1="96" x2="150" y2="140" stroke="#1E293B" stroke-width="1"/>',
+    '<line x1="50" y1="140" x2="150" y2="140" stroke="#1E293B" stroke-width="1"/>',
     '</svg>'
   ].join(""));
 
   return React.createElement("div", {
     style: {
       minHeight: "100vh",
-      background: "#0A3D2B",
+      background: "#FFFFFF",
       backgroundImage: "url('" + dcPattern + "')",
       backgroundRepeat: "repeat",
-      backgroundSize: "160px 120px",
+      backgroundSize: "200px 150px",
       display: "flex", alignItems: "center", justifyContent: "center",
       padding: "20px", fontFamily: "'Inter',sans-serif"
     }
@@ -5005,39 +5007,28 @@ function LoginPage(_ref) {
     React.createElement("div", {
       style: { width: "100%", maxWidth: 420 }
     },
-      /* DayOne Logo */
-      React.createElement("div", { style: { textAlign: "center", marginBottom: 28 } },
+      /* DayOne Logo — DAY black + ONE green, matching brand */
+      React.createElement("div", { style: { textAlign: "center", marginBottom: 32 } },
         React.createElement("div", {
-          style: {
-            display: "inline-flex", alignItems: "center", gap: 10,
-            background: "rgba(255,255,255,0.08)", borderRadius: 14,
-            padding: "10px 24px", backdropFilter: "blur(6px)"
-          }
+          style: { display: "inline-flex", alignItems: "baseline", lineHeight: 1 }
         },
-          /* DayOne logo mark — green circle + "D" */
-          React.createElement("div", {
-            style: {
-              width: 36, height: 36, borderRadius: "50%",
-              background: "linear-gradient(135deg,#00CC79,#00995A)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontWeight: 900, fontSize: 20, color: "#fff", letterSpacing: "-1px"
-            }
-          }, "D"),
-          React.createElement("div", { style: { textAlign: "left" } },
-            React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: "0.5px" } }, "DayOne"),
-            React.createElement("div", { style: { fontSize: 10, color: "#94A3B8", letterSpacing: "1px", textTransform: "uppercase", marginTop: -2 } }, "Technology")
-          )
+          React.createElement("span", {
+            style: { fontSize: 52, fontWeight: 900, color: "#0F172A", letterSpacing: "-2px", fontFamily: "'Inter','Arial Black',sans-serif" }
+          }, "DAY"),
+          React.createElement("span", {
+            style: { fontSize: 52, fontWeight: 900, color: "#00CC79", letterSpacing: "-2px", fontFamily: "'Inter','Arial Black',sans-serif" }
+          }, "ONE")
         ),
-        React.createElement("div", { style: { fontSize: 11, color: "#64748B", marginTop: 10, letterSpacing: "0.5px" } }, "CTPA BKK22 · Safety Management")
+        React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 4, letterSpacing: "2px", textTransform: "uppercase" } }, "Technology")
       ),
       /* Card */
       React.createElement("form", {
         onSubmit: handleLogin,
-        style: { background: "#fff", borderRadius: 18, padding: "32px 32px 28px", boxShadow: "0 24px 80px rgba(0,0,0,0.4)" }
+        style: { background: "#fff", borderRadius: 18, padding: "32px 32px 28px", boxShadow: "0 8px 40px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06)", border: "1px solid #E2E8F0" }
       },
         /* Heading */
         React.createElement("div", { style: { textAlign: "center", marginBottom: 28 } },
-          React.createElement("div", { style: { fontSize: 22, fontWeight: 900, color: "#0A3D2B", letterSpacing: "1.5px", textTransform: "uppercase" } }, "EHS OBSERVATION"),
+          React.createElement("div", { style: { fontSize: 20, fontWeight: 900, color: "#0F172A", letterSpacing: "2px", textTransform: "uppercase" } }, "EHS OBSERVATION"),
           React.createElement("div", { style: { width: 40, height: 3, background: "#00CC79", borderRadius: 2, margin: "8px auto 0" } })
         ),
         /* Email */
@@ -5074,14 +5065,12 @@ function LoginPage(_ref) {
         /* Submit */
         React.createElement("button", {
           type: "submit", disabled: busy,
-          style: { width: "100%", padding: "12px", borderRadius: 10, border: "none", background: busy ? "#94A3B8" : "#00CC79", color: "#fff", fontSize: 15, fontWeight: 700, cursor: busy ? "wait" : "pointer" }
+          style: { width: "100%", padding: "12px", borderRadius: 10, border: "none", background: busy ? "#94A3B8" : "#00CC79", color: "#fff", fontSize: 15, fontWeight: 700, cursor: busy ? "wait" : "pointer", letterSpacing: "0.5px" }
         }, busy ? "Signing in…" : "Sign In")
       ),
-      React.createElement("div", { style: { textAlign: "center", marginTop: 16, fontSize: 12, color: "#94A3B8" } },
-        React.createElement("span", { style: { display: "inline-flex", alignItems: "center", gap: 6 } },
-          React.createElement("span", { style: { fontSize: 10, letterSpacing: "0.5px", color: "#64748B" } }, "© DayOne Technology · EHS Observation Tracking")
-        ),
-        React.createElement("div", { style: { marginTop: 6, fontSize: 11, color: "#00CC79" } },
+      React.createElement("div", { style: { textAlign: "center", marginTop: 20, fontSize: 12, color: "#94A3B8" } },
+        React.createElement("div", { style: { fontSize: 11, color: "#CBD5E1" } }, "© DayOne Technology · EHS Observation Tracking"),
+        React.createElement("div", { style: { marginTop: 6, fontSize: 12, color: "#00AA66" } },
           "ติดต่อ DayOne Admin เพื่อขอสิทธิ์เข้าใช้งาน"
         )
       )
