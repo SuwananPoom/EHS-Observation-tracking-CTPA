@@ -6195,7 +6195,7 @@ function App(_refApp) {
       display: "flex",
       gap: 6
     }
-  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]].map(function (_ref6) {
+  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -6308,7 +6308,7 @@ function App(_refApp) {
       margin: "0 auto",
       padding: "18px 14px"
     }
-  }, (view === "log") && /*#__PURE__*/React.createElement("div", {
+  }, (view === "log") && isAdmin() && /*#__PURE__*/React.createElement("div", {
     className: "fade-in"
   }, /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 14 }
@@ -9307,7 +9307,8 @@ function AdminPage(_ref) {
     { v: "admin_users",   l: "Users" },
     { v: "admin_access",  l: "Access" },
     { v: "admin_history", l: "Approval History" },
-    { v: "diag",          l: "Diagnostics" }
+    { v: "diag",          l: "Diagnostics" },
+    { v: "log",           l: "Activity" }
   ];
   var C2 = { purple: "#00AA66", purpleBg: "#ECFDF5", border: "#E2E8F0" };
   return React.createElement("div", { className: "fade-in", style: { maxWidth: 900, margin: "0 auto", padding: "24px 20px" } },
