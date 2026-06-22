@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Find Missing Photo — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:780px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff;margin-right:8px}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.btn-red{background:#EF4444}.btn-red:hover{background:#DC2626}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:6px 8px;text-align:left}
+td{padding:5px 8px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+</style>
+</head>
+<body>
+<h1>Find Missing Photo</h1>
+<div class="sub">ค้นหา observation ที่มีรูปอ้างอิงแต่ไม่มีใน Cloud Storage</div>
+
+<div class="card">
+  <button class="btn" id="btnFind" onclick="findMissing()">🔍 ค้นหารูปที่หาย</button>
+  <button class="btn btn-red" id="btnClear" onclick="clearMissing()" disabled>🗑 ลบ reference รูปที่หายออก</button>
+  <div class="log" id="log">กดปุ่มเพื่อตรวจสอบ...\n</div>
+  <div id="tableWrap"></div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22",bucket:"ctpa-photos"};
+function H(extra){return Object.assign({apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"},extra||{});}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var missingRefs=[];
+
+async function checkUrl(url){
+  try{
+    var r=await fetch(url,{method:"HEAD",cache:"no-store"});
+    return r.ok;
+  }catch(e){return false;}
+}
+
+async function findMissing(){
+  document.getElementById("btnFind").disabled=true;
+  document.getElementById("log").innerHTML="";
+  document.getElementById("tableWrap").innerHTML="";
+  missingRefs=[];
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    var rows=await r.json();
+    var obs=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations: "+obs.length,"ok");
+
+    // Collect all photo URLs from pb and pa arrays
+    var allPhotos=[];
+    obs.forEach(function(o){
+      (o.pb||[]).forEach(function(p){if(p&&p.url) allPhotos.push({obsId:o.id,field:"pb",url:p.url,photo:p});});
+      (o.pa||[]).forEach(function(p){if(p&&p.url) allPhotos.push({obsId:o.id,field:"pa",url:p.url,photo:p});});
+    });
+    log("รูปทั้งหมดที่อ้างอิง: "+allPhotos.length+" รูป","info");
+
+    // Filter only storage URLs (skip base64)
+    var storagePhotos=allPhotos.filter(function(p){return p.url&&p.url.startsWith("http")&&!p.url.startsWith("data:");});
+    var base64Photos=allPhotos.filter(function(p){return p.url&&p.url.startsWith("data:");});
+    log("Storage URL: "+storagePhotos.length+" | Base64 (local): "+base64Photos.length,"info");
+
+    if(base64Photos.length>0){
+      log("\nพบ "+base64Photos.length+" รูปที่เป็น base64 (ยังไม่ sync ขึ้น cloud):","warn");
+      base64Photos.forEach(function(p){
+        log("  "+p.obsId+" ["+p.field+"] — base64 ~"+(Math.round(p.url.length/1024))+"KB","warn");
+        missingRefs.push(p);
+      });
+    }
+
+    log("\nกำลังตรวจสอบ Storage URLs ("+storagePhotos.length+" รูป)...","info");
+    var broken=[];
+    var batchSize=10;
+    for(var i=0;i<storagePhotos.length;i+=batchSize){
+      var batch=storagePhotos.slice(i,i+batchSize);
+      var results=await Promise.all(batch.map(function(p){
+        return checkUrl(p.url).then(function(ok){return {ok:ok,p:p};});
+      }));
+      results.forEach(function(res){
+        if(!res.ok){
+          broken.push(res.p);
+          log("  ❌ BROKEN: "+res.p.obsId+" ["+res.p.field+"] "+res.p.url.slice(-50),"err");
+        }
+      });
+      if(i%50===0) log("  ตรวจแล้ว "+(i+batch.length)+"/"+storagePhotos.length+"...","info");
+    }
+
+    log("\n=== ผลลัพธ์ ===","info");
+    log("Storage URLs เสีย: "+broken.length,"broken"===0?"ok":"err");
+    log("Base64 ที่ยังค้าง: "+base64Photos.length,base64Photos.length===0?"ok":"warn");
+
+    var allBad=broken.concat(base64Photos);
+    if(allBad.length===0){
+      log("\nรูปทุกรูปปกติครับ ✅","ok");
+    } else {
+      log("\nพบปัญหา "+allBad.length+" รายการ — กดปุ่มแดงเพื่อลบ reference ออก","warn");
+      // Show table
+      var html="<table><thead><tr><th>OBS ID</th><th>Field</th><th>ประเภทปัญหา</th><th>URL/ขนาด</th></tr></thead><tbody>";
+      allBad.forEach(function(p){
+        var type=p.url.startsWith("data:")?"Base64 ยังไม่ sync":"Storage URL เสีย";
+        var info=p.url.startsWith("data:")?"~"+(Math.round(p.url.length/1024))+"KB":p.url.slice(-60);
+        html+="<tr><td>"+p.obsId+"</td><td>"+p.field+"</td><td>"+type+"</td><td style='font-size:10px;word-break:break-all'>"+info+"</td></tr>";
+      });
+      html+="</tbody></table>";
+      document.getElementById("tableWrap").innerHTML=html;
+      missingRefs=allBad;
+      document.getElementById("btnClear").disabled=false;
+    }
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+  }
+  document.getElementById("btnFind").disabled=false;
+}
+
+async function clearMissing(){
+  if(!missingRefs.length){log("ไม่มีรายการที่ต้องแก้ไข","warn");return;}
+  if(!confirm("ลบ reference รูปที่หาย "+missingRefs.length+" รายการออกจาก observations?\n(ลบแค่ข้อมูลอ้างอิง ไม่กระทบรูปต้นฉบับ)")) return;
+
+  document.getElementById("btnClear").disabled=true;
+  log("\nกำลังโหลดข้อมูลล่าสุด...","info");
+
+  try{
+    var base=CLOUD.url+"/rest/v1";
+    var r=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    var rows=await r.json();
+    var obs=JSON.parse(JSON.stringify(rows[0].data));
+
+    // Build lookup of bad URLs
+    var badUrls=new Set(missingRefs.map(function(p){return p.url;}));
+
+    var count=0;
+    obs.forEach(function(o){
+      var pbBefore=(o.pb||[]).length;
+      var paBefore=(o.pa||[]).length;
+      o.pb=(o.pb||[]).filter(function(p){return !badUrls.has(p.url);});
+      o.pa=(o.pa||[]).filter(function(p){return !badUrls.has(p.url);});
+      count+=(pbBefore-o.pb.length)+(paBefore-o.pa.length);
+    });
+
+    log("ลบ reference ออก "+count+" รายการ","info");
+    log("กำลัง patch Supabase...","info");
+
+    var p=await fetch(base+"/"+CLOUD.table+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:obs})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== สำเร็จ ===","ok");
+    log("ลบ reference รูปที่หายออกเรียบร้อย "+count+" รายการ","ok");
+    log("รีเฟรชแอปเพื่อยืนยัน","info");
+    missingRefs=[];
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnClear").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
