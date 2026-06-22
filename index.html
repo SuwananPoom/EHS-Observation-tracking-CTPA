@@ -1186,6 +1186,32 @@ var b64f = function b64f(f) {
     fr.readAsDataURL(f);
   });
 };
+/* compressPhoto: resize + compress before storing.
+   Max 1920px on longest side, JPEG 0.82 quality → ~200-500 KB per photo.
+   Prevents localStorage quota failures from multi-MB phone photos. */
+var compressPhoto = function compressPhoto(f) {
+  var MAX_DIM = 1920, QUALITY = 0.82;
+  return b64f(f).then(function(dataUri) {
+    return new Promise(function(resolve) {
+      var img = new Image();
+      img.onload = function() {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h) { resolve(dataUri); return; }
+          var scale = Math.min(1, MAX_DIM / Math.max(w, h));
+          var cw = Math.round(w * scale), ch = Math.round(h * scale);
+          var cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
+          var ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cw, ch);
+          ctx.drawImage(img, 0, 0, cw, ch);
+          var compressed = cv.toDataURL("image/jpeg", QUALITY);
+          resolve(compressed);
+        } catch(e) { resolve(dataUri); }
+      };
+      img.onerror = function() { resolve(dataUri); };
+      img.src = dataUri;
+    });
+  });
+};
 var isOD = function isOD(o) {
   return o.status !== "CLOSED" && o.due && o.due < td();
 };
@@ -2801,7 +2827,7 @@ function Strip(_ref2) {
             return _context.a(3, 5);
           case 3:
             _context.n = 4;
-            return b64f(f);
+            return compressPhoto(f);
           case 4:
             src = _context.v;
             onAdd({
