@@ -3728,7 +3728,7 @@ function DiagnosticsView(_ref_diag) {
     /* Live state */
     secBox("Current App State", null,
       React.createElement("div", null,
-        infoRow("App Version", APP_VER, "#7C3AED"),
+        infoRow("App Version", APP_VER, "#00AA66"),
         infoRow("Local observations", String(obs.length)),
         infoRow("With Before photos", String(withBef)),
         infoRow("With After photos", String(withAft)),
@@ -6265,14 +6265,14 @@ function App(_refApp) {
   /* Admin menu + user info + sign out */
   isAdmin() ? /*#__PURE__*/React.createElement("button", {
     onClick: function(){ setView("admin_users"); },
-    style: { fontSize: 11, padding: "7px 14px", borderRadius: 9, border: "1.5px solid " + (view.indexOf("admin") === 0 ? "#7C3AED" : C.border), background: view.indexOf("admin") === 0 ? "#7C3AED" : "#F5F3FF", color: view.indexOf("admin") === 0 ? "#fff" : "#7C3AED", fontWeight: 700, cursor: "pointer" }
+    style: { fontSize: 11, padding: "7px 14px", borderRadius: 9, border: "1.5px solid " + (view.indexOf("admin") === 0 ? "#00AA66" : C.border), background: view.indexOf("admin") === 0 ? "#00AA66" : "#ECFDF5", color: view.indexOf("admin") === 0 ? "#fff" : "#00AA66", fontWeight: 700, cursor: "pointer" }
   }, "\u2699\uFE0F Admin") : null,
   /*#__PURE__*/React.createElement("div", {
     style: { display: "flex", alignItems: "center", gap: 6, borderLeft: "1.5px solid " + C.border, paddingLeft: 8, marginLeft: 2 }
   },
     /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", lineHeight: 1.3 } },
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.text, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, authProfile ? (authProfile.name || authProfile.email || "User") : (ctpaUser() || "User")),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#7C3AED", fontWeight: 600 } }, authProfile ? (authProfile.role || "").replace(/_/g, " ") : "")
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#00AA66", fontWeight: 600 } }, authProfile ? (authProfile.role || "").replace(/_/g, " ") : "")
     ),
     /*#__PURE__*/React.createElement("button", {
       onClick: onLogout,
@@ -7465,7 +7465,7 @@ function App(_refApp) {
     var floorMap = {};   /* floor \u2192 { areas: { areaLabel \u2192 [zones] }, color, icon } */
     var FLOOR_META = {
       "1F":       { color: "#3B82F6", bg: "#EFF6FF", icon: "\ud83c\udfd7" },
-      "2F":       { color: "#8B5CF6", bg: "#F5F3FF", icon: "\ud83c\udfe2" },
+      "2F":       { color: "#8B5CF6", bg: "#ECFDF5", icon: "\ud83c\udfe2" },
       "LRF":      { color: "#0EA5E9", bg: "#F0F9FF", icon: "\ud83c\udfdb" },
       "External": { color: "#F59E0B", bg: "#FFFBEB", icon: "\ud83c\udf10" },
       "Other":    { color: "#64748B", bg: "#F8FAFC", icon: "\ud83d\udccd" }
@@ -9311,7 +9311,7 @@ function AdminPage(_ref) {
     { v: "admin_access",  l: "Access" },
     { v: "admin_history", l: "Approval History" }
   ];
-  var C2 = { purple: "#7C3AED", purpleBg: "#F5F3FF", border: "#E2E8F0" };
+  var C2 = { purple: "#00AA66", purpleBg: "#ECFDF5", border: "#E2E8F0" };
   return React.createElement("div", { className: "fade-in", style: { maxWidth: 900, margin: "0 auto", padding: "24px 20px" } },
     React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 20, borderBottom: "2px solid " + C2.purpleBg, paddingBottom: 12, flexWrap: "wrap", alignItems: "center" } },
       React.createElement("button", { onClick: function(){ setView("dashboard"); }, style: { fontSize: 11, padding: "6px 12px", borderRadius: 8, border: "1px solid #E2E8F0", background: "#fff", color: "#64748B", cursor: "pointer", fontWeight: 600 } }, "← Back"),
@@ -9348,7 +9348,7 @@ function AdminUsersView(_ref) {
   React.useEffect(function(){ load(); }, []);
 
   function createUser() {
-    if (!form.email || !form.password || !form.name) { setCrErr("Email, Name และ Password จำเป็น"); return; }
+    if (!form.email || !form.password || !form.name) { setCrErr("Email, Name and Password are required"); return; }
     setCrBusy(true); setCrErr("");
     /* Use Supabase Admin API via service role — but we only have anon key.
        Workaround: use signUp then immediately sign back in as admin. */
@@ -9364,13 +9364,13 @@ function AdminUsersView(_ref) {
       return supabaseClient.from("ctpa_user_profiles").upsert([{
         id: uid, email: form.email.trim(), name: form.name.trim(),
         company: form.company, role: form.role, status: "active"
-      }]).then(function(){ setCrBusy(false); setMsg("สร้างผู้ใช้ " + form.email + " สำเร็จ"); setForm({ email:"", name:"", company:"DayOne", role:"viewer", password:"" }); load(); });
+      }]).then(function(){ setCrBusy(false); setMsg("User " + form.email + " created successfully"); setForm({ email:"", name:"", company:"DayOne", role:"viewer", password:"" }); load(); });
     }).catch(function(e){ setCrBusy(false); setCrErr(e.message); });
   }
 
   function updateUser(id, patch) {
     supabaseClient.from("ctpa_user_profiles").update(patch).eq("id", id)
-      .then(function(){ setMsg("อัปเดตสำเร็จ"); load(); });
+      .then(function(){ setMsg("Updated successfully"); load(); });
   }
 
   function toggleStatus(u) {
@@ -9380,25 +9380,25 @@ function AdminUsersView(_ref) {
 
   function resetPassword(email) {
     supabaseClient.auth.resetPasswordForEmail(email)
-      .then(function(){ setMsg("ส่ง Reset Password email ไปที่ " + email + " แล้ว"); })
+      .then(function(){ setMsg("Password reset email sent to " + email); })
       .catch(function(e){ setErr(e.message); });
   }
 
   var iSt = { width: "100%", padding: "8px 11px", fontSize: 12, border: "1.5px solid #E2E8F0", borderRadius: 8, boxSizing: "border-box" };
   var lSt = { fontSize: 11, fontWeight: 600, color: "#64748B", marginBottom: 4, display: "block" };
 
-  return React.createElement(AdminPage, { title: "Users", subtitle: "จัดการบัญชีผู้ใช้ทั้งหมด", setView: setView },
+  return React.createElement(AdminPage, { title: "Users", subtitle: "Manage all user accounts", setView: setView },
     /* Message / error */
     msg ? React.createElement("div", { style: { background: "#D1FAE5", border: "1px solid #6EE7B7", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#065F46", marginBottom: 16 } }, "✅ " + msg) : null,
     err ? React.createElement("div", { style: { background: "#FEF2F2", border: "1px solid #FCA5A5", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#B91C1C", marginBottom: 16 } }, "❌ " + err) : null,
 
     /* Create user form */
     React.createElement("div", { style: { background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12, padding: 20, marginBottom: 24 } },
-      React.createElement("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#0F172A" } }, "➕ สร้างผู้ใช้ใหม่"),
+      React.createElement("div", { style: { fontSize: 14, fontWeight: 700, marginBottom: 16, color: "#0F172A" } }, "➕ Create New User"),
       crErr ? React.createElement("div", { style: { background: "#FEF2F2", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#B91C1C", marginBottom: 12 } }, crErr) : null,
       React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 } },
         React.createElement("div", null, React.createElement("label", { style: lSt }, "Email *"), React.createElement("input", { style: iSt, type: "email", placeholder: "user@example.com", value: form.email, onChange: function(e){ setForm(Object.assign({}, form, { email: e.target.value })); } })),
-        React.createElement("div", null, React.createElement("label", { style: lSt }, "ชื่อ *"), React.createElement("input", { style: iSt, placeholder: "Full name", value: form.name, onChange: function(e){ setForm(Object.assign({}, form, { name: e.target.value })); } })),
+        React.createElement("div", null, React.createElement("label", { style: lSt }, "Full Name *"), React.createElement("input", { style: iSt, placeholder: "Full name", value: form.name, onChange: function(e){ setForm(Object.assign({}, form, { name: e.target.value })); } })),
         React.createElement("div", null, React.createElement("label", { style: lSt }, "Password *"), React.createElement("input", { style: iSt, type: "password", placeholder: "••••••••", value: form.password, onChange: function(e){ setForm(Object.assign({}, form, { password: e.target.value })); } }))
       ),
       React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 } },
@@ -9415,7 +9415,7 @@ function AdminUsersView(_ref) {
       ),
       React.createElement("button", {
         onClick: createUser, disabled: crBusy,
-        style: { padding: "9px 22px", borderRadius: 9, border: "none", background: crBusy ? "#94A3B8" : "#7C3AED", color: "#fff", fontSize: 13, fontWeight: 700, cursor: crBusy ? "wait" : "pointer" }
+        style: { padding: "9px 22px", borderRadius: 9, border: "none", background: crBusy ? "#94A3B8" : "#00AA66", color: "#fff", fontSize: 13, fontWeight: 700, cursor: crBusy ? "wait" : "pointer" }
       }, crBusy ? "Creating…" : "Create User")
     ),
 
@@ -9473,7 +9473,7 @@ function AdminAccessView(_ref) {
     supabaseClient.from("ctpa_user_profiles").select("*").order("role").then(function(res){ setBusy(false); setUsers(res.data || []); });
   }, []);
 
-  return React.createElement(AdminPage, { title: "Access", subtitle: "สรุป role และสิทธิ์การใช้งานแต่ละบัญชี", setView: setView },
+  return React.createElement(AdminPage, { title: "Access", subtitle: "Role and permission summary for each account", setView: setView },
     busy ? React.createElement("div", { style: { textAlign: "center", color: "#64748B", padding: 24 } }, "Loading…") :
     React.createElement("div", { style: { background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12, overflow: "hidden" } },
       React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
@@ -9488,7 +9488,7 @@ function AdminAccessView(_ref) {
               React.createElement("td", { style: { padding: "9px 12px", color: "#475569" } }, u.email),
               React.createElement("td", { style: { padding: "9px 12px", fontWeight: 600 } }, u.name || "—"),
               React.createElement("td", { style: { padding: "9px 12px" } }, u.company || "—"),
-              React.createElement("td", { style: { padding: "9px 12px" } }, React.createElement("span", { style: { display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#F5F3FF", color: "#7C3AED" } }, ROLE_LABELS[u.role] || u.role)),
+              React.createElement("td", { style: { padding: "9px 12px" } }, React.createElement("span", { style: { display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#ECFDF5", color: "#00AA66" } }, ROLE_LABELS[u.role] || u.role)),
               React.createElement("td", { style: { padding: "9px 12px", color: "#475569", fontSize: 11 } }, ROLE_PERMS[u.role] || "—"),
               React.createElement("td", { style: { padding: "9px 12px" } }, React.createElement("span", { style: { display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: u.status==="active"?"#D1FAE5":"#FEE2E2", color: u.status==="active"?"#065F46":"#991B1B" } }, u.status || "active"))
             );
@@ -9514,8 +9514,8 @@ function AdminApprovalHistoryView(_ref) {
 
   var filtered = filter ? rows.filter(function(r){ return (r.obs_id||"").toLowerCase().indexOf(filter.toLowerCase()) >= 0 || (r.approved_by||"").toLowerCase().indexOf(filter.toLowerCase()) >= 0; }) : rows;
 
-  return React.createElement(AdminPage, { title: "Approval History", subtitle: "ประวัติการ Approve / Reject ทั้งหมด", setView: setView },
-    React.createElement("input", { placeholder: "ค้นหา OBS ID หรือ ชื่อผู้อนุมัติ…", value: filter, onChange: function(e){ setFilter(e.target.value); }, style: { width: "100%", padding: "9px 14px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 9, marginBottom: 16, boxSizing: "border-box" } }),
+  return React.createElement(AdminPage, { title: "Approval History", subtitle: "Full approval and rejection history", setView: setView },
+    React.createElement("input", { placeholder: "Search OBS ID or approver name…", value: filter, onChange: function(e){ setFilter(e.target.value); }, style: { width: "100%", padding: "9px 14px", fontSize: 13, border: "1.5px solid #E2E8F0", borderRadius: 9, marginBottom: 16, boxSizing: "border-box" } }),
     busy ? React.createElement("div", { style: { textAlign: "center", color: "#64748B", padding: 24 } }, "Loading…") :
     React.createElement("div", { style: { background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 12, overflow: "hidden" } },
       React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 } },
@@ -9525,7 +9525,7 @@ function AdminApprovalHistoryView(_ref) {
           )
         ),
         React.createElement("tbody", null,
-          filtered.length === 0 ? React.createElement("tr", null, React.createElement("td", { colSpan: 7, style: { padding: 24, textAlign: "center", color: "#94A3B8" } }, "ไม่มีข้อมูล")) :
+          filtered.length === 0 ? React.createElement("tr", null, React.createElement("td", { colSpan: 7, style: { padding: 24, textAlign: "center", color: "#94A3B8" } }, "No records found")) :
           filtered.map(function(r, i){
             var acColor = r.action && r.action.indexOf("REJECT") >= 0 ? "#991B1B" : "#065F46";
             var acBg    = r.action && r.action.indexOf("REJECT") >= 0 ? "#FEE2E2" : "#D1FAE5";
