@@ -394,12 +394,45 @@ function savePhotoToTable(obsId, slot, idx, photo){
 var PH_PREFIX = "ctpa_ph_";
 function photoLocalKey(obsId, slot, idx){ return PH_PREFIX + obsId + "|" + slot + "|" + idx; }
 
+/* In-memory fallback when localStorage is full or unavailable */
+var _memPhotoCache = {};
+
 function cachePhotoLocal(obsId, slot, idx, src){
   if(!src || src.length < 32) return;
-  try { localStorage.setItem(photoLocalKey(obsId, slot, idx), src); } catch(e){}
+  var key = photoLocalKey(obsId, slot, idx);
+  /* Always write to memory cache as a reliable fallback */
+  _memPhotoCache[key] = src;
+  try {
+    localStorage.setItem(key, src);
+  } catch(e) {
+    if(e && (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED" || e.code === 22)) {
+      console.warn("[CTPA] localStorage quota exceeded — evicting oldest photo cache entries and retrying");
+      /* Evict all photo cache entries (oldest strategy: remove all, keep only current) */
+      try {
+        var toRemove = [];
+        for(var i = 0; i < localStorage.length; i++){
+          var k = localStorage.key(i);
+          if(k && k.indexOf(PH_PREFIX) === 0) toRemove.push(k);
+        }
+        toRemove.forEach(function(k){ try { localStorage.removeItem(k); } catch(_){} });
+        /* Retry once after eviction */
+        localStorage.setItem(key, src);
+      } catch(e2){
+        /* Still failing — memory cache is sufficient for this session */
+        console.warn("[CTPA] localStorage still unavailable after eviction — using memory cache only");
+      }
+    }
+    /* Non-quota errors: silently use memory cache */
+  }
 }
 function getCachedPhotoSrc(obsId, slot, idx){
-  try { return localStorage.getItem(photoLocalKey(obsId, slot, idx)) || null; } catch(e){ return null; }
+  var key = photoLocalKey(obsId, slot, idx);
+  try {
+    var v = localStorage.getItem(key);
+    if(v) return v;
+  } catch(e){}
+  /* Fall back to memory cache */
+  return _memPhotoCache[key] || null;
 }
 
 /* Displayable image source for a photo object: prefer the cross-device Storage URL,
@@ -5823,19 +5856,39 @@ function App(_refApp) {
       toast$("Photo sync error: " + ((e && e.message) || "unknown"), "err");
     });
   };
+  /* Mutex: tracks slots with in-flight cloud saves to prevent cache clear race */
+  var _uphInFlight = React.useRef({});
+
   var upPh = function upPh(id, k, photos) {
     var prev = (obs.find(function(o){ return o.id === id; }) || {})[k] || [];
     var added = photos.slice(prev.length);
+    var slotKey = id + "|" + k;
 
     /* When photos are deleted, clear stale cache keys so old base64 can't bleed back.
-       Clear all indices for this slot, then re-populate only what still exists. */
+       Guard: only clear when no uploads are in-flight for this slot to avoid race. */
     if (photos.length < prev.length) {
-      for (var ci = 0; ci < prev.length; ci++) {
-        try { localStorage.removeItem(photoLocalKey(id, k, ci)); } catch(e) {}
+      if (_uphInFlight.current[slotKey]) {
+        /* In-flight upload exists — defer cache clear until it completes */
+        console.warn("[CTPA] upPh: deferring cache clear for", slotKey, "— upload in flight");
+        _uphInFlight.current[slotKey].then(function(){
+          for (var ci = 0; ci < prev.length; ci++) {
+            try { localStorage.removeItem(photoLocalKey(id, k, ci)); } catch(e) {}
+            delete _memPhotoCache[photoLocalKey(id, k, ci)];
+          }
+          photos.forEach(function(p, i) {
+            if (p && p.src && p.src.length > 32) cachePhotoLocal(id, k, i, p.src);
+          });
+        });
+      } else {
+        /* Safe to clear immediately */
+        for (var ci = 0; ci < prev.length; ci++) {
+          try { localStorage.removeItem(photoLocalKey(id, k, ci)); } catch(e) {}
+          delete _memPhotoCache[photoLocalKey(id, k, ci)];
+        }
+        photos.forEach(function(p, i) {
+          if (p && p.src && p.src.length > 32) cachePhotoLocal(id, k, i, p.src);
+        });
       }
-      photos.forEach(function(p, i) {
-        if (p && p.src && p.src.length > 32) cachePhotoLocal(id, k, i, p.src);
-      });
     }
 
     /* update local state immediately (optimistic) */
@@ -5845,16 +5898,26 @@ function App(_refApp) {
     ps(nx0);
     setDet(nx0.find(function(o){ return o.id === id; }));
     /* cache each new photo immediately — also upload to Storage (+ table fallback) for cross-device */
+    var uploadPromises = [];
     added.forEach(function(p, i){
       var idx = prev.length + i;
       /* per-photo localStorage key survives pull() / cloudMergeSave overwrites */
       if(p && p.src) cachePhotoLocal(id, k, idx, p.src);
-      savePhotoToCloud(id, k, idx, p).then(function(url){
+      var uploadP = savePhotoToCloud(id, k, idx, p).then(function(url){
         console.log("[CTPA] savePhotoToCloud", id, k, idx, url ? "✅ Storage" : "⚠ table-only (bucket not set up?)");
         if(url) attachPhotoUrl(id, k, idx, url);
       });
+      uploadPromises.push(uploadP);
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
     });
+    /* Track in-flight uploads for this slot so cache clear can safely defer */
+    if(uploadPromises.length) {
+      _uphInFlight.current[slotKey] = Promise.all(uploadPromises).then(function(){
+        delete _uphInFlight.current[slotKey];
+      }).catch(function(){
+        delete _uphInFlight.current[slotKey];
+      });
+    }
   };
   var _delInProgress = React.useRef({});
   var _useState_delBusy = React.useState(null), delBusyId = _useState_delBusy[0], setDelBusyId = _useState_delBusy[1];
