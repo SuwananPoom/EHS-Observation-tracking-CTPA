@@ -14,13 +14,16 @@ body{font-family:system-ui,sans-serif;max-width:620px;margin:40px auto;padding:0
 </head>
 <body>
 <h2 style="font-size:18px;font-weight:700;margin-bottom:4px">➕ เพิ่ม OBS-344 & OBS-345 (Placeholder)</h2>
-<p style="color:#64748B;font-size:13px;margin-bottom:16px">สร้าง observation เปล่าสำหรับ OBS-344 และ OBS-345 เพื่อกรอกข้อมูลในแอปภายหลัง</p>
+<p style="color:#64748B;font-size:13px;margin-bottom:16px">ล้าง tombstone + สร้าง observation เปล่าสำหรับ OBS-344 และ OBS-345</p>
 <div class="card">
-  <button class="btn" id="btn" onclick="addPlaceholders()">➕ เพิ่ม OBS-344 & OBS-345</button>
+  <button class="btn" id="btn" onclick="run()">➕ เพิ่ม OBS-344 & OBS-345</button>
   <div class="log" id="log">กดปุ่มเพื่อเพิ่ม placeholder...</div>
 </div>
 <script>
 var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+var DEL_KEY="ctpa_del_bkk22";
+var TARGET_IDS=["OBS-344","OBS-345"];
+
 function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
 function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
 
@@ -29,9 +32,28 @@ var PLACEHOLDERS=[
   {id:"OBS-345",date:"",zone:"",company:"",fc:"",obsType:"UNSAFE_CON",cat:"",risk:"MAJOR",desc:"",rect:"",by:"",due:"",status:"OPEN",closed:"",closedBy:"",week:"",pb:[],pa:[]}
 ];
 
-async function addPlaceholders(){
+async function run(){
   document.getElementById("btn").disabled=true;
   document.getElementById("log").innerHTML="";
+
+  /* Step 1: Remove OBS-344 / OBS-345 from localStorage tombstone list */
+  try{
+    var raw=localStorage.getItem(DEL_KEY)||"[]";
+    var delList=JSON.parse(raw);
+    var before=delList.length;
+    delList=delList.filter(function(id){return TARGET_IDS.indexOf(id)===-1;});
+    localStorage.setItem(DEL_KEY,JSON.stringify(delList));
+    var removed=before-delList.length;
+    if(removed>0){
+      log("✅ ล้าง tombstone: ลบ "+removed+" ID ออกจาก DEL_KEY ("+TARGET_IDS.slice(0,removed).join(", ")+")","ok");
+    } else {
+      log("ℹ Tombstone: ไม่พบ OBS-344/345 ใน DEL_KEY (อาจล้างไปแล้ว)","info");
+    }
+  }catch(e){
+    log("⚠ ล้าง localStorage ไม่ได้: "+e.message+" — ดำเนินการต่อ","warn");
+  }
+
+  /* Step 2: Fetch latest cloud data */
   log("กำลังโหลดข้อมูลจาก Supabase...","info");
   try{
     var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
@@ -40,28 +62,26 @@ async function addPlaceholders(){
     var rows=await r.json();
     var obs=JSON.parse(JSON.stringify(rows[0].data||[]));
 
-    // Check if already exist
-    var existing=obs.filter(function(o){return o.id==="OBS-344"||o.id==="OBS-345";});
+    /* Check if already exist */
+    var existing=obs.filter(function(o){return TARGET_IDS.indexOf(o.id)!==-1;});
     if(existing.length>0){
-      log("⚠ พบ "+existing.map(function(o){return o.id;}).join(", ")+" อยู่แล้ว — ยกเลิก","warn");
-      document.getElementById("btn").disabled=false;
-      return;
+      log("⚠ พบ "+existing.map(function(o){return o.id;}).join(", ")+" อยู่แล้วใน Supabase","warn");
     }
 
-    // Add placeholders
+    /* Remove any existing placeholder (avoid dupe) then add fresh ones */
+    obs=obs.filter(function(o){return TARGET_IDS.indexOf(o.id)===-1;});
     obs=obs.concat(PLACEHOLDERS);
 
-    // Sort by OBS number descending (same as app)
+    /* Sort by OBS number descending */
     obs.sort(function(a,b){
       var na=parseInt((a.id||"").replace(/[^0-9]/g,""),10)||0;
       var nb=parseInt((b.id||"").replace(/[^0-9]/g,""),10)||0;
       return nb-na;
     });
 
-    log("เพิ่ม OBS-344 และ OBS-345 (placeholder ว่าง)","info");
-    log("Total จะเป็น: "+obs.length+" records","info");
+    log("เพิ่ม OBS-344 และ OBS-345 → total: "+obs.length+" records","info");
 
-    // Strip photos before patch
+    /* Strip photos */
     var stripped=obs.map(function(o){
       var o2=Object.assign({},o);
       if(o2.pb&&o2.pb.length) o2.pb=o2.pb.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
@@ -72,10 +92,27 @@ async function addPlaceholders(){
     var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:stripped})});
     if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
 
+    /* Step 3: Update localStorage main cache to include the new records */
+    try{
+      var SKEY="ctpa_bkk22_v25_v25c";
+      var cached=JSON.parse(localStorage.getItem(SKEY)||"[]");
+      cached=cached.filter(function(o){return TARGET_IDS.indexOf(o.id)===-1;});
+      cached=cached.concat(PLACEHOLDERS);
+      cached.sort(function(a,b){
+        var na=parseInt((a.id||"").replace(/[^0-9]/g,""),10)||0;
+        var nb=parseInt((b.id||"").replace(/[^0-9]/g,""),10)||0;
+        return nb-na;
+      });
+      localStorage.setItem(SKEY,JSON.stringify(cached));
+      log("✅ อัปเดต localStorage cache แล้ว","ok");
+    }catch(e){
+      log("⚠ อัปเดต localStorage cache ไม่ได้: "+e.message,"warn");
+    }
+
     log("\n=== สำเร็จ ===","ok");
     log("เพิ่ม OBS-344 และ OBS-345 เรียบร้อย","ok");
     log("Total OBS ตอนนี้: "+obs.length,"ok");
-    log("รีเฟรชแอป → ค้นหา OBS-344 หรือ OBS-345 → กด Edit เพื่อกรอกข้อมูล","info");
+    log("รีเฟรชแอปหน้าหลัก → Total OBS ควรเป็น "+obs.length,"info");
   }catch(e){
     log("ERROR: "+e.message,"err");
     document.getElementById("btn").disabled=false;
