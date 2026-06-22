@@ -6195,7 +6195,7 @@ function App(_refApp) {
       display: "flex",
       gap: 6
     }
-  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"], ["diag", "🔍 Diag"]].map(function (_ref6) {
+  }, [["dashboard", "Dashboard"], ["list", "Observations"], ["report", "Reports"], ["log", "Activity"]].map(function (_ref6) {
     var _ref7 = _slicedToArray(_ref6, 2),
       v = _ref7[0],
       l = _ref7[1];
@@ -6285,10 +6285,10 @@ function App(_refApp) {
     style: { background: "#FEF2F2", borderBottom: "2px solid #EF4444", padding: "10px 20px", fontSize: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
   },
     /*#__PURE__*/React.createElement("span", { style: { color: "#B91C1C", fontWeight: 800, flex: 1 } }, "\u274C Supabase sync error: " + syncErr + " \u2014 data may not be saved to cloud. Tap \u21BB Sync to retry."),
-    /*#__PURE__*/React.createElement("button", {
+    isAdmin() ? /*#__PURE__*/React.createElement("button", {
       onClick: function(){ setView("diag"); setSyncErr(null); },
       style: { marginLeft: 10, fontSize: 11, padding: "4px 10px", borderRadius: 5, border: "1px solid #EF4444", background: "#fff", color: "#B91C1C", cursor: "pointer", fontWeight: 700 }
-    }, "\uD83D\uDD0D Admin Diagnostics")
+    }, "\uD83D\uDD0D Admin Diagnostics") : null
   ) : null,
   /* \u2500\u2500 Cloud Sync Status bar \u2500\u2500 */
   /*#__PURE__*/React.createElement("div", {
@@ -8773,7 +8773,7 @@ function App(_refApp) {
     }
   }, "Cancel"))), view === "report" && (reportAuth
   ? /*#__PURE__*/React.createElement(ReportView, { obs: obs })
-  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && (diagAuth
+  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && isAdmin() && (diagAuth
   ? /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr })
   : /*#__PURE__*/React.createElement(DiagAuthGate, { onAuth: function(){ setDiagAuth(true); }, onBack: function(){ setView("dashboard"); } })
 ),
@@ -9309,7 +9309,8 @@ function AdminPage(_ref) {
   var tabs = [
     { v: "admin_users",   l: "Users" },
     { v: "admin_access",  l: "Access" },
-    { v: "admin_history", l: "Approval History" }
+    { v: "admin_history", l: "Approval History" },
+    { v: "diag",          l: "Diagnostics" }
   ];
   var C2 = { purple: "#00AA66", purpleBg: "#ECFDF5", border: "#E2E8F0" };
   return React.createElement("div", { className: "fade-in", style: { maxWidth: 900, margin: "0 auto", padding: "24px 20px" } },
