@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Add OBS-344 & OBS-345 — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:620px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:13px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;margin-top:12px;min-height:80px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+</style>
+</head>
+<body>
+<h2 style="font-size:18px;font-weight:700;margin-bottom:4px">➕ เพิ่ม OBS-344 & OBS-345 (Placeholder)</h2>
+<p style="color:#64748B;font-size:13px;margin-bottom:16px">สร้าง observation เปล่าสำหรับ OBS-344 และ OBS-345 เพื่อกรอกข้อมูลในแอปภายหลัง</p>
+<div class="card">
+  <button class="btn" id="btn" onclick="addPlaceholders()">➕ เพิ่ม OBS-344 & OBS-345</button>
+  <div class="log" id="log">กดปุ่มเพื่อเพิ่ม placeholder...</div>
+</div>
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var PLACEHOLDERS=[
+  {id:"OBS-344",date:"",zone:"",company:"",fc:"",obsType:"UNSAFE_CON",cat:"",risk:"MAJOR",desc:"",rect:"",by:"",due:"",status:"OPEN",closed:"",closedBy:"",week:"",pb:[],pa:[]},
+  {id:"OBS-345",date:"",zone:"",company:"",fc:"",obsType:"UNSAFE_CON",cat:"",risk:"MAJOR",desc:"",rect:"",by:"",due:"",status:"OPEN",closed:"",closedBy:"",week:"",pb:[],pa:[]}
+];
+
+async function addPlaceholders(){
+  document.getElementById("btn").disabled=true;
+  document.getElementById("log").innerHTML="";
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var r=await fetch(base+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("GET HTTP "+r.status);
+    var rows=await r.json();
+    var obs=JSON.parse(JSON.stringify(rows[0].data||[]));
+
+    // Check if already exist
+    var existing=obs.filter(function(o){return o.id==="OBS-344"||o.id==="OBS-345";});
+    if(existing.length>0){
+      log("⚠ พบ "+existing.map(function(o){return o.id;}).join(", ")+" อยู่แล้ว — ยกเลิก","warn");
+      document.getElementById("btn").disabled=false;
+      return;
+    }
+
+    // Add placeholders
+    obs=obs.concat(PLACEHOLDERS);
+
+    // Sort by OBS number descending (same as app)
+    obs.sort(function(a,b){
+      var na=parseInt((a.id||"").replace(/[^0-9]/g,""),10)||0;
+      var nb=parseInt((b.id||"").replace(/[^0-9]/g,""),10)||0;
+      return nb-na;
+    });
+
+    log("เพิ่ม OBS-344 และ OBS-345 (placeholder ว่าง)","info");
+    log("Total จะเป็น: "+obs.length+" records","info");
+
+    // Strip photos before patch
+    var stripped=obs.map(function(o){
+      var o2=Object.assign({},o);
+      if(o2.pb&&o2.pb.length) o2.pb=o2.pb.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      if(o2.pa&&o2.pa.length) o2.pa=o2.pa.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      return o2;
+    });
+
+    var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:stripped})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== สำเร็จ ===","ok");
+    log("เพิ่ม OBS-344 และ OBS-345 เรียบร้อย","ok");
+    log("Total OBS ตอนนี้: "+obs.length,"ok");
+    log("รีเฟรชแอป → ค้นหา OBS-344 หรือ OBS-345 → กด Edit เพื่อกรอกข้อมูล","info");
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btn").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
