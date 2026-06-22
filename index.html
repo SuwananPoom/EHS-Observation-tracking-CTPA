@@ -7239,73 +7239,73 @@ function App() {
       return Math.ceil(v / step) * step;
     }
     var axisMax = niceMax(rawMax);
-    var TICKS = 4;
-    var yticks = []; for(var ti = TICKS; ti >= 0; ti--) yticks.push(Math.round(axisMax / TICKS * ti));
-    var CHART_H = 200;          /* plotting area height (px) */
-    var AXIS_W = 22;            /* left Y-axis number column */
+    /* \u2500\u2500 Horizontal bar chart, grouped by floor \u2500\u2500 */
+    /* Group barData by floor, preserving floor order */
+    var floorGroups = [];
+    floors.forEach(function(fl){
+      var rows = barData.filter(function(d){ return d.floor === fl; });
+      if(!rows.length) return;
+      var meta = FLOOR_META[fl] || { color: "#64748B", bg: "#F8FAFC", icon: "\ud83d\udccd" };
+      var flTot = rows.reduce(function(s,d){ return s+d.tot; }, 0);
+      var flOpen = rows.reduce(function(s,d){ return s+d.open; }, 0);
+      floorGroups.push({ floor: fl, meta: meta, rows: rows, flTot: flTot, flOpen: flOpen });
+    });
     return /*#__PURE__*/React.createElement("div", null,
       /* Legend */
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 18, marginBottom: 10, fontSize: 10, color: C.textMid } },
-        /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 3, background: GREEN, marginRight: 5, verticalAlign: "middle" } }), "Closed"),
-        /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 3, background: AMBER, marginRight: 5, verticalAlign: "middle" } }), "Open")
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 16, marginBottom: 10, fontSize: 10, color: C.textMid } },
+        /*#__PURE__*/React.createElement("span", null,
+          /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: GREEN, marginRight: 5, verticalAlign: "middle" } }),
+          "Closed"),
+        /*#__PURE__*/React.createElement("span", null,
+          /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: AMBER, marginRight: 5, verticalAlign: "middle" } }),
+          "Open")
       ),
-      /* Plot region: [Y-axis][bars over gridlines] */
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex" } },
-        /* Y-axis numbers */
-        /*#__PURE__*/React.createElement("div", { style: { width: AXIS_W, height: CHART_H, position: "relative", flex: "0 0 " + AXIS_W + "px" } },
-          yticks.map(function(t, i){
-            return /*#__PURE__*/React.createElement("span", { key: "y" + i,
-              style: { position: "absolute", top: (i / TICKS * 100) + "%", right: 4, transform: "translateY(-50%)", fontSize: 9, color: C.slate } }, t);
-          })
-        ),
-        /* Bars + horizontal gridlines */
-        /*#__PURE__*/React.createElement("div", { style: { flex: 1, position: "relative", height: CHART_H, borderLeft: "1px solid " + C.border, borderBottom: "2px solid " + C.border } },
-          /* gridlines */
-          yticks.map(function(t, i){
-            return /*#__PURE__*/React.createElement("div", { key: "h" + i,
-              style: { position: "absolute", left: 0, right: 0, top: (i / TICKS * 100) + "%", height: 1, background: i === TICKS ? "transparent" : "#EEF2F6", zIndex: 0 } });
-          }),
-          /* bars */
-          /*#__PURE__*/React.createElement("div", { style: { position: "absolute", inset: 0, display: "flex", alignItems: "flex-end", justifyContent: "space-around", gap: 4, padding: "0 4px", zIndex: 1 } },
-            barData.map(function(d, i){
-              var barH    = Math.max(3, Math.round(d.tot / axisMax * CHART_H));
-              var closedH = d.tot > 0 ? Math.round(d.closed / d.tot * barH) : 0;
-              var openH   = barH - closedH;
-              return /*#__PURE__*/React.createElement("div", { key: d.floor + "\u00b7" + d.label + i,
-                style: { flex: 1, maxWidth: 46, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" } },
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, fontWeight: 800, color: C.text, marginBottom: 2 } }, d.tot),
-                /*#__PURE__*/React.createElement("div", {
-                  title: (d.sub ? d.sub + " \u00b7 " : "") + d.label + ": " + d.closed + " closed, " + d.open + " open",
-                  style: { width: "74%", minWidth: 16, height: barH, borderRadius: "5px 5px 0 0", overflow: "hidden", display: "flex", flexDirection: "column", borderBottom: "3px solid " + d.meta.color, boxShadow: "0 1px 2px rgba(0,0,0,.08)" } },
-                  openH   > 0 && /*#__PURE__*/React.createElement("div", { style: { height: openH, background: AMBER, transition: "height .4s" } }),
-                  closedH > 0 && /*#__PURE__*/React.createElement("div", { style: { height: closedH, background: GREEN, transition: "height .4s" } })
-                )
-              );
-            })
-          )
-        )
-      ),
-      /* X-axis labels (area names, floor-coloured) */
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", marginLeft: AXIS_W } },
-        /*#__PURE__*/React.createElement("div", { style: { flex: 1, display: "flex", justifyContent: "space-around", gap: 4, padding: "5px 4px 0 4px" } },
-          barData.map(function(d, i){
-            return /*#__PURE__*/React.createElement("div", { key: "x" + i, style: { flex: 1, maxWidth: 46, textAlign: "center" } },
-              /*#__PURE__*/React.createElement("div", { style: { fontSize: 8.5, fontWeight: 700, color: d.meta.color, lineHeight: 1.15, wordBreak: "break-word", minHeight: 22 }, title: (d.sub ? d.sub + " \u00b7 " : "") + d.label }, d.label),
-              d.open > 0
-                ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 8, color: C.amber, fontWeight: 700 } }, d.open + " open")
-                : /*#__PURE__*/React.createElement("div", { style: { fontSize: 8, color: C.green, fontWeight: 700 } }, "\u2713")
+      /* Floor groups */
+      floorGroups.map(function(g){
+        return /*#__PURE__*/React.createElement("div", { key: g.floor, style: { marginBottom: 12 } },
+          /* Floor header */
+          /*#__PURE__*/React.createElement("div", { style: {
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "4px 8px", borderRadius: "6px 6px 0 0",
+            background: g.meta.bg, borderLeft: "3px solid " + g.meta.color,
+            marginBottom: 3
+          } },
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: g.meta.color } },
+              g.meta.icon + " " + g.floor),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.textMid } },
+              g.flTot + " obs" + (g.flOpen ? " \u00b7 " : " \u00b7 "),
+              g.flOpen
+                ? /*#__PURE__*/React.createElement("span", { style: { color: AMBER, fontWeight: 700 } }, g.flOpen + " open")
+                : /*#__PURE__*/React.createElement("span", { style: { color: GREEN, fontWeight: 700 } }, "\u2713 all closed")
+            )
+          ),
+          /* Rows */
+          g.rows.map(function(d, ri){
+            var closedPct = axisMax > 0 ? (d.closed / axisMax * 100) : 0;
+            var openPct   = axisMax > 0 ? (d.open   / axisMax * 100) : 0;
+            var rowBg = ri % 2 === 0 ? "#FAFAFA" : "#fff";
+            return /*#__PURE__*/React.createElement("div", { key: d.label + ri,
+              title: d.label + ": " + d.closed + " closed, " + d.open + " open",
+              style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: rowBg, borderLeft: "3px solid " + g.meta.color + "40" }
+            },
+              /* Area label */
+              /*#__PURE__*/React.createElement("div", { style: { width: 118, minWidth: 118, fontSize: 10, fontWeight: 600, color: C.text, lineHeight: 1.2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }, title: d.label }, d.label),
+              /* Bar track */
+              /*#__PURE__*/React.createElement("div", { style: { flex: 1, height: 16, borderRadius: 4, background: "#EEF2F6", overflow: "hidden", display: "flex" } },
+                closedPct > 0 && /*#__PURE__*/React.createElement("div", { style: { width: closedPct + "%", background: GREEN, transition: "width .4s" } }),
+                openPct   > 0 && /*#__PURE__*/React.createElement("div", { style: { width: openPct   + "%", background: AMBER, transition: "width .4s" } })
+              ),
+              /* Count badge */
+              /*#__PURE__*/React.createElement("div", { style: { minWidth: 44, textAlign: "right" } },
+                /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: C.text } }, d.tot),
+                d.open > 0
+                  ? /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, color: AMBER, fontWeight: 700, marginLeft: 3 } }, "(" + d.open + " \u25b2)")
+                  : /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, color: GREEN, marginLeft: 3 } }, "\u2713")
+              )
             );
           })
-        )
-      ),
-      /* Floor colour legend (which colour = which floor) */
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginTop: 8, fontSize: 9, color: C.slate } },
-        floors.filter(function(fl){ return barData.some(function(d){ return d.floor === fl; }); }).map(function(fl){
-          var m = FLOOR_META[fl] || { color: "#64748B" };
-          return /*#__PURE__*/React.createElement("span", { key: "fl" + fl },
-            /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: m.color, marginRight: 4, verticalAlign: "middle" } }), fl);
-        })
-      )
+        );
+      })
     );
   })()), /*#__PURE__*/React.createElement("div", {
     style: crd
