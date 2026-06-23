@@ -9398,7 +9398,7 @@ function AdminUsersView(_ref) {
   var _form   = React.useState({ email:"", name:"", company:"DayOne", role:"viewer", password:"" }),
     form = _form[0], setForm = _form[1];
 
-  var ROLES = ["dayone_admin","dayone_user","ms_user","pmc_manager","lm_gc","ritta_gc","viewer"];
+  var ROLES = ["dayone_admin","dayone_user","ms_user","pmc_manager","pmc_user","lm_gc","lm_user","ritta_gc","ritta_user","viewer"];
   var COMPANIES = ["DayOne","Microsoft","BV","LM","Ritta"];
 
   function load() {
@@ -9527,8 +9527,8 @@ function AdminAccessView(_ref) {
   var setView = _ref.setView;
   var _u = React.useState([]), users = _u[0], setUsers = _u[1];
   var _b = React.useState(true), busy = _b[0], setBusy = _b[1];
-  var ROLE_LABELS = { dayone_admin:"DayOne Admin", dayone_user:"DayOne User", ms_user:"Microsoft User", pmc_manager:"PMC Manager", lm_gc:"LM GC Manager", ritta_gc:"Ritta GC Manager", viewer:"Viewer" };
-  var ROLE_PERMS  = { dayone_admin:"Full access", dayone_user:"Create / Edit / Delete / Approve GC & PMC", ms_user:"Create / Edit / Delete", pmc_manager:"Create / Edit / Delete / Approve PMC", lm_gc:"Create / Approve GC", ritta_gc:"Create / Approve GC", viewer:"Read only" };
+  var ROLE_LABELS = { dayone_admin:"DayOne Admin", dayone_user:"DayOne User", ms_user:"Microsoft User", pmc_manager:"PMC Manager", pmc_user:"PMC User", lm_gc:"LM GC Manager", lm_user:"LM User", ritta_gc:"Ritta GC Manager", ritta_user:"Ritta User", viewer:"Viewer" };
+  var ROLE_PERMS  = { dayone_admin:"Full access", dayone_user:"Create / Edit / Delete / Approve GC & PMC", ms_user:"Create / Edit / Delete", pmc_manager:"Create / Edit / Delete / Approve PMC", pmc_user:"Create only", lm_gc:"Create / Approve GC", lm_user:"Create only", ritta_gc:"Create / Approve GC", ritta_user:"Create only", viewer:"Read only" };
 
   React.useEffect(function(){
     if (!supabaseClient) return;

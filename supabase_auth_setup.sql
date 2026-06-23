@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS ctpa_user_profiles (
 
 COMMENT ON TABLE ctpa_user_profiles IS 'EHS app user roles and company assignments';
 COMMENT ON COLUMN ctpa_user_profiles.role IS
-  'dayone_admin | dayone_user | ms_user | pmc_manager | lm_gc | ritta_gc | viewer';
+  'dayone_admin | dayone_user | ms_user | pmc_manager | pmc_user | lm_gc | lm_user | ritta_gc | ritta_user | viewer';
 COMMENT ON COLUMN ctpa_user_profiles.status IS 'active | disabled';
 
 -- ── 2. Approval Logs ────────────────────────────────────────
