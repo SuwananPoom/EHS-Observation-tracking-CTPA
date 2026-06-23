@@ -201,7 +201,7 @@ function authUserName(){
 function canCreate(){ var r = userRole(); return r !== "viewer"; }
 function canEdit(){
   var r = userRole();
-  return r === "dayone_admin" || r === "dayone_user" || r === "ms_user" || r === "pmc_manager";
+  return r === "dayone_admin" || r === "dayone_user" || r === "ms_user" || r === "pmc_manager" || r === "pmc_user";
 }
 function canDelete(){
   var r = userRole();
@@ -6335,7 +6335,7 @@ function App(_refApp) {
   },
     /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", lineHeight: 1.3 } },
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.text, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, authProfile ? (authProfile.name || authProfile.email || "User") : (ctpaUser() || "User")),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#00AA66", fontWeight: 600 } }, authProfile ? (authProfile.role || "").replace(/_/g, " ") : "")
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#00AA66", fontWeight: 600 } }, authProfile ? ({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[authProfile.role] || (authProfile.role || "").replace(/_/g," ") : "")
     ),
     /*#__PURE__*/React.createElement("button", {
       onClick: onLogout,
@@ -9466,7 +9466,7 @@ function AdminUsersView(_ref) {
       React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 } },
         React.createElement("div", null, React.createElement("label", { style: lSt }, "Role"),
           React.createElement("select", { style: iSt, value: form.role, onChange: function(e){ setForm(Object.assign({}, form, { role: e.target.value })); } },
-            ROLES.map(function(r){ return React.createElement("option", { key: r, value: r }, r.replace(/_/g," ")); })
+            ROLES.map(function(r){ return React.createElement("option", { key: r, value: r }, ({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[r] || r); })
           )
         ),
         React.createElement("div", null, React.createElement("label", { style: lSt }, "Company"),
@@ -9502,7 +9502,7 @@ function AdminUsersView(_ref) {
               ),
               React.createElement("td", { style: { padding: "9px 12px" } },
                 React.createElement("select", { value: u.role || "viewer", style: { fontSize: 11, border: "1px solid #E2E8F0", borderRadius: 6, padding: "3px 6px" }, onChange: function(e){ updateUser(u.id, { role: e.target.value }); } },
-                  ROLES.map(function(r){ return React.createElement("option", { key: r, value: r }, r.replace(/_/g," ")); })
+                  ROLES.map(function(r){ return React.createElement("option", { key: r, value: r }, ({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[r] || r); })
                 )
               ),
               React.createElement("td", { style: { padding: "9px 12px" } },
@@ -9528,7 +9528,7 @@ function AdminAccessView(_ref) {
   var _u = React.useState([]), users = _u[0], setUsers = _u[1];
   var _b = React.useState(true), busy = _b[0], setBusy = _b[1];
   var ROLE_LABELS = { dayone_admin:"DayOne Admin", dayone_user:"DayOne User", ms_user:"Microsoft User", pmc_manager:"PMC Manager", pmc_user:"PMC User", lm_gc:"LM GC Manager", lm_user:"LM User", ritta_gc:"Ritta GC Manager", ritta_user:"Ritta User", viewer:"Viewer" };
-  var ROLE_PERMS  = { dayone_admin:"Full access", dayone_user:"Create / Edit / Delete / Approve GC & PMC", ms_user:"Create / Edit / Delete", pmc_manager:"Create / Edit / Delete / Approve PMC", pmc_user:"Create only", lm_gc:"Create / Approve GC", lm_user:"Create only", ritta_gc:"Create / Approve GC", ritta_user:"Create only", viewer:"Read only" };
+  var ROLE_PERMS  = { dayone_admin:"Full access", dayone_user:"Create / Edit / Delete / Approve GC & PMC", ms_user:"Create / Edit / Delete", pmc_manager:"Create / Edit / Delete / Approve PMC", pmc_user:"Create / Edit", lm_gc:"Create / Approve GC", lm_user:"Create only", ritta_gc:"Create / Approve GC", ritta_user:"Create only", viewer:"Read only" };
 
   React.useEffect(function(){
     if (!supabaseClient) return;
@@ -9596,7 +9596,7 @@ function AdminApprovalHistoryView(_ref) {
               React.createElement("td", { style: { padding: "8px 12px" } }, React.createElement("span", { style: { display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: acBg, color: acColor } }, r.action)),
               React.createElement("td", { style: { padding: "8px 12px" } }, r.approved_by),
               React.createElement("td", { style: { padding: "8px 12px", color: "#475569" } }, r.company || "—"),
-              React.createElement("td", { style: { padding: "8px 12px", color: "#475569" } }, r.role ? r.role.replace(/_/g," ") : "—"),
+              React.createElement("td", { style: { padding: "8px 12px", color: "#475569" } }, r.role ? (({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[r.role] || r.role.replace(/_/g," ")) : "—"),
               React.createElement("td", { style: { padding: "8px 12px", color: "#64748B" } }, r.approved_at ? new Date(r.approved_at).toLocaleString() : "—"),
               React.createElement("td", { style: { padding: "8px 12px", color: "#475569", maxWidth: 180 } }, r.remarks || "—")
             );
