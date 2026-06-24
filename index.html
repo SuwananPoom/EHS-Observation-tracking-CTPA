@@ -5190,7 +5190,7 @@ function App(_refApp) {
     /* Auto-set approverRole based on authenticated user's role */
     if (canApproveGC() && !canApprovePMC()) return "CLIENT";   /* GC-only roles */
     if (canApprovePMC() && !canApproveGC()) return "LP";       /* PMC-only roles */
-    if (canApproveGC() && canApprovePMC())  return "CLIENT";   /* Admin/DayOne — default to GC, PMC button shown separately */
+    if (canApproveGC() && canApprovePMC())  return "BOTH";     /* Admin/DayOne — can approve both GC and PMC */
     try{ return sessionStorage.getItem("ctpa_apr_role")||""; }catch(e){ return ""; }
   })()),
     approverRole = _aprSt[0],
@@ -9176,7 +9176,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
         }, "\uD83D\uDCE4 Submit for Closure"));
     } else if (ap === "PENDING REVIEW") {
       /* Stage 1: GC Manager must approve. PMC sees waiting message. */
-      var isGC = approverRole === "CLIENT";
+      var isGC = approverRole === "CLIENT" || approverRole === "BOTH";
       var gcAlreadyDone = !!det.clientApprovedBy;
       controls = /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 9, flexWrap: "wrap" } },
         isGC && !gcAlreadyDone ? /*#__PURE__*/React.createElement("button", {
@@ -9201,7 +9201,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
       );
     } else if (ap === "PENDING PMC APPROVAL") {
       /* Stage 2: PMC Manager must approve. GC sees waiting message. */
-      var isPMC = approverRole === "LP";
+      var isPMC = approverRole === "LP" || approverRole === "BOTH";
       controls = /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 9, flexWrap: "wrap" } },
         isPMC ? /*#__PURE__*/React.createElement("button", {
           onClick: function onClick() {
