@@ -9235,9 +9235,25 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
         approver && !isPMC ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid, padding: "9px 0" } }, "GC approved \u2714 \u2014 awaiting PMC Manager review") : null
       );
     } else {
-      controls = /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 12, color: C.textMid }
-      }, "Approved Closed \u2014 GC Manager & PMC Manager have approved.");
+      /* APPROVED CLOSED \u2014 show Admin Override button if PMC sign-off is missing */
+      var pmcMissing = !det.lpApprovedBy;
+      controls = /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid } }, "Approved Closed \u2014 GC Manager & PMC Manager have approved."),
+        isAdmin() && pmcMissing ? /*#__PURE__*/React.createElement("button", {
+          onClick: function onClick() {
+            var c = window.prompt("PMC sign-off comment (optional):") || "";
+            var who = ctpaUser();
+            applyTo(det.id, {
+              lpApprovedBy: who,
+              lpApprovedDate: nowStamp(),
+              approvalComment: c || det.approvalComment || ""
+            });
+            logEvent("APPROVE_CLOSURE", det.id, "PMC sign-off (Admin Override) by " + who + (c ? " | Comment: " + c : ""));
+            toast$("PMC sign-off recorded \u2714");
+          },
+          style: { background: "#0A3D2B", color: "#fff", border: "none", borderRadius: 9, padding: "7px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer" }
+        }, "\u270f PMC Sign-off (Admin Override)") : null
+      );
     }
     return /*#__PURE__*/React.createElement("div", null, badge, meta, slots, controls);
   }()), /*#__PURE__*/React.createElement("div", {
