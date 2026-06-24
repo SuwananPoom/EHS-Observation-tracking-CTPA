@@ -5730,7 +5730,13 @@ function App(_refApp) {
     var who = ctpaUser() || roleLabel(approverRole);
     var patch = { approvalComment: comment || target.approvalComment || "" };
 
-    if (approverRole === "CLIENT") {
+    /* For BOTH (Admin/DayOne): act as GC when at PENDING REVIEW, act as PMC when at PENDING PMC APPROVAL */
+    var effectiveRole = approverRole;
+    if (approverRole === "BOTH") {
+      effectiveRole = (ap === "PENDING PMC APPROVAL") ? "LP" : "CLIENT";
+    }
+
+    if (effectiveRole === "CLIENT") {
       /* GC Manager: only acts on PENDING REVIEW */
       if (ap !== "PENDING REVIEW") {
         toast$("GC Manager can only approve at Pending Verify stage", "err"); return;
@@ -5744,7 +5750,7 @@ function App(_refApp) {
       toast$("GC Manager approved ✔ — status: Pending PMC Approval");
 
     } else {
-      /* PMC Manager: only acts on PENDING PMC APPROVAL */
+      /* PMC Manager (or BOTH acting as PMC): only acts on PENDING PMC APPROVAL */
       if (ap !== "PENDING PMC APPROVAL") {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
@@ -5765,10 +5771,15 @@ function App(_refApp) {
   var rejectClosure = function rejectClosure(id, comment) {
     if (!approver) { toast$("Approver code required", "err"); return; }
     var who = ctpaUser() || roleLabel(approverRole);
+    var target2 = obs.find(function(o){ return o.id === id; });
+    var ap2 = target2 ? apOf(target2) : "";
+    var rejectLabel = approverRole === "BOTH"
+      ? (ap2 === "PENDING PMC APPROVAL" ? "PMC Manager" : "GC Manager")
+      : roleLabel(approverRole);
     applyTo(id, {
       approvalStatus: "REJECTED",
       status: "OPEN",
-      rejectedBy: who + " (" + roleLabel(approverRole) + ")",
+      rejectedBy: who + " (" + rejectLabel + ")",
       rejectedDate: nowStamp(),
       approvalComment: comment || "",
       closed: "",
@@ -5776,7 +5787,7 @@ function App(_refApp) {
       clientApprovedBy: "", clientApprovedDate: "",
       lpApprovedBy: "", lpApprovedDate: ""
     });
-    logEvent("REJECT_CLOSURE", id, "Rejected by " + who + " (" + roleLabel(approverRole) + ")" + (comment ? " | Reason: " + comment : ""));
+    logEvent("REJECT_CLOSURE", id, "Rejected by " + who + " (" + rejectLabel + ")" + (comment ? " | Reason: " + comment : ""));
     toast$("Closure rejected");
   };
   /* Write a Storage URL back into a photo, then persist so the URL syncs cross-device.
