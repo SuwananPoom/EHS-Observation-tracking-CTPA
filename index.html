@@ -9673,12 +9673,13 @@ function AdminImportView(_ref) {
   }
 
   var C2 = { green: "#00AA66" };
-  /* Scan for missing photo references */
+  /* Scan for missing photo references — use same logic as syncPhotos:
+     missing = has metadata (_hasPhoto) but no url AND no src with length > 32 */
   var missingPhotoRefs = [];
   obs.forEach(function(o){
     ["pb","pa"].forEach(function(slot){
       (o[slot]||[]).forEach(function(p, i){
-        if(p && !p.url && !p.src) missingPhotoRefs.push({ obsId: o.id, slot: slot, idx: i, name: p.name || "photo" });
+        if(p && !p.url && !(p.src && p.src.length > 32)) missingPhotoRefs.push({ obsId: o.id, slot: slot, idx: i, name: p.name || "photo" });
       });
     });
   });
@@ -9702,30 +9703,33 @@ function AdminImportView(_ref) {
 
   return React.createElement(AdminPage, { title: "Import", subtitle: "Import observation batches from site walks. Duplicate guard prevents re-importing the same week.", setView: setView },
     React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
-      /* Missing photo references panel */
-      missingPhotoRefs.length > 0 && React.createElement("div", { style: { background: "#FEF2F2", border: "1.5px solid #EF4444", borderRadius: 12, padding: 20 } },
-        React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "#B91C1C", marginBottom: 8 } }, "⚠ " + missingPhotoRefs.length + " Missing Photo Reference(s)"),
-        React.createElement("div", { style: { fontSize: 12, color: "#7F1D1D", marginBottom: 12 } }, "These photos have metadata but no image data on any device or cloud. They cannot be recovered unless opened on the original device."),
-        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 } },
-          React.createElement("thead", null, React.createElement("tr", null,
-            ["OBS ID","Slot","Index","Photo Name"].map(function(h){ return React.createElement("th", { key: h, style: { textAlign: "left", padding: "4px 8px", background: "#B91C1C", color: "#fff" } }, h); })
-          )),
-          React.createElement("tbody", null, missingPhotoRefs.map(function(r, i){
-            return React.createElement("tr", { key: i, style: { borderBottom: "1px solid #FECACA" } },
-              React.createElement("td", { style: { padding: "4px 8px", fontWeight: 700 } }, r.obsId),
-              React.createElement("td", { style: { padding: "4px 8px" } }, r.slot === "pb" ? "Before" : "After"),
-              React.createElement("td", { style: { padding: "4px 8px" } }, "#" + (r.idx + 1)),
-              React.createElement("td", { style: { padding: "4px 8px", color: "#64748B" } }, r.name)
-            );
-          }))
+      /* Photo repair panel — always visible to admin */
+      React.createElement("div", { style: { background: missingPhotoRefs.length > 0 ? "#FEF2F2" : "#F0FDF4", border: "1.5px solid " + (missingPhotoRefs.length > 0 ? "#EF4444" : "#86EFAC"), borderRadius: 12, padding: 20 } },
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: missingPhotoRefs.length > 0 ? "#B91C1C" : "#15803D", marginBottom: 8 } },
+          missingPhotoRefs.length > 0 ? ("⚠ " + missingPhotoRefs.length + " Missing Photo Reference(s) Detected") : "✅ No Missing Photo References"
         ),
-        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
-          React.createElement("button", {
-            onClick: clearMissingPhotos,
-            style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }
-          }, "🗑 Clear Broken References"),
-          React.createElement("span", { style: { fontSize: 11, color: "#7F1D1D", alignSelf: "center" } }, "Or open the original device, tap 📷 Sync Photos to recover")
-        )
+        missingPhotoRefs.length > 0
+          ? React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 12, color: "#7F1D1D", marginBottom: 12 } }, "These photos have metadata but no image data on any device or cloud. Cannot be recovered — remove the broken references below."),
+              React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 } },
+                React.createElement("thead", null, React.createElement("tr", null,
+                  ["OBS ID","Photo Slot","Index","Photo Name"].map(function(h){ return React.createElement("th", { key: h, style: { textAlign: "left", padding: "4px 8px", background: "#B91C1C", color: "#fff" } }, h); })
+                )),
+                React.createElement("tbody", null, missingPhotoRefs.map(function(r, i){
+                  return React.createElement("tr", { key: i, style: { borderBottom: "1px solid #FECACA", background: i%2===0?"#fff":"#FEF2F2" } },
+                    React.createElement("td", { style: { padding: "6px 8px", fontWeight: 700, color: "#B91C1C" } }, r.obsId),
+                    React.createElement("td", { style: { padding: "6px 8px" } }, r.slot === "pb" ? "Before" : "After"),
+                    React.createElement("td", { style: { padding: "6px 8px" } }, "#" + (r.idx + 1)),
+                    React.createElement("td", { style: { padding: "6px 8px", color: "#64748B" } }, r.name || "—")
+                  );
+                }))
+              ),
+              React.createElement("button", {
+                onClick: clearMissingPhotos,
+                style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: "pointer" }
+              }, "🗑 Clear " + missingPhotoRefs.length + " Broken Reference(s)")
+            )
+          : React.createElement("div", { style: { fontSize: 12, color: "#15803D" } }, "All photo references have valid image data in cloud storage or local cache.")
       ),
       BATCHES.map(function(batch) {
         var hasWeek = obs.some(function(o){ return o.week === batch.week; });
