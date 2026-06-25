@@ -5376,13 +5376,10 @@ function App(_refApp) {
     form = _useState42[0],
     setForm = _useState42[1];
   var toast$ = function toast$(msg, type) {
-    setT({
-      msg: msg,
-      type: type || "ok"
-    });
-    setTimeout(function () {
-      return setT(null);
-    }, 3000);
+    var t = type || "ok";
+    setT({ msg: msg, type: t });
+    /* Error toasts stay longer so user can read the OBS IDs */
+    setTimeout(function () { return setT(null); }, t === "err" ? 12000 : 3000);
   };
   var sv = useCallback(function (d) {
     __ctpaLastWrite = Date.now();
@@ -5857,7 +5854,7 @@ function App(_refApp) {
       ps(filled);   /* one batched state update + cloud save (stripPhotos keeps url) */
       setPhotoSyncBusy(false);
       var msg = "📷 Photo sync: " + uploaded + " uploaded, " + already + " already in cloud";
-      if(missing) msg += ", " + missing + " missing (image only on the original device — open it there and tap 📷 Sync Photos)";
+      if(missing) msg += ", " + missing + " missing (image only on the original device — open it there and tap 📷 Sync Photos): " + missingList.join(", ");
       if(failed) msg += ", " + failed + " upload failed — " + (__lastStorageErr || "see console for details");
       toast$(msg, (failed || missing) ? "err" : "ok");
       if(missing) console.warn("[CTPA] Photos needing the original device:", missingList.join(", "));
@@ -9676,8 +9673,60 @@ function AdminImportView(_ref) {
   }
 
   var C2 = { green: "#00AA66" };
+  /* Scan for missing photo references */
+  var missingPhotoRefs = [];
+  obs.forEach(function(o){
+    ["pb","pa"].forEach(function(slot){
+      (o[slot]||[]).forEach(function(p, i){
+        if(p && !p.url && !p.src) missingPhotoRefs.push({ obsId: o.id, slot: slot, idx: i, name: p.name || "photo" });
+      });
+    });
+  });
+
+  function clearMissingPhotos() {
+    if(!window.confirm("Remove " + missingPhotoRefs.length + " broken photo reference(s) where no image data exists?\n\nThis will delete the photo placeholder from these observations:\n" + missingPhotoRefs.map(function(r){ return r.obsId + " (" + (r.slot==="pb"?"Before":"After") + " #" + (r.idx+1) + ")"; }).join("\n"))) return;
+    var fixed = obs.map(function(o){
+      var o2 = Object.assign({}, o);
+      o2.pb = (o.pb||[]).filter(function(p){ return p && (p.url || p.src); });
+      o2.pa = (o.pa||[]).filter(function(p){ return p && (p.url || p.src); });
+      if(o2.pb.length === 0 && (o.pb||[]).length > 0) delete o2.pb;
+      if(o2.pa.length === 0 && (o.pa||[]).length > 0) delete o2.pa;
+      return o2;
+    });
+    setObs(fixed);
+    addLog("Cleared " + missingPhotoRefs.length + " broken photo reference(s)", "ok");
+    missingPhotoRefs.forEach(function(r){ addLog("  Removed: " + r.obsId + " " + (r.slot==="pb"?"Before":"After") + " #" + (r.idx+1), "warn"); });
+    /* Save to cloud */
+    cloudMergeSave(fixed, []).then(function(res){ addLog(res.ok ? "✅ Saved to Supabase" : "❌ Cloud save failed", res.ok ? "ok" : "err"); });
+  }
+
   return React.createElement(AdminPage, { title: "Import", subtitle: "Import observation batches from site walks. Duplicate guard prevents re-importing the same week.", setView: setView },
     React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+      /* Missing photo references panel */
+      missingPhotoRefs.length > 0 && React.createElement("div", { style: { background: "#FEF2F2", border: "1.5px solid #EF4444", borderRadius: 12, padding: 20 } },
+        React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "#B91C1C", marginBottom: 8 } }, "⚠ " + missingPhotoRefs.length + " Missing Photo Reference(s)"),
+        React.createElement("div", { style: { fontSize: 12, color: "#7F1D1D", marginBottom: 12 } }, "These photos have metadata but no image data on any device or cloud. They cannot be recovered unless opened on the original device."),
+        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 12 } },
+          React.createElement("thead", null, React.createElement("tr", null,
+            ["OBS ID","Slot","Index","Photo Name"].map(function(h){ return React.createElement("th", { key: h, style: { textAlign: "left", padding: "4px 8px", background: "#B91C1C", color: "#fff" } }, h); })
+          )),
+          React.createElement("tbody", null, missingPhotoRefs.map(function(r, i){
+            return React.createElement("tr", { key: i, style: { borderBottom: "1px solid #FECACA" } },
+              React.createElement("td", { style: { padding: "4px 8px", fontWeight: 700 } }, r.obsId),
+              React.createElement("td", { style: { padding: "4px 8px" } }, r.slot === "pb" ? "Before" : "After"),
+              React.createElement("td", { style: { padding: "4px 8px" } }, "#" + (r.idx + 1)),
+              React.createElement("td", { style: { padding: "4px 8px", color: "#64748B" } }, r.name)
+            );
+          }))
+        ),
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+          React.createElement("button", {
+            onClick: clearMissingPhotos,
+            style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }
+          }, "🗑 Clear Broken References"),
+          React.createElement("span", { style: { fontSize: 11, color: "#7F1D1D", alignSelf: "center" } }, "Or open the original device, tap 📷 Sync Photos to recover")
+        )
+      ),
       BATCHES.map(function(batch) {
         var hasWeek = obs.some(function(o){ return o.week === batch.week; });
         return React.createElement("div", { key: batch.week, style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
