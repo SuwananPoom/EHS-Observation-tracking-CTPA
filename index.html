@@ -3459,7 +3459,13 @@ function runObsWorkflowTest(currentObs) {
     return step("7. Cleanup — remove test observation from cloud", {
       table: "ctpa_state", column: "data", operation: "PATCH (remove test obs)"
     }, function() {
+      if (!results._newData || results._newData.length === 0) {
+        throw new Error("SAFETY ABORT: results._newData is empty — refusing to PATCH Supabase with empty data array to prevent data loss. Manually delete test obs id=" + testId);
+      }
       var cleanData = stripPhotos(results._newData.filter(function(o){ return o.id !== testId; }));
+      if (cleanData.length === 0 && results._newData.length > 1) {
+        throw new Error("SAFETY ABORT: cleanData is unexpectedly empty after filter — refusing to wipe data. Manually delete test obs id=" + testId);
+      }
       var cleanPayload = JSON.stringify({ data: cleanData });
       return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
         method: "PATCH",

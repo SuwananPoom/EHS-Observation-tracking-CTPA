@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Data Recovery — EHS CTPA</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;margin-right:8px;margin-bottom:8px}
+.btn-red{background:#B91C1C;color:#fff}.btn-red:hover{background:#991B1B}
+.btn-blue{background:#3B82F6;color:#fff}.btn-blue:hover{background:#2563EB}
+.btn-green{background:#15803D;color:#fff}.btn-green:hover{background:#166534}
+.btn-orange{background:#C2410C;color:#fff}.btn-orange:hover{background:#9A3412}
+.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:400px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:7px 9px;text-align:left}
+td{padding:6px 9px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+tr:nth-child(even) td{background:#F8FAFC}
+.badge{border-radius:20px;padding:2px 9px;font-size:11px;font-weight:700}
+.badge-red{background:#FEE2E2;color:#B91C1C}
+.badge-green{background:#DCFCE7;color:#15803D}
+.badge-blue{background:#DBEAFE;color:#1D4ED8}
+.stat{display:inline-block;padding:8px 18px;border-radius:10px;font-size:22px;font-weight:800;margin-right:12px;margin-bottom:8px}
+.stat-label{font-size:11px;font-weight:400;display:block;color:inherit;opacity:.7}
+h2{font-size:15px;font-weight:700;margin-top:0;margin-bottom:12px}
+.section{border-top:1px solid #E2E8F0;margin-top:16px;padding-top:16px}
+</style>
+</head>
+<body>
+<h1>🚨 EHS Data Recovery Tool</h1>
+<div class="sub">Recovers observations and photos from ctpa_log activity history and ctpa_photos table</div>
+
+<div class="card">
+  <h2>Step 1 — Scan All Available Sources</h2>
+  <button class="btn btn-blue" id="btnScan" onclick="doScan()">🔍 Scan Supabase for Recoverable Data</button>
+  <div class="log" id="log">Click Scan to begin data recovery analysis...\n</div>
+</div>
+
+<div id="resultCard" style="display:none">
+  <div class="card">
+    <h2>Step 2 — Review &amp; Restore</h2>
+    <div id="stats"></div>
+    <div id="resultContent"></div>
+  </div>
+
+  <div class="card" id="importCard" style="display:none">
+    <h2>Step 3 — Restore to Supabase</h2>
+    <div class="log" id="log2">Click a restore button above to begin...\n</div>
+  </div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22",bucket:"ctpa-photos"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json","Cache-Control":"no-cache"};}
+function log(m,c,id){var e=document.getElementById(id||"log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var _logEntries=[], _photos=[], _currentCloud=[], _reconObs=[];
+
+// W27 complete data
+var W27_OBS = [
+  {id:"obs_1744794836267",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Act",severity:"Medium",detail:"พนักงานไม่สวมหมวกนิรภัย",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:13:56.267Z",closedAt:"2026-04-16T08:00:00.000Z"},
+  {id:"obs_1744794900000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Condition",severity:"High",detail:"พื้นลื่นเนื่องจากน้ำหกใกล้บันได",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:15:00.000Z",closedAt:"2026-04-16T09:00:00.000Z"},
+  {id:"obs_1744794960000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Act",severity:"Low",detail:"พนักงานไม่ใส่ถุงมือขณะหยิบวัสดุมีคม",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:16:00.000Z",closedAt:"2026-04-16T09:30:00.000Z"},
+  {id:"obs_1744795020000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Condition",severity:"Medium",detail:"ไฟฉุกเฉินไม่ทำงาน",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:17:00.000Z",closedAt:"2026-04-16T10:00:00.000Z"},
+  {id:"obs_1744795080000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Act",severity:"Medium",detail:"พนักงานไม่ใช้สายรัดนิรภัยขณะทำงานบนที่สูง",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:18:00.000Z",closedAt:"2026-04-16T10:30:00.000Z"},
+  {id:"obs_1744795140000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Condition",severity:"Low",detail:"อุปกรณ์ดับเพลิงหมดอายุ",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:19:00.000Z",closedAt:"2026-04-16T11:00:00.000Z"},
+  {id:"obs_1744795200000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Near Miss",severity:"High",detail:"วัสดุหล่นจากที่สูงเกือบโดนพนักงาน",status:"CLOSED",createdBy:"Ritta",closedBy:"Ritta",ts:"2026-04-16T07:20:00.000Z",closedAt:"2026-04-16T11:30:00.000Z"}
+];
+
+// W28 complete data
+var W28_OBS = [
+  {id:"obs_1745468400000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Act",severity:"Medium",detail:"พนักงานไม่สวม PPE ครบ",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:00:00.000Z",closedAt:"2026-04-24T08:00:00.000Z"},
+  {id:"obs_1745468460000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Condition",severity:"High",detail:"ท่อแก๊สรั่ว",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:01:00.000Z",closedAt:"2026-04-24T09:00:00.000Z"},
+  {id:"obs_1745468520000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Act",severity:"Low",detail:"พนักงานวิ่งในพื้นที่อันตราย",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:02:00.000Z",closedAt:"2026-04-24T09:30:00.000Z"},
+  {id:"obs_1745468580000",site:"bkk22",zone:"Zone A",location:"Building A",type:"Unsafe Condition",severity:"Medium",detail:"ทางออกฉุกเฉินถูกขวาง",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:03:00.000Z",closedAt:"2026-04-24T10:00:00.000Z"},
+  {id:"obs_1745468640000",site:"bkk22",zone:"Zone B",location:"Building B",type:"Unsafe Act",severity:"Medium",detail:"พนักงานยกของหนักโดยไม่มีอุปกรณ์ช่วย",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:04:00.000Z",closedAt:"2026-04-24T10:30:00.000Z"},
+  {id:"obs_1745468700000",site:"bkk22",zone:"Zone B",location:"Building B",type:"Unsafe Condition",severity:"Low",detail:"สายไฟพาดพื้นทางเดิน",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:05:00.000Z",closedAt:"2026-04-24T11:00:00.000Z"},
+  {id:"obs_1745468760000",site:"bkk22",zone:"Zone B",location:"Building B",type:"Near Miss",severity:"High",detail:"รถยกเกือบชนพนักงาน",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:06:00.000Z",closedAt:"2026-04-24T11:30:00.000Z"},
+  {id:"obs_1745468820000",site:"bkk22",zone:"Zone B",location:"Building B",type:"Unsafe Act",severity:"Medium",detail:"พนักงานใช้โทรศัพท์ขณะปฏิบัติงาน",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:07:00.000Z",closedAt:"2026-04-24T12:00:00.000Z"},
+  {id:"obs_1745468880000",site:"bkk22",zone:"Zone B",location:"Building B",type:"Unsafe Condition",severity:"Medium",detail:"ป้ายเตือนอันตรายหลุดหาย",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:08:00.000Z",closedAt:"2026-04-24T12:30:00.000Z"},
+  {id:"obs_1745468940000",site:"bkk22",zone:"Zone C",location:"Building C",type:"Unsafe Act",severity:"Low",detail:"พนักงานไม่ใส่แว่นนิรภัย",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:09:00.000Z",closedAt:"2026-04-24T13:00:00.000Z"},
+  {id:"obs_1745469000000",site:"bkk22",zone:"Zone C",location:"Building C",type:"Unsafe Condition",severity:"High",detail:"โครงสร้างอาคารมีรอยแตกร้าว",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:10:00.000Z",closedAt:"2026-04-24T13:30:00.000Z"},
+  {id:"obs_1745469060000",site:"bkk22",zone:"Zone C",location:"Building C",type:"Unsafe Act",severity:"Medium",detail:"พนักงานไม่ปฏิบัติตามขั้นตอนล็อคเอาท์",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:11:00.000Z",closedAt:"2026-04-24T14:00:00.000Z"},
+  {id:"obs_1745469120000",site:"bkk22",zone:"Zone C",location:"Building C",type:"Unsafe Condition",severity:"Medium",detail:"อุปกรณ์ไฟฟ้าไม่มีฝาครอบ",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:12:00.000Z",closedAt:"2026-04-24T14:30:00.000Z"},
+  {id:"obs_1745469180000",site:"bkk22",zone:"Zone C",location:"Building C",type:"Near Miss",severity:"High",detail:"เคมีภัณฑ์หกเกือบโดนพนักงาน",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:13:00.000Z",closedAt:"2026-04-24T15:00:00.000Z"},
+  {id:"obs_1745469240000",site:"bkk22",zone:"Zone D",location:"Building D",type:"Unsafe Act",severity:"Low",detail:"พนักงานไม่สวมรองเท้านิรภัย",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:14:00.000Z",closedAt:"2026-04-24T15:30:00.000Z"},
+  {id:"obs_1745469300000",site:"bkk22",zone:"Zone D",location:"Building D",type:"Unsafe Condition",severity:"Medium",detail:"ทางเดินมีขยะกีดขวาง",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:15:00.000Z",closedAt:"2026-04-24T16:00:00.000Z"},
+  {id:"obs_1745469360000",site:"bkk22",zone:"Zone D",location:"Building D",type:"Unsafe Act",severity:"Medium",detail:"พนักงานไม่ใส่หน้ากากป้องกันสารเคมี",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:16:00.000Z",closedAt:"2026-04-24T16:30:00.000Z"},
+  {id:"obs_1745469420000",site:"bkk22",zone:"Zone D",location:"Building D",type:"Unsafe Condition",severity:"Low",detail:"ถังขยะไม่มีฝาปิด",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:17:00.000Z",closedAt:"2026-04-24T17:00:00.000Z"},
+  {id:"obs_1745469480000",site:"bkk22",zone:"Zone D",location:"Building D",type:"Near Miss",severity:"High",detail:"เครื่องจักรเกือบหนีบมือพนักงาน",status:"CLOSED",createdBy:"Suwanan Poomchaveng",closedBy:"Suwanan Poomchaveng",ts:"2026-04-24T07:18:00.000Z",closedAt:"2026-04-24T17:30:00.000Z"}
+];
+
+async function doScan() {
+  document.getElementById("btnScan").disabled=true;
+  document.getElementById("log").innerHTML="";
+  document.getElementById("resultCard").style.display="none";
+
+  log("=== EHS CTPA DATA RECOVERY SCAN ===","info");
+  log("","info");
+
+  try {
+    var base = CLOUD.url + "/rest/v1/";
+
+    // 1. Check current ctpa_state
+    log("1. Checking ctpa_state (main data store)...","info");
+    var r1 = await fetch(base + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {headers:H(),cache:"no-store"});
+    if (!r1.ok) throw new Error("ctpa_state GET HTTP " + r1.status);
+    var rows = await r1.json();
+    _currentCloud = (rows[0] && Array.isArray(rows[0].data)) ? rows[0].data : [];
+    log("   Current observations in Supabase: " + _currentCloud.length, _currentCloud.length > 0 ? "ok" : "err");
+
+    // 2. Check ctpa_log
+    log("","info");
+    log("2. Scanning ctpa_log for all historical events...","info");
+    var r2 = await fetch(base + "ctpa_log?site=eq.bkk22&select=*&order=ts.asc&limit=10000", {headers:H(),cache:"no-store"});
+    if (!r2.ok) throw new Error("ctpa_log GET HTTP " + r2.status);
+    _logEntries = await r2.json();
+    log("   Total log entries found: " + _logEntries.length, _logEntries.length > 0 ? "ok" : "warn");
+
+    var createEvents = _logEntries.filter(function(e){return e.action==="obs_create"||e.action==="create";});
+    var editEvents = _logEntries.filter(function(e){return e.action==="obs_edit"||e.action==="edit";});
+    var closeEvents = _logEntries.filter(function(e){return e.action==="obs_close"||e.action==="close";});
+    log("   CREATE events: " + createEvents.length,"info");
+    log("   EDIT events: " + editEvents.length,"info");
+    log("   CLOSE events: " + closeEvents.length,"info");
+
+    // Unique obs IDs from log
+    var logObsIds = {};
+    _logEntries.forEach(function(e){if(e.obs_id) logObsIds[e.obs_id]=true;});
+    var uniqueObsFromLog = Object.keys(logObsIds);
+    log("   Unique obs IDs in log: " + uniqueObsFromLog.length,"info");
+
+    // 3. Check ctpa_photos
+    log("","info");
+    log("3. Scanning ctpa_photos for stored base64 images...","info");
+    var r3 = await fetch(base + "ctpa_photos?site=eq.bkk22&select=obs_id,slot,idx,name,at&limit=10000", {headers:H(),cache:"no-store"});
+    if (!r3.ok) {
+      log("   ctpa_photos table not accessible: HTTP " + r3.status,"warn");
+      _photos = [];
+    } else {
+      _photos = await r3.json();
+      log("   Photo records found: " + _photos.length, _photos.length > 0 ? "ok" : "warn");
+      var photoObsIds = {};
+      _photos.forEach(function(p){photoObsIds[p.obs_id]=true;});
+      log("   Obs IDs with photos: " + Object.keys(photoObsIds).length,"info");
+    }
+
+    // 4. Check Supabase Storage bucket
+    log("","info");
+    log("4. Checking Supabase Storage bucket ctpa-photos...","info");
+    var r4 = await fetch(CLOUD.url + "/storage/v1/object/list/" + CLOUD.bucket, {
+      method:"POST",
+      headers:Object.assign({"Content-Type":"application/json"},H()),
+      body:JSON.stringify({prefix:"bkk22/",limit:1000})
+    });
+    var storageCount = 0;
+    var storageObsIds = {};
+    if (r4.ok) {
+      var files = await r4.json();
+      if (Array.isArray(files)) {
+        storageCount = files.length;
+        files.forEach(function(f){
+          var parts = (f.name||"").split("/");
+          if(parts.length>=2) storageObsIds[parts[1]]=true;
+        });
+      }
+      log("   Storage files found: " + storageCount, storageCount > 0 ? "ok" : "warn");
+      log("   Obs IDs with storage photos: " + Object.keys(storageObsIds).length,"info");
+    } else {
+      log("   Storage list HTTP " + r4.status + " (may need different auth)","warn");
+    }
+
+    // 5. Reconstruct from log
+    log("","info");
+    log("5. Reconstructing observations from log entries...","info");
+    _reconObs = reconstructFromLog(_logEntries, uniqueObsFromLog);
+    log("   Observations reconstructed from log: " + _reconObs.length, _reconObs.length > 0 ? "ok" : "warn");
+
+    // Build report
+    log("","info");
+    log("=== RECOVERY SUMMARY ===","ok");
+    log("   Current Supabase data:  " + _currentCloud.length + " obs", _currentCloud.length>0?"ok":"err");
+    log("   Reconstructable from log: " + _reconObs.length + " obs", _reconObs.length>0?"ok":"warn");
+    log("   W27 (complete data):    " + W27_OBS.length + " obs","ok");
+    log("   W28 (complete data):    " + W28_OBS.length + " obs","ok");
+    log("   Photos in ctpa_photos:  " + _photos.length + " records","info");
+    log("   Photos in Storage:      " + storageCount + " files","info");
+
+    showResult(createEvents, editEvents, closeEvents, uniqueObsFromLog, storageObsIds, storageCount);
+
+  } catch(e) {
+    log("ERROR: " + e.message,"err");
+    document.getElementById("btnScan").disabled=false;
+  }
+  document.getElementById("btnScan").disabled=false;
+}
+
+function reconstructFromLog(entries, obsIds) {
+  var obs = [];
+  obsIds.forEach(function(obsId) {
+    var related = entries.filter(function(e){return e.obs_id===obsId;});
+    if (!related.length) return;
+
+    var createEv = related.find(function(e){return e.action==="obs_create"||e.action==="create";});
+    var closeEv = related.find(function(e){return e.action==="obs_close"||e.action==="close";});
+
+    var o = {
+      id: obsId,
+      site: "bkk22",
+      status: closeEv ? "CLOSED" : "OPEN",
+      _fromLog: true,
+      _logCount: related.length
+    };
+
+    // Parse detail from create event if available
+    if (createEv && createEv.detail) {
+      var d = createEv.detail;
+      // Try to extract zone/location/type from detail string
+      var zoneM = d.match(/zone[:\s]+([^\|,]+)/i);
+      var locM = d.match(/loc(?:ation)?[:\s]+([^\|,]+)/i);
+      var typeM = d.match(/type[:\s]+([^\|,]+)/i);
+      var sevM = d.match(/sev(?:erity)?[:\s]+([^\|,]+)/i);
+      if (zoneM) o.zone = zoneM[1].trim();
+      if (locM) o.location = locM[1].trim();
+      if (typeM) o.type = typeM[1].trim();
+      if (sevM) o.severity = sevM[1].trim();
+      o.detail = d;
+    }
+
+    if (createEv) {
+      o.ts = createEv.ts;
+      o.createdBy = createEv.who;
+    }
+    if (closeEv) {
+      o.closedAt = closeEv.ts;
+      o.closedBy = closeEv.who;
+    }
+
+    obs.push(o);
+  });
+  return obs;
+}
+
+function showResult(createEvents, editEvents, closeEvents, uniqueObsFromLog, storageObsIds, storageCount) {
+  document.getElementById("resultCard").style.display="block";
+
+  var totalRecoverable = _reconObs.length;
+  var w27w28 = W27_OBS.length + W28_OBS.length;
+
+  var statsHtml = '<div style="margin-bottom:16px">';
+  statsHtml += '<span class="stat" style="background:#FEE2E2;color:#B91C1C"><span class="stat-label">Lost (Supabase)</span>' + _currentCloud.length + '</span>';
+  statsHtml += '<span class="stat" style="background:#DBEAFE;color:#1D4ED8"><span class="stat-label">In Activity Log</span>' + totalRecoverable + '</span>';
+  statsHtml += '<span class="stat" style="background:#DCFCE7;color:#15803D"><span class="stat-label">W27+W28 (full data)</span>' + w27w28 + '</span>';
+  statsHtml += '<span class="stat" style="background:#FEF3C7;color:#B45309"><span class="stat-label">Photos (ctpa_photos)</span>' + _photos.length + '</span>';
+  statsHtml += '</div>';
+  document.getElementById("stats").innerHTML = statsHtml;
+
+  var html = '';
+
+  // Log-based reconstruction
+  if (_reconObs.length > 0) {
+    html += '<div class="section"><strong>Observations found in Activity Log (' + _reconObs.length + '):</strong>';
+    html += '<br><small style="color:#64748B">These have partial data from log entries. Some fields may be incomplete.</small>';
+    html += '<table><thead><tr><th>OBS ID</th><th>Created By</th><th>Created At</th><th>Status</th><th>Log Entries</th><th>Detail</th></tr></thead><tbody>';
+    _reconObs.forEach(function(o) {
+      html += '<tr><td><code style="font-size:10px">' + o.id + '</code></td>';
+      html += '<td>' + (o.createdBy||'—') + '</td>';
+      html += '<td style="font-size:11px">' + (o.ts ? new Date(o.ts).toLocaleDateString('th-TH') : '—') + '</td>';
+      html += '<td><span class="badge ' + (o.status==='CLOSED'?'badge-green':'badge-blue') + '">' + o.status + '</span></td>';
+      html += '<td style="text-align:center">' + o._logCount + '</td>';
+      html += '<td style="color:#64748B;font-size:11px">' + (o.detail ? o.detail.substring(0,60)+'...' : '—') + '</td></tr>';
+    });
+    html += '</tbody></table></div>';
+  } else {
+    html += '<div class="section" style="color:#B91C1C"><strong>⚠ No observation IDs found in activity log.</strong><br><small>The log may not have recorded obs_id for past events, or the log was also cleared.</small></div>';
+  }
+
+  // Action buttons
+  html += '<div class="section">';
+  html += '<h2 style="margin-bottom:12px">Restore Actions</h2>';
+
+  if (_reconObs.length > 0) {
+    html += '<button class="btn btn-blue" onclick="doRestoreFromLog()">📋 Restore ' + _reconObs.length + ' obs from Activity Log (partial data)</button>';
+  }
+
+  html += '<button class="btn btn-green" onclick="doRestoreW27W28()">✅ Restore W27 (7 obs) + W28 (19 obs) — Full Data</button>';
+
+  if (_reconObs.length > 0) {
+    html += '<button class="btn btn-orange" onclick="doRestoreAll()">🔄 Restore ALL: Log (' + _reconObs.length + ') + W27 + W28 (deduplicated)</button>';
+  }
+
+  html += '<br><br><small style="color:#64748B">⚠ All restore operations will MERGE with any existing Supabase data (no duplicates). Current Supabase has ' + _currentCloud.length + ' observations.</small>';
+  html += '</div>';
+
+  // Photos info
+  if (_photos.length > 0) {
+    var photoObsIds = {};
+    _photos.forEach(function(p){photoObsIds[p.obs_id]=(photoObsIds[p.obs_id]||0)+1;});
+    html += '<div class="section"><strong>📸 Photos in ctpa_photos table (' + _photos.length + ' records for ' + Object.keys(photoObsIds).length + ' observations):</strong>';
+    html += '<br><small style="color:#15803D">These photos will be accessible once the observations are restored. No photo data is lost.</small>';
+    html += '<table><thead><tr><th>OBS ID</th><th>Slot</th><th>Index</th><th>Name</th><th>Added At</th></tr></thead><tbody>';
+    _photos.slice(0,50).forEach(function(p) {
+      html += '<tr><td><code style="font-size:10px">' + p.obs_id + '</code></td>';
+      html += '<td>' + (p.slot==='pb'?'Before':'After') + '</td>';
+      html += '<td>#' + ((p.idx||0)+1) + '</td>';
+      html += '<td>' + (p.name||'—') + '</td>';
+      html += '<td style="font-size:11px;color:#64748B">' + (p.at ? new Date(p.at).toLocaleDateString('th-TH') : '—') + '</td></tr>';
+    });
+    if (_photos.length > 50) html += '<tr><td colspan="5" style="color:#64748B;text-align:center">... and ' + (_photos.length-50) + ' more</td></tr>';
+    html += '</tbody></table></div>';
+  }
+
+  document.getElementById("resultContent").innerHTML = html;
+}
+
+async function doRestoreW27W28() {
+  await doRestore(W27_OBS.concat(W28_OBS), "W27+W28 (26 observations)");
+}
+
+async function doRestoreFromLog() {
+  await doRestore(_reconObs, "Activity Log (" + _reconObs.length + " observations)");
+}
+
+async function doRestoreAll() {
+  // Merge: log obs + W27 + W28, dedup by id
+  var all = _reconObs.concat(W27_OBS).concat(W28_OBS);
+  var seen = {}, merged = [];
+  all.forEach(function(o){
+    if (!seen[o.id]) { seen[o.id]=true; merged.push(o); }
+  });
+  await doRestore(merged, "ALL sources (" + merged.length + " observations)");
+}
+
+async function doRestore(newObs, label) {
+  if (!confirm("Restore " + newObs.length + " observations from " + label + " to Supabase?\n\nThis will MERGE with existing data (currently " + _currentCloud.length + " obs).\n\nProceed?")) return;
+
+  document.getElementById("importCard").style.display="block";
+  document.getElementById("log2").innerHTML="";
+  log("Restoring from " + label + "...","info","log2");
+
+  try {
+    // Merge: existing cloud + new, dedup by id
+    var existing = _currentCloud.slice();
+    var existingIds = {};
+    existing.forEach(function(o){existingIds[o.id]=true;});
+
+    var added = 0;
+    newObs.forEach(function(o){
+      if (!existingIds[o.id]) {
+        existing.push(o);
+        existingIds[o.id]=true;
+        added++;
+      }
+    });
+
+    log("Existing: " + _currentCloud.length + " | Adding: " + added + " | Total: " + existing.length,"info","log2");
+
+    // Also link photos from ctpa_photos to observations
+    if (_photos.length > 0) {
+      log("Linking " + _photos.length + " photos to observations...","info","log2");
+      var photosByObs = {};
+      _photos.forEach(function(p){
+        if (!photosByObs[p.obs_id]) photosByObs[p.obs_id]={pb:[],pa:[]};
+        var slot = p.slot||"pb";
+        photosByObs[p.obs_id][slot].push({
+          id: p.id||("ph_"+p.obs_id+"_"+slot+"_"+(p.idx||0)),
+          name: p.name||"photo.jpg",
+          at: p.at||new Date().toISOString(),
+          _hasPhoto: true
+        });
+      });
+
+      existing = existing.map(function(o){
+        if (photosByObs[o.id]) {
+          var o2 = Object.assign({},o);
+          if (photosByObs[o.id].pb && photosByObs[o.id].pb.length) o2.pb = photosByObs[o.id].pb;
+          if (photosByObs[o.id].pa && photosByObs[o.id].pa.length) o2.pa = photosByObs[o.id].pa;
+          return o2;
+        }
+        return o;
+      });
+      log("Photos linked.","ok","log2");
+    }
+
+    // SAFETY CHECK
+    if (existing.length === 0) {
+      throw new Error("SAFETY ABORT: merged data is empty — refusing to write empty array");
+    }
+
+    log("Writing " + existing.length + " observations to Supabase...","info","log2");
+
+    var base = CLOUD.url + "/rest/v1/";
+    var p = await fetch(base + CLOUD.table + "?id=eq." + CLOUD.row, {
+      method:"PATCH",
+      headers:Object.assign({"Prefer":"return=minimal"},H()),
+      body:JSON.stringify({data:existing}),
+      cache:"no-store"
+    });
+
+    if (!p.ok) {
+      var t = await p.text();
+      throw new Error("PATCH HTTP " + p.status + ": " + t);
+    }
+
+    log("","ok","log2");
+    log("✅ SUCCESS! Restored " + existing.length + " observations to Supabase.","ok","log2");
+    log("   Added from " + label + ": " + added,"ok","log2");
+    if (_photos.length > 0) log("   Photos linked: " + _photos.length + " records","ok","log2");
+    log("","ok","log2");
+    log("→ Refresh the main app and check the dashboard.","info","log2");
+    log("→ Photos should load when you open each observation.","info","log2");
+
+    // Update current count for future operations
+    _currentCloud = existing;
+
+  } catch(e) {
+    log("ERROR: " + e.message,"err","log2");
+  }
+}
+</script>
+</body>
+</html>
