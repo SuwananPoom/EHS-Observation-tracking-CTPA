@@ -1,4 +1,5 @@
 {
+  "cleanUrls": false,
   "headers": [
     {
       "source": "/(.*)",
@@ -10,5 +11,13 @@
         { "key": "Expires", "value": "0" }
       ]
     }
+  ],
+  "routes": [
+    { "src": "/import-excel.html", "dest": "/import-excel.html" },
+    { "src": "/recover-data.html", "dest": "/recover-data.html" },
+    { "src": "/fix-photos.html", "dest": "/fix-photos.html" },
+    { "src": "/import-W27.html", "dest": "/import-W27.html" },
+    { "src": "/import-W28.html", "dest": "/import-W28.html" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
