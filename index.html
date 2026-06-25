@@ -8852,6 +8852,7 @@ function App(_refApp) {
 view === "admin_users"   && isAdmin() && /*#__PURE__*/React.createElement(AdminUsersView,          { setView: setView }),
 view === "admin_access"  && isAdmin() && /*#__PURE__*/React.createElement(AdminAccessView,         { setView: setView }),
 view === "admin_history" && isAdmin() && /*#__PURE__*/React.createElement(AdminApprovalHistoryView, { setView: setView }),
+view === "admin_import"  && isAdmin() && /*#__PURE__*/React.createElement(AdminImportView,          { setView: setView, obs: obs, setObs: setObs }),
 view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: {
@@ -9397,6 +9398,7 @@ function AdminPage(_ref) {
     { v: "admin_users",   l: "Users" },
     { v: "admin_access",  l: "Access" },
     { v: "admin_history", l: "Approval History" },
+    { v: "admin_import",  l: "Import" },
     { v: "diag",          l: "Diagnostics" },
     { v: "log",           l: "Activity" }
   ];
@@ -9589,6 +9591,122 @@ function AdminAccessView(_ref) {
 }
 
 /* ── /admin/approval-history ── */
+/* ── /admin/import ── */
+function AdminImportView(_ref) {
+  var setView = _ref.setView, obs = _ref.obs, setObs = _ref.setObs;
+  var _log = React.useState([]), logLines = _log[0], setLogLines = _log[1];
+  var _busy = React.useState(false), busy = _busy[0], setBusy = _busy[1];
+  var _done = React.useState(false), done = _done[0], setDone = _done[1];
+
+  var BATCHES = [
+    {
+      week: "W27", label: "W27 — Customer Site Walk · Zone A · Building A · 16 Apr 2026",
+      obs: [
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Equipment Safety",risk:"MAJOR",desc:"Sharp wire ends at the handrail may cause injury upon contact.",rect:"Wire ties are being used for fastening instead of cable ties.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Equipment Safety",risk:"SERIOUS",desc:"Protruding rebar above ground level is not fitted with protective caps, posing a risk of injury.",rect:"All exposed protruding rebars have been fitted with appropriate protective caps immediately to prevent injury.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Scaffold",risk:"SERIOUS",desc:"Scaffolding platform is cluttered with scaffolding components and debris, creating unsafe conditions. The scaffold is in incomplete/unsafe condition and is not tagged with a \"Do Not Use\" (Red Tag).",rect:"All loose materials and debris have been removed from the scaffold platform to ensure a clean and safe working area.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Working from Heights (HRA)",risk:"SERIOUS",desc:"Guardrails should be installed to prevent access to exposed rebar.",rect:"Guardrails have been installed around the exposed rebar area to restrict access and prevent injury.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Health & Hygiene",risk:"MINOR",desc:"The drinking/rest area is not provided with a roof or shelter for sun protection.",rect:"A temporary shelter/roof has been installed at the drinking/rest area to provide adequate shade.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Working from Heights (HRA)",risk:"SERIOUS",desc:"No guardrails are installed around the area, posing a risk of falling.",rect:"Guardrails have been installed around the area to prevent fall hazards.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"},
+        {date:"2026-04-16",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Housekeeping",risk:"MAJOR",desc:"There are open holes and scattered steel plates. Poor housekeeping is observed, and the area is not properly managed or cleaned.",rect:"All openings have been properly covered or barricaded. Steel plates have been neatly arranged, and the area has been cleaned immediately.",by:"DAYONE",due:"2026-04-17",status:"CLOSED",closed:"2026-04-17",closedBy:"Ritta",week:"W27"}
+      ]
+    },
+    {
+      week: "W28", label: "W28 — Customer Site Walk · Zones A–D · 24 Apr 2026",
+      obs: [
+        {date:"2026-04-24",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Working from Heights (HRA)",risk:"SERIOUS",desc:"No safety net or fall arrest system is provided below the working platform at height.",rect:"A safety net and fall arrest system have been installed below the working platform.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Lifting & Rigging",risk:"SERIOUS",desc:"The lifting sling shows signs of wear and damage and does not have a valid inspection tag.",rect:"The damaged sling has been removed from service and replaced with a new, inspected, and tagged sling.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Electrical Safety",risk:"SERIOUS",desc:"Temporary electrical cables are running across the walkway without proper cable protection covers, creating a tripping and electrical hazard.",rect:"Cable protection covers have been installed over all temporary cables crossing walkways.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_ACT",cat:"PPE",risk:"SERIOUS",desc:"Worker observed working at height without wearing a full body harness or connecting lanyard to an anchor point.",rect:"Work was stopped immediately. Worker has been provided with a full body harness and instructed on correct attachment to anchor points before resuming work.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone B",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Housekeeping",risk:"MAJOR",desc:"Construction waste and scrap materials are scattered across the working area, obstructing walkways and emergency exit routes.",rect:"All waste and scrap materials have been removed and the area has been cleaned. Walkways and emergency exits are clear.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone B",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Health & Hygiene",risk:"MINOR",desc:"No handwashing facilities or hand sanitizer are available near the workers rest and eating area.",rect:"Handwashing station and hand sanitizer dispenser have been installed at the rest and eating area.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone B",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Health & Hygiene",risk:"MINOR",desc:"Workers are not provided with sufficient clean drinking water at the worksite.",rect:"Adequate clean drinking water has been made available at multiple locations throughout the worksite.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone B",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Fire Safety",risk:"MINOR",desc:"Fire extinguisher inspection tag is expired and the extinguisher has not been serviced within the required period.",rect:"The fire extinguisher has been replaced with a newly serviced unit with a current inspection tag.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone B",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Signage & Barricading",risk:"MINOR",desc:"Safety signage at the entrance to the work zone is faded and no longer legible.",rect:"All faded safety signs have been replaced with new, clearly legible signs.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone C",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Equipment Safety",risk:"MAJOR",desc:"An angle grinder is being used without the blade guard in place, exposing the operator to risk of blade fragment injury.",rect:"Work has been stopped. The blade guard has been reinstalled and the operator instructed not to remove guards during operation.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone C",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Scaffold",risk:"MAJOR",desc:"Scaffold base plates are not fully bearing on solid ground; two base plates are sitting on loose soil without mudsills.",rect:"Mudsills have been placed under all base plates to ensure full bearing on stable ground.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone C",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Signage & Barricading",risk:"MINOR",desc:"The barricade tape around the excavation area has been removed and the area is not marked, posing a fall risk.",rect:"New barricade tape has been installed around the entire excavation perimeter with warning signs posted.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone C",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Housekeeping",risk:"MAJOR",desc:"Flammable materials including cardboard and timber offcuts are stored adjacent to hot work area without any separation or fire watch.",rect:"Flammable materials have been removed to a safe distance from the hot work area. A fire watch has been assigned.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone C",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Equipment Safety",risk:"MAJOR",desc:"Electrical power tools in use show damaged insulation on the supply cable with exposed conductors visible.",rect:"All tools with damaged cables have been taken out of service and replaced with tools in safe working condition.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone D",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Working from Heights (HRA)",risk:"SERIOUS",desc:"Workers are accessing upper levels using a ladder that is not tied off at the top and is leaning at an unsafe angle.",rect:"The ladder has been repositioned at the correct angle, secured at the top, and workers briefed on safe ladder use.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone D",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Lifting & Rigging",risk:"SERIOUS",desc:"Lifting operation is being conducted without an appointed Lift Supervisor and no lift plan has been prepared.",rect:"Lifting work has been suspended. A qualified Lift Supervisor has been appointed and a lift plan prepared and approved prior to resuming.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone D",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Housekeeping",risk:"MAJOR",desc:"Used chemical containers and spilled material are not contained, creating a chemical exposure and slip hazard.",rect:"Spilled material has been cleaned up using appropriate absorbent. Chemical containers have been properly sealed and stored in designated chemical storage area.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone D",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Health & Hygiene",risk:"MINOR",desc:"Workers are not wearing appropriate sun protection (hats, long sleeves) during outdoor work in direct sunlight.",rect:"Workers have been provided with sun hats and instructed to wear long-sleeved shirts during outdoor work. Sunscreen has been made available.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
+        {date:"2026-04-24",zone:"Zone D",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Signage & Barricading",risk:"MINOR",desc:"No emergency assembly point sign is visible in the Zone D work area.",rect:"An emergency assembly point sign has been erected at a clearly visible location within Zone D.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"}
+      ]
+    }
+  ];
+
+  function addLog(msg, type) {
+    setLogLines(function(prev){ return prev.concat([{ msg: msg, type: type || "info" }]); });
+  }
+
+  async function doImport(batch) {
+    setBusy(true); setDone(false); setLogLines([]);
+    try {
+      addLog("Loading current observations from Supabase...", "info");
+      var res = await supabaseClient.from("ctpa_state").select("data").eq("id", "bkk22").single();
+      if (res.error) throw new Error(res.error.message);
+      var current = Array.isArray(res.data.data) ? res.data.data : [];
+      addLog("Current count: " + current.length + " observations", "ok");
+
+      var hasWeek = current.some(function(o){ return o.week === batch.week; });
+      if (hasWeek) { addLog("⚠ " + batch.week + " already exists — import cancelled (duplicate prevention)", "warn"); setBusy(false); return; }
+
+      var mx = 0;
+      current.forEach(function(o){ var n = parseInt((o.id||"").replace(/^OBS-/i,""), 10); if (!isNaN(n) && n > mx) mx = n; });
+      addLog("Max OBS ID: OBS-" + String(mx).padStart(3,"0"), "info");
+
+      var newObs = batch.obs.map(function(o, i){ return Object.assign({}, o, { id: "OBS-" + String(mx+1+i).padStart(3,"0"), pb: [], pa: [] }); });
+      addLog("Adding " + newObs.length + " observations: " + newObs[0].id + " → " + newObs[newObs.length-1].id, "info");
+      newObs.forEach(function(o){ addLog("  " + o.id + " | " + o.risk + " | " + o.cat, "info"); });
+
+      var merged = newObs.concat(current);
+      var upd = await supabaseClient.from("ctpa_state").update({ data: merged }).eq("id", "bkk22");
+      if (upd.error) throw new Error(upd.error.message);
+
+      addLog("", "info");
+      addLog("✅ Import successful — " + newObs.length + " observations added (" + batch.week + ")", "ok");
+      addLog("Refresh the app to see new observations", "ok");
+      setDone(true);
+    } catch(e) {
+      addLog("ERROR: " + e.message, "err");
+    }
+    setBusy(false);
+  }
+
+  var C2 = { green: "#00AA66" };
+  return React.createElement(AdminPage, { title: "Import", subtitle: "Import observation batches from site walks. Duplicate guard prevents re-importing the same week.", setView: setView },
+    React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+      BATCHES.map(function(batch) {
+        var hasWeek = obs.some(function(o){ return o.week === batch.week; });
+        return React.createElement("div", { key: batch.week, style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
+          React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: "#0F172A" } }, batch.week),
+              React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 2 } }, batch.label),
+              React.createElement("div", { style: { fontSize: 12, color: "#64748B" } }, batch.obs.length + " observations")
+            ),
+            hasWeek
+              ? React.createElement("span", { style: { background: "#ECFDF5", color: "#00AA66", borderRadius: 20, padding: "6px 14px", fontSize: 12, fontWeight: 700 } }, "✓ Already imported")
+              : React.createElement("button", {
+                  disabled: busy,
+                  onClick: function(){ doImport(batch); },
+                  style: { background: C2.green, color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1 }
+                }, "⬆ Import " + batch.week + " to Supabase")
+          )
+        );
+      }),
+      logLines.length > 0 && React.createElement("div", { style: { fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0F172A", color: "#94A3B8", borderRadius: 8, padding: 16, maxHeight: 340, overflowY: "auto" } },
+        logLines.map(function(l, i){
+          var color = l.type === "ok" ? "#4ADE80" : l.type === "err" ? "#F87171" : l.type === "warn" ? "#FCD34D" : "#60A5FA";
+          return React.createElement("div", { key: i, style: { color: color } }, l.msg);
+        })
+      )
+    )
+  );
+}
+
 function AdminApprovalHistoryView(_ref) {
   var setView = _ref.setView;
   var _r = React.useState([]), rows = _r[0], setRows = _r[1];
