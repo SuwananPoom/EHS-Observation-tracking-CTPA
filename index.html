@@ -1125,6 +1125,22 @@ function ctpaMigrate(arr) {
   if (!Array.isArray(arr)) return arr;
   return arr.filter(function(o){ return !o || !o.deleted; }).map(function (o) {
     if (!o || typeof o !== "object") return o;
+    /* normalise Excel-imported obs fields to match app format */
+    if (!o.obsType && o.type) {
+      o = Object.assign({}, o, {
+        obsType: o.type === "Unsafe Act" ? "UNSAFE_ACT" : "UNSAFE_CON",
+        risk: o.severity === "High" ? "MAJOR" : o.severity === "Medium" ? "SERIOUS" : "MINOR",
+        desc: o.desc || o.detail || "",
+        rect: o.rect || o.correctiveAction || "",
+        by: o.by || o.createdBy || "",
+        cat: o.cat || o.category || "",
+        fc: o.fc || o.findingCategory || "",
+        date: o.date || (o.ts ? o.ts.slice(0,10) : ""),
+        due: o.due || (o.dueDate ? o.dueDate.slice(0,10) : ""),
+        closed: o.closed || (o.closedAt ? o.closedAt.slice(0,10) : ""),
+        week: o.week || ""
+      });
+    }
     var ap = apOf(o);
     var rawApprovedBy = o.approvedBy != null ? o.approvedBy : (ap === "APPROVED CLOSED" ? (o.by || "") : "");
     /* normalise legacy "MS" approver name to "GC Manager" at migration time */
@@ -8009,7 +8025,7 @@ function App(_refApp) {
         fontSize: 10,
         color: C.textMid
       }
-    }, o.cat.replace(" (HRA)", "")), /*#__PURE__*/React.createElement("td", {
+    }, (o.cat||o.category||"").replace(" (HRA)", "")), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "7px 10px",
         maxWidth: 220
