@@ -9700,6 +9700,10 @@ function AdminImportView(_ref) {
       ]
     },
     {
+      week: "EXCEL", label: "Excel Report · CTPA_Observation_Report_20260624.xlsx · W05–W27 · All Zones", isExcel: true,
+      obs: []
+    },
+    {
       week: "W28", label: "W28 — Customer Site Walk · Zones A–D · 24 Apr 2026",
       obs: [
         {date:"2026-04-24",zone:"Zone A",company:"DayOne",fc:"Customer Site Walk",obsType:"UNSAFE_CON",cat:"Working from Heights (HRA)",risk:"SERIOUS",desc:"No safety net or fall arrest system is provided below the working platform at height.",rect:"A safety net and fall arrest system have been installed below the working platform.",by:"DAYONE",due:"2026-04-27",status:"CLOSED",closed:"2026-04-27",closedBy:"Suwanan Poomchaveng",week:"W28"},
@@ -9823,6 +9827,22 @@ function AdminImportView(_ref) {
           : React.createElement("div", { style: { fontSize: 12, color: "#15803D" } }, "All photo references have valid image data in cloud storage or local cache.")
       ),
       BATCHES.map(function(batch) {
+        if (batch.isExcel) {
+          return React.createElement("div", { key: "excel", style: { background: "#EFF6FF", border: "1.5px solid #BFDBFE", borderRadius: 12, padding: 20 } },
+            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: "#1D4ED8" } }, "📊 Excel Full Report"),
+                React.createElement("div", { style: { fontSize: 12, color: "#1D4ED8", marginTop: 2, opacity: 0.8 } }, batch.label),
+                React.createElement("div", { style: { fontSize: 12, color: "#1E40AF" } }, "350 observations · 311 Closed · 38 Open · 1 Pending"),
+                React.createElement("div", { style: { fontSize: 11, color: "#64748B", marginTop: 4 } }, "นำเข้าครั้งเดียวทั้งหมด — merge กับข้อมูลที่มีอยู่")
+              ),
+              React.createElement("button", {
+                onClick: function(){ window.open("/import-excel.html", "_blank"); },
+                style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: "pointer" }
+              }, "📥 Open Excel Importer")
+            )
+          );
+        }
         var hasWeek = obs.some(function(o){ return o.week === batch.week; });
         return React.createElement("div", { key: batch.week, style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
           React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
@@ -9841,21 +9861,6 @@ function AdminImportView(_ref) {
           )
         );
       }),
-      /* Excel full import card */
-      React.createElement("div", { style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
-          React.createElement("div", null,
-            React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: "#0F172A" } }, "📊 Excel Full Report"),
-            React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 2 } }, "CTPA_Observation_Report_20260624.xlsx · W05–W27 · All zones"),
-            React.createElement("div", { style: { fontSize: 12, color: "#64748B" } }, "350 observations · 311 Closed · 38 Open · 1 Pending"),
-            React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 4 } }, "นำเข้าครั้งเดียวทั้งหมด — merge กับข้อมูลที่มีอยู่")
-          ),
-          React.createElement("button", {
-            onClick: function(){ window.open("/import-excel.html", "_blank"); },
-            style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: "pointer" }
-          }, "📥 Open Excel Importer")
-        )
-      ),
       logLines.length > 0 && React.createElement("div", { style: { fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0F172A", color: "#94A3B8", borderRadius: 8, padding: 16, maxHeight: 340, overflowY: "auto" } },
         logLines.map(function(l, i){
           var color = l.type === "ok" ? "#4ADE80" : l.type === "err" ? "#F87171" : l.type === "warn" ? "#FCD34D" : "#60A5FA";
