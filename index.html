@@ -9841,6 +9841,21 @@ function AdminImportView(_ref) {
           )
         );
       }),
+      /* Excel full import card */
+      React.createElement("div", { style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: "#0F172A" } }, "📊 Excel Full Report"),
+            React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 2 } }, "CTPA_Observation_Report_20260624.xlsx · W05–W27 · All zones"),
+            React.createElement("div", { style: { fontSize: 12, color: "#64748B" } }, "350 observations · 311 Closed · 38 Open · 1 Pending"),
+            React.createElement("div", { style: { fontSize: 11, color: "#94A3B8", marginTop: 4 } }, "นำเข้าครั้งเดียวทั้งหมด — merge กับข้อมูลที่มีอยู่")
+          ),
+          React.createElement("button", {
+            onClick: function(){ window.open("/import-excel.html", "_blank"); },
+            style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: "pointer" }
+          }, "📥 Open Excel Importer")
+        )
+      ),
       logLines.length > 0 && React.createElement("div", { style: { fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", background: "#0F172A", color: "#94A3B8", borderRadius: 8, padding: 16, maxHeight: 340, overflowY: "auto" } },
         logLines.map(function(l, i){
           var color = l.type === "ok" ? "#4ADE80" : l.type === "err" ? "#F87171" : l.type === "warn" ? "#FCD34D" : "#60A5FA";
