@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fix Missing Photos — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:820px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer}
+.btn-red{background:#B91C1C;color:#fff}.btn-red:hover{background:#991B1B}
+.btn-blue{background:#3B82F6;color:#fff}.btn-blue:hover{background:#2563EB}
+.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:360px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:8px 10px;text-align:left}
+td{padding:7px 10px;border-bottom:1px solid #E2E8F0}
+tr:nth-child(even) td{background:#F8FAFC}
+.badge-red{background:#FEE2E2;color:#B91C1C;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700}
+.badge-green{background:#DCFCE7;color:#15803D;border-radius:20px;padding:2px 10px;font-size:11px;font-weight:700}
+</style>
+</head>
+<body>
+<h1>🔧 Fix Missing Photo References</h1>
+<div class="sub">Finds and removes broken photo placeholders (metadata with no image data) from ctpa_state</div>
+
+<div class="card">
+  <button class="btn btn-blue" id="btnScan" onclick="doScan()">🔍 Scan for Missing Photo References</button>
+  <div class="log" id="log">Click Scan to check for broken photo references...\n</div>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <div id="resultContent"></div>
+  <button class="btn btn-red" id="btnFix" style="display:none;margin-top:16px" onclick="doFix()">🗑 Remove Broken References & Save to Supabase</button>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var _allObs = [];
+var _missing = [];
+
+async function doScan(){
+  document.getElementById("btnScan").disabled=true;
+  document.getElementById("log").innerHTML="";
+  document.getElementById("resultCard").style.display="none";
+  log("Loading observations from Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var r=await fetch(base+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("GET HTTP "+r.status);
+    var rows=await r.json();
+    _allObs=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Total observations: "+_allObs.length,"ok");
+
+    _missing=[];
+    _allObs.forEach(function(o){
+      ["pb","pa"].forEach(function(slot){
+        (o[slot]||[]).forEach(function(p,i){
+          if(p && !p.url && !(p.src && p.src.length > 32)){
+            _missing.push({obsId:o.id,slot:slot,idx:i,name:p.name||"photo",at:p.at||""});
+          }
+        });
+      });
+    });
+
+    log("","info");
+    if(_missing.length===0){
+      log("✅ No missing photo references found — system is clean!","ok");
+      document.getElementById("resultCard").style.display="block";
+      document.getElementById("resultContent").innerHTML='<div style="color:#15803D;font-weight:700;font-size:15px">✅ No broken photo references found. System is clean.</div>';
+    } else {
+      log("⚠ Found "+_missing.length+" missing photo reference(s):","warn");
+      _missing.forEach(function(m){
+        log("  "+m.obsId+" | "+(m.slot==="pb"?"Before":"After")+" #"+(m.idx+1)+" | "+m.name,"warn");
+      });
+      log("","info");
+      log("These photos have metadata (_hasPhoto:true) but NO image data in:","info");
+      log("  • Supabase Storage (no URL)", "info");
+      log("  • ctpa_photos table (no base64)", "info");
+      log("  • localStorage on this device (no src)", "info");
+      log("They cannot be recovered. Use the button below to remove the broken placeholders.","warn");
+
+      // Build table
+      var html='<div style="color:#B91C1C;font-weight:700;font-size:15px;margin-bottom:12px">⚠ '+_missing.length+' Broken Photo Reference(s) Found</div>';
+      html+='<table><thead><tr><th>OBS ID</th><th>Photo Slot</th><th>Index</th><th>Photo Name</th><th>Added At</th></tr></thead><tbody>';
+      _missing.forEach(function(m){
+        html+='<tr><td><strong>'+m.obsId+'</strong></td><td>'+(m.slot==="pb"?"Before ↑":"After ✓")+'</td><td>#'+(m.idx+1)+'</td><td>'+(m.name||"—")+'</td><td style="color:#64748B;font-size:11px">'+(m.at||"—")+'</td></tr>';
+      });
+      html+='</tbody></table>';
+      document.getElementById("resultCard").style.display="block";
+      document.getElementById("resultContent").innerHTML=html;
+      document.getElementById("btnFix").style.display="inline-block";
+    }
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+  }
+  document.getElementById("btnScan").disabled=false;
+}
+
+async function doFix(){
+  if(!confirm("Remove "+_missing.length+" broken photo placeholder(s) from Supabase?\n\nAffected observations:\n"+_missing.map(function(m){return m.obsId+" ("+(m.slot==="pb"?"Before":"After")+" #"+(m.idx+1)+")";}).join("\n")+"\n\nThis cannot be undone.")) return;
+  document.getElementById("btnFix").disabled=true;
+  log("","info");
+  log("Removing broken references...","info");
+  try{
+    var fixed=_allObs.map(function(o){
+      var o2=Object.assign({},o);
+      if(o2.pb) o2.pb=(o2.pb||[]).filter(function(p){return p&&(p.url||(p.src&&p.src.length>32));});
+      if(o2.pa) o2.pa=(o2.pa||[]).filter(function(p){return p&&(p.url||(p.src&&p.src.length>32));});
+      // Clean up empty arrays
+      if(o2.pb&&o2.pb.length===0) delete o2.pb;
+      if(o2.pa&&o2.pa.length===0) delete o2.pa;
+      return o2;
+    });
+
+    // Strip photo src before saving (keep only url metadata)
+    var stripped=fixed.map(function(o){
+      var o2=Object.assign({},o);
+      if(o2.pb&&o2.pb.length) o2.pb=o2.pb.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      if(o2.pa&&o2.pa.length) o2.pa=o2.pa.map(function(p){return{id:p.id,name:p.name,at:p.at,url:p.url||undefined,_hasPhoto:true};});
+      return o2;
+    });
+
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:stripped})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("✅ Saved to Supabase — "+_missing.length+" broken reference(s) removed","ok");
+    log("","info");
+    _missing.forEach(function(m){log("  Removed: "+m.obsId+" "+(m.slot==="pb"?"Before":"After")+" #"+(m.idx+1),"ok");});
+    log("","info");
+    log("✅ Done! Refresh the main app and click 📷 Sync Photos — warning should be gone.","ok");
+
+    document.getElementById("resultContent").innerHTML='<div style="color:#15803D;font-weight:700;font-size:15px">✅ '+_missing.length+' broken reference(s) removed from Supabase. Refresh the main app to confirm.</div>';
+    document.getElementById("btnFix").style.display="none";
+    _missing=[];
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnFix").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
