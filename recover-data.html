@@ -4,19 +4,18 @@
 <meta charset="UTF-8">
 <title>Data Recovery — EHS CTPA</title>
 <style>
-body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+body{font-family:system-ui,sans-serif;max-width:960px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
 h1{font-size:20px;font-weight:700;margin-bottom:4px}
 .sub{color:#64748B;font-size:13px;margin-bottom:24px}
 .card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
 .btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;margin-right:8px;margin-bottom:8px}
-.btn-red{background:#B91C1C;color:#fff}.btn-red:hover{background:#991B1B}
 .btn-blue{background:#3B82F6;color:#fff}.btn-blue:hover{background:#2563EB}
 .btn-green{background:#15803D;color:#fff}.btn-green:hover{background:#166534}
 .btn-orange{background:#C2410C;color:#fff}.btn-orange:hover{background:#9A3412}
 .btn:disabled{background:#94A3B8;cursor:not-allowed}
-.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:400px;overflow-y:auto;margin-top:12px}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
 .ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
 th{background:#1E3A5F;color:#fff;padding:7px 9px;text-align:left}
 td{padding:6px 9px;border-bottom:1px solid #E2E8F0;vertical-align:top}
 tr:nth-child(even) td{background:#F8FAFC}
@@ -24,32 +23,32 @@ tr:nth-child(even) td{background:#F8FAFC}
 .badge-red{background:#FEE2E2;color:#B91C1C}
 .badge-green{background:#DCFCE7;color:#15803D}
 .badge-blue{background:#DBEAFE;color:#1D4ED8}
-.stat{display:inline-block;padding:8px 18px;border-radius:10px;font-size:22px;font-weight:800;margin-right:12px;margin-bottom:8px}
-.stat-label{font-size:11px;font-weight:400;display:block;color:inherit;opacity:.7}
+.stat{display:inline-block;padding:10px 18px;border-radius:10px;font-size:24px;font-weight:800;margin-right:10px;margin-bottom:8px}
+.stat-label{font-size:11px;font-weight:400;display:block;opacity:.7}
 h2{font-size:15px;font-weight:700;margin-top:0;margin-bottom:12px}
 .section{border-top:1px solid #E2E8F0;margin-top:16px;padding-top:16px}
+.thumb{width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid #E2E8F0}
 </style>
 </head>
 <body>
 <h1>🚨 EHS Data Recovery Tool</h1>
-<div class="sub">Recovers observations and photos from ctpa_log activity history and ctpa_photos table</div>
+<div class="sub">กู้คืน observations + รูปภาพ จาก ctpa_log, ctpa_photos และ Supabase Storage โดยอัตโนมัติ</div>
 
 <div class="card">
-  <h2>Step 1 — Scan All Available Sources</h2>
-  <button class="btn btn-blue" id="btnScan" onclick="doScan()">🔍 Scan Supabase for Recoverable Data</button>
-  <div class="log" id="log">Click Scan to begin data recovery analysis...\n</div>
+  <h2>Step 1 — สแกนข้อมูลทั้งหมด</h2>
+  <button class="btn btn-blue" id="btnScan" onclick="doScan()">🔍 Scan All Sources</button>
+  <div class="log" id="log">Click Scan to begin...\n</div>
 </div>
 
 <div id="resultCard" style="display:none">
   <div class="card">
-    <h2>Step 2 — Review &amp; Restore</h2>
+    <h2>Step 2 — สรุปผลการสแกน</h2>
     <div id="stats"></div>
     <div id="resultContent"></div>
   </div>
-
   <div class="card" id="importCard" style="display:none">
-    <h2>Step 3 — Restore to Supabase</h2>
-    <div class="log" id="log2">Click a restore button above to begin...\n</div>
+    <h2>Step 3 — ผลการกู้คืน</h2>
+    <div class="log" id="log2">Click restore button above...\n</div>
   </div>
 </div>
 
@@ -58,7 +57,13 @@ var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4V
 function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json","Cache-Control":"no-cache"};}
 function log(m,c,id){var e=document.getElementById(id||"log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
 
-var _logEntries=[], _photos=[], _currentCloud=[], _reconObs=[];
+function storagePublicUrl(obsId, slot, idx){
+  var path = CLOUD.row+"/"+obsId+"/"+slot+"-"+idx+".jpg";
+  return CLOUD.url.replace(/\/$/,"")+"/storage/v1/object/public/"+CLOUD.bucket+"/"+path.split("/").map(encodeURIComponent).join("/");
+}
+
+var _logEntries=[], _photos=[], _storageFiles=[], _currentCloud=[], _reconObs=[];
+var _photoMap={};  // obsId -> {pb:[...], pa:[...]}
 
 // W27 complete data
 var W27_OBS = [
@@ -98,6 +103,7 @@ async function doScan() {
   document.getElementById("btnScan").disabled=true;
   document.getElementById("log").innerHTML="";
   document.getElementById("resultCard").style.display="none";
+  _photoMap={};
 
   log("=== EHS CTPA DATA RECOVERY SCAN ===","info");
   log("","info");
@@ -105,320 +111,307 @@ async function doScan() {
   try {
     var base = CLOUD.url + "/rest/v1/";
 
-    // 1. Check current ctpa_state
-    log("1. Checking ctpa_state (main data store)...","info");
-    var r1 = await fetch(base + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {headers:H(),cache:"no-store"});
-    if (!r1.ok) throw new Error("ctpa_state GET HTTP " + r1.status);
+    // 1. Current ctpa_state
+    log("1. ตรวจสอบ ctpa_state (ข้อมูล obs ปัจจุบัน)...","info");
+    var r1 = await fetch(base+CLOUD.table+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r1.ok) throw new Error("ctpa_state GET HTTP "+r1.status);
     var rows = await r1.json();
-    _currentCloud = (rows[0] && Array.isArray(rows[0].data)) ? rows[0].data : [];
-    log("   Current observations in Supabase: " + _currentCloud.length, _currentCloud.length > 0 ? "ok" : "err");
+    _currentCloud = (rows[0]&&Array.isArray(rows[0].data))?rows[0].data:[];
+    log("   Observations ใน Supabase ตอนนี้: "+_currentCloud.length, _currentCloud.length>0?"ok":"err");
 
-    // 2. Check ctpa_log
+    // 2. ctpa_log
     log("","info");
-    log("2. Scanning ctpa_log for all historical events...","info");
-    var r2 = await fetch(base + "ctpa_log?site=eq.bkk22&select=*&order=ts.asc&limit=10000", {headers:H(),cache:"no-store"});
-    if (!r2.ok) throw new Error("ctpa_log GET HTTP " + r2.status);
-    _logEntries = await r2.json();
-    log("   Total log entries found: " + _logEntries.length, _logEntries.length > 0 ? "ok" : "warn");
+    log("2. สแกน ctpa_log หา obs IDs...","info");
+    var r2 = await fetch(base+"ctpa_log?site=eq.bkk22&select=*&order=ts.asc&limit=10000",{headers:H(),cache:"no-store"});
+    _logEntries = r2.ok ? await r2.json() : [];
+    log("   Log entries: "+_logEntries.length, _logEntries.length>0?"ok":"warn");
+    var logObsIds={};
+    _logEntries.forEach(function(e){if(e.obs_id)logObsIds[e.obs_id]=true;});
+    var uniqueFromLog=Object.keys(logObsIds);
+    log("   Unique obs IDs ใน log: "+uniqueFromLog.length,"info");
 
-    var createEvents = _logEntries.filter(function(e){return e.action==="obs_create"||e.action==="create";});
-    var editEvents = _logEntries.filter(function(e){return e.action==="obs_edit"||e.action==="edit";});
-    var closeEvents = _logEntries.filter(function(e){return e.action==="obs_close"||e.action==="close";});
-    log("   CREATE events: " + createEvents.length,"info");
-    log("   EDIT events: " + editEvents.length,"info");
-    log("   CLOSE events: " + closeEvents.length,"info");
-
-    // Unique obs IDs from log
-    var logObsIds = {};
-    _logEntries.forEach(function(e){if(e.obs_id) logObsIds[e.obs_id]=true;});
-    var uniqueObsFromLog = Object.keys(logObsIds);
-    log("   Unique obs IDs in log: " + uniqueObsFromLog.length,"info");
-
-    // 3. Check ctpa_photos
+    // 3. ctpa_photos — metadata + url
     log("","info");
-    log("3. Scanning ctpa_photos for stored base64 images...","info");
-    var r3 = await fetch(base + "ctpa_photos?site=eq.bkk22&select=obs_id,slot,idx,name,at&limit=10000", {headers:H(),cache:"no-store"});
-    if (!r3.ok) {
-      log("   ctpa_photos table not accessible: HTTP " + r3.status,"warn");
-      _photos = [];
-    } else {
+    log("3. สแกน ctpa_photos (รูปที่บันทึกเป็น base64)...","info");
+    var r3 = await fetch(base+"ctpa_photos?site=eq.bkk22&select=obs_id,slot,idx,name,at,url&order=obs_id.asc&limit=5000",{headers:H(),cache:"no-store"});
+    if(r3.ok){
       _photos = await r3.json();
-      log("   Photo records found: " + _photos.length, _photos.length > 0 ? "ok" : "warn");
-      var photoObsIds = {};
-      _photos.forEach(function(p){photoObsIds[p.obs_id]=true;});
-      log("   Obs IDs with photos: " + Object.keys(photoObsIds).length,"info");
+      log("   Photo records: "+_photos.length, _photos.length>0?"ok":"warn");
+    } else {
+      _photos=[];
+      log("   ctpa_photos ไม่สามารถเข้าถึงได้: HTTP "+r3.status,"warn");
     }
 
-    // 4. Check Supabase Storage bucket
+    // 4. Supabase Storage — list all files
     log("","info");
-    log("4. Checking Supabase Storage bucket ctpa-photos...","info");
-    var r4 = await fetch(CLOUD.url + "/storage/v1/object/list/" + CLOUD.bucket, {
+    log("4. สแกน Supabase Storage bucket (ctpa-photos)...","info");
+    _storageFiles=[];
+    // List files recursively under bkk22/
+    var r4 = await fetch(CLOUD.url+"/storage/v1/object/list/"+CLOUD.bucket,{
       method:"POST",
       headers:Object.assign({"Content-Type":"application/json"},H()),
-      body:JSON.stringify({prefix:"bkk22/",limit:1000})
+      body:JSON.stringify({prefix:"bkk22/",limit:10000,offset:0})
     });
-    var storageCount = 0;
-    var storageObsIds = {};
-    if (r4.ok) {
-      var files = await r4.json();
-      if (Array.isArray(files)) {
-        storageCount = files.length;
-        files.forEach(function(f){
-          var parts = (f.name||"").split("/");
-          if(parts.length>=2) storageObsIds[parts[1]]=true;
-        });
-      }
-      log("   Storage files found: " + storageCount, storageCount > 0 ? "ok" : "warn");
-      log("   Obs IDs with storage photos: " + Object.keys(storageObsIds).length,"info");
+    if(r4.ok){
+      var files=await r4.json();
+      if(Array.isArray(files)) _storageFiles=files;
+      log("   Storage files: "+_storageFiles.length, _storageFiles.length>0?"ok":"warn");
     } else {
-      log("   Storage list HTTP " + r4.status + " (may need different auth)","warn");
+      log("   Storage list HTTP "+r4.status,"warn");
+      // Try alternative: list without prefix
+      var r4b = await fetch(CLOUD.url+"/storage/v1/object/list/"+CLOUD.bucket,{
+        method:"POST",
+        headers:Object.assign({"Content-Type":"application/json"},H()),
+        body:JSON.stringify({prefix:"",limit:10000})
+      });
+      if(r4b.ok){
+        var files2=await r4b.json();
+        if(Array.isArray(files2)){
+          _storageFiles=files2.filter(function(f){return (f.name||"").startsWith("bkk22/");});
+          log("   Storage files (bkk22/): "+_storageFiles.length,"info");
+        }
+      }
     }
 
-    // 5. Reconstruct from log
+    // 5. Build photo map from ctpa_photos
     log("","info");
-    log("5. Reconstructing observations from log entries...","info");
-    _reconObs = reconstructFromLog(_logEntries, uniqueObsFromLog);
-    log("   Observations reconstructed from log: " + _reconObs.length, _reconObs.length > 0 ? "ok" : "warn");
+    log("5. สร้าง photo map...","info");
+    var photoObsIds={};
 
-    // Build report
+    // From ctpa_photos table
+    _photos.forEach(function(p){
+      if(!p.obs_id) return;
+      photoObsIds[p.obs_id]=true;
+      if(!_photoMap[p.obs_id]) _photoMap[p.obs_id]={pb:[],pa:[]};
+      var slot=p.slot||"pb";
+      var idx=p.idx||0;
+      _photoMap[p.obs_id][slot].push({
+        id:"ph_"+p.obs_id+"_"+slot+"_"+idx,
+        name:p.name||"photo.jpg",
+        at:p.at||new Date().toISOString(),
+        url:p.url||storagePublicUrl(p.obs_id,slot,idx),
+        _hasPhoto:true
+      });
+    });
+
+    // From Storage files — extract obsId/slot/idx from path bkk22/{obsId}/{slot}-{idx}.jpg
+    var storageObsIds={};
+    _storageFiles.forEach(function(f){
+      var name=f.name||"";
+      // name could be "bkk22/obs_xxx/pb-0.jpg" or just "obs_xxx/pb-0.jpg"
+      var parts=name.replace(/^bkk22\//,"").split("/");
+      if(parts.length<2) return;
+      var obsId=parts[0];
+      var filePart=parts[1]; // e.g. "pb-0.jpg"
+      var m=filePart.match(/^(pb|pa)-(\d+)\.jpg$/i);
+      if(!obsId||!m) return;
+      var slot=m[1]; var idx=parseInt(m[2]);
+      storageObsIds[obsId]=true;
+      // Only add if not already in map from ctpa_photos
+      if(!_photoMap[obsId]) _photoMap[obsId]={pb:[],pa:[]};
+      var alreadyHave=_photoMap[obsId][slot].some(function(x){return x.id&&x.id.indexOf("_"+idx)>-1;});
+      if(!alreadyHave){
+        var url=storagePublicUrl(obsId,slot,idx);
+        _photoMap[obsId][slot].push({
+          id:"st_"+obsId+"_"+slot+"_"+idx,
+          name:slot==="pb"?"Before photo "+(idx+1):"After photo "+(idx+1),
+          at:f.created_at||new Date().toISOString(),
+          url:url,
+          _hasPhoto:true
+        });
+      }
+    });
+
+    var totalPhotoObs=Object.keys(_photoMap).length;
+    var totalPhotoRecs=Object.keys(_photoMap).reduce(function(s,k){return s+_photoMap[k].pb.length+_photoMap[k].pa.length;},0);
+    log("   Obs ที่มีรูป: "+totalPhotoObs+" obs, "+totalPhotoRecs+" รูปรวม","ok");
+    log("   - จาก ctpa_photos table: "+_photos.length+" records","info");
+    log("   - จาก Storage bucket: "+_storageFiles.length+" files (obs: "+Object.keys(storageObsIds).length+")","info");
+
+    // 6. Reconstruct from log
+    _reconObs = reconstructFromLog(_logEntries, uniqueFromLog);
     log("","info");
-    log("=== RECOVERY SUMMARY ===","ok");
-    log("   Current Supabase data:  " + _currentCloud.length + " obs", _currentCloud.length>0?"ok":"err");
-    log("   Reconstructable from log: " + _reconObs.length + " obs", _reconObs.length>0?"ok":"warn");
-    log("   W27 (complete data):    " + W27_OBS.length + " obs","ok");
-    log("   W28 (complete data):    " + W28_OBS.length + " obs","ok");
-    log("   Photos in ctpa_photos:  " + _photos.length + " records","info");
-    log("   Photos in Storage:      " + storageCount + " files","info");
+    log("6. Reconstruct จาก log: "+_reconObs.length+" obs","info");
 
-    showResult(createEvents, editEvents, closeEvents, uniqueObsFromLog, storageObsIds, storageCount);
+    log("","ok");
+    log("=== สรุป ===","ok");
+    log("   Supabase ตอนนี้:       "+_currentCloud.length+" obs","info");
+    log("   จาก activity log:      "+_reconObs.length+" obs (partial data)","info");
+    log("   W27+W28 (ครบ):         "+(W27_OBS.length+W28_OBS.length)+" obs","ok");
+    log("   รูปที่กู้คืนได้:          "+totalPhotoRecs+" รูป จาก "+totalPhotoObs+" obs","ok");
+
+    showResult(uniqueFromLog, storageObsIds, totalPhotoObs, totalPhotoRecs);
 
   } catch(e) {
-    log("ERROR: " + e.message,"err");
-    document.getElementById("btnScan").disabled=false;
+    log("ERROR: "+e.message,"err");
   }
   document.getElementById("btnScan").disabled=false;
 }
 
-function reconstructFromLog(entries, obsIds) {
-  var obs = [];
-  obsIds.forEach(function(obsId) {
-    var related = entries.filter(function(e){return e.obs_id===obsId;});
-    if (!related.length) return;
-
-    var createEv = related.find(function(e){return e.action==="obs_create"||e.action==="create";});
-    var closeEv = related.find(function(e){return e.action==="obs_close"||e.action==="close";});
-
-    var o = {
-      id: obsId,
-      site: "bkk22",
-      status: closeEv ? "CLOSED" : "OPEN",
-      _fromLog: true,
-      _logCount: related.length
-    };
-
-    // Parse detail from create event if available
-    if (createEv && createEv.detail) {
-      var d = createEv.detail;
-      // Try to extract zone/location/type from detail string
-      var zoneM = d.match(/zone[:\s]+([^\|,]+)/i);
-      var locM = d.match(/loc(?:ation)?[:\s]+([^\|,]+)/i);
-      var typeM = d.match(/type[:\s]+([^\|,]+)/i);
-      var sevM = d.match(/sev(?:erity)?[:\s]+([^\|,]+)/i);
-      if (zoneM) o.zone = zoneM[1].trim();
-      if (locM) o.location = locM[1].trim();
-      if (typeM) o.type = typeM[1].trim();
-      if (sevM) o.severity = sevM[1].trim();
-      o.detail = d;
+function reconstructFromLog(entries, obsIds){
+  var obs=[];
+  obsIds.forEach(function(obsId){
+    var related=entries.filter(function(e){return e.obs_id===obsId;});
+    if(!related.length) return;
+    var createEv=related.find(function(e){return /create/i.test(e.action);});
+    var closeEv=related.find(function(e){return /close/i.test(e.action);});
+    var o={id:obsId,site:"bkk22",status:closeEv?"CLOSED":"OPEN",_fromLog:true,_logCount:related.length};
+    if(createEv){
+      o.ts=createEv.ts; o.createdBy=createEv.who;
+      if(createEv.detail) o.detail=createEv.detail;
     }
-
-    if (createEv) {
-      o.ts = createEv.ts;
-      o.createdBy = createEv.who;
-    }
-    if (closeEv) {
-      o.closedAt = closeEv.ts;
-      o.closedBy = closeEv.who;
-    }
-
+    if(closeEv){o.closedAt=closeEv.ts;o.closedBy=closeEv.who;}
     obs.push(o);
   });
   return obs;
 }
 
-function showResult(createEvents, editEvents, closeEvents, uniqueObsFromLog, storageObsIds, storageCount) {
+function showResult(uniqueFromLog, storageObsIds, totalPhotoObs, totalPhotoRecs){
   document.getElementById("resultCard").style.display="block";
 
-  var totalRecoverable = _reconObs.length;
-  var w27w28 = W27_OBS.length + W28_OBS.length;
+  var w2728=W27_OBS.length+W28_OBS.length;
+  var statsHtml='<div style="margin-bottom:16px">';
+  statsHtml+='<span class="stat" style="background:#FEE2E2;color:#B91C1C"><span class="stat-label">Supabase ตอนนี้</span>'+_currentCloud.length+'</span>';
+  statsHtml+='<span class="stat" style="background:#DBEAFE;color:#1D4ED8"><span class="stat-label">จาก Log</span>'+_reconObs.length+'</span>';
+  statsHtml+='<span class="stat" style="background:#DCFCE7;color:#15803D"><span class="stat-label">W27+W28</span>'+w2728+'</span>';
+  statsHtml+='<span class="stat" style="background:#FEF3C7;color:#B45309"><span class="stat-label">รูปกู้คืนได้</span>'+totalPhotoRecs+'</span>';
+  statsHtml+='</div>';
+  document.getElementById("stats").innerHTML=statsHtml;
 
-  var statsHtml = '<div style="margin-bottom:16px">';
-  statsHtml += '<span class="stat" style="background:#FEE2E2;color:#B91C1C"><span class="stat-label">Lost (Supabase)</span>' + _currentCloud.length + '</span>';
-  statsHtml += '<span class="stat" style="background:#DBEAFE;color:#1D4ED8"><span class="stat-label">In Activity Log</span>' + totalRecoverable + '</span>';
-  statsHtml += '<span class="stat" style="background:#DCFCE7;color:#15803D"><span class="stat-label">W27+W28 (full data)</span>' + w27w28 + '</span>';
-  statsHtml += '<span class="stat" style="background:#FEF3C7;color:#B45309"><span class="stat-label">Photos (ctpa_photos)</span>' + _photos.length + '</span>';
-  statsHtml += '</div>';
-  document.getElementById("stats").innerHTML = statsHtml;
+  var html='';
 
-  var html = '';
+  // Photo preview table
+  if(totalPhotoObs>0){
+    html+='<div style="margin-bottom:16px;padding:12px;background:#DCFCE7;border-radius:8px;color:#15803D">';
+    html+='<strong>✅ พบรูปภาพ '+totalPhotoRecs+' รูป จาก '+totalPhotoObs+' observations</strong><br>';
+    html+='<small>รูปทั้งหมดจะถูก link กลับอัตโนมัติเมื่อกดปุ่ม Restore — ไม่ต้องใส่รูปใหม่</small></div>';
 
-  // Log-based reconstruction
-  if (_reconObs.length > 0) {
-    html += '<div class="section"><strong>Observations found in Activity Log (' + _reconObs.length + '):</strong>';
-    html += '<br><small style="color:#64748B">These have partial data from log entries. Some fields may be incomplete.</small>';
-    html += '<table><thead><tr><th>OBS ID</th><th>Created By</th><th>Created At</th><th>Status</th><th>Log Entries</th><th>Detail</th></tr></thead><tbody>';
-    _reconObs.forEach(function(o) {
-      html += '<tr><td><code style="font-size:10px">' + o.id + '</code></td>';
-      html += '<td>' + (o.createdBy||'—') + '</td>';
-      html += '<td style="font-size:11px">' + (o.ts ? new Date(o.ts).toLocaleDateString('th-TH') : '—') + '</td>';
-      html += '<td><span class="badge ' + (o.status==='CLOSED'?'badge-green':'badge-blue') + '">' + o.status + '</span></td>';
-      html += '<td style="text-align:center">' + o._logCount + '</td>';
-      html += '<td style="color:#64748B;font-size:11px">' + (o.detail ? o.detail.substring(0,60)+'...' : '—') + '</td></tr>';
+    // Show sample photos
+    var sampleIds=Object.keys(_photoMap).slice(0,6);
+    html+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">';
+    sampleIds.forEach(function(obsId){
+      var slots=_photoMap[obsId];
+      var allPhotos=slots.pb.concat(slots.pa);
+      allPhotos.slice(0,2).forEach(function(p){
+        html+='<div style="text-align:center;font-size:10px;color:#64748B">';
+        html+='<img src="'+p.url+'" class="thumb" onerror="this.style.display=\'none\'" loading="lazy"><br>';
+        html+=obsId.slice(-6)+'<br>'+(p.name||'').slice(0,10)+'</div>';
+      });
     });
-    html += '</tbody></table></div>';
+    if(totalPhotoObs>6) html+='<div style="color:#64748B;font-size:12px;padding:8px">... และอีก '+(totalPhotoObs-6)+' obs</div>';
+    html+='</div>';
   } else {
-    html += '<div class="section" style="color:#B91C1C"><strong>⚠ No observation IDs found in activity log.</strong><br><small>The log may not have recorded obs_id for past events, or the log was also cleared.</small></div>';
+    html+='<div style="margin-bottom:16px;padding:12px;background:#FEF3C7;border-radius:8px;color:#B45309">';
+    html+='<strong>⚠ ไม่พบรูปภาพใน ctpa_photos หรือ Storage</strong><br>';
+    html+='<small>อาจต้องอัปโหลดรูปใหม่หลังกู้คืน obs แล้ว</small></div>';
   }
 
-  // Action buttons
-  html += '<div class="section">';
-  html += '<h2 style="margin-bottom:12px">Restore Actions</h2>';
+  // Restore buttons
+  html+='<div class="section"><h2>เลือกวิธีกู้คืน</h2>';
 
-  if (_reconObs.length > 0) {
-    html += '<button class="btn btn-blue" onclick="doRestoreFromLog()">📋 Restore ' + _reconObs.length + ' obs from Activity Log (partial data)</button>';
+  html+='<button class="btn btn-green" onclick="doRestoreAll()" style="font-size:15px;padding:12px 24px">🔄 กู้คืนทั้งหมด (แนะนำ) — Log ('+_reconObs.length+') + W27 + W28 + รูปทั้งหมด</button><br><br>';
+
+  html+='<button class="btn btn-blue" onclick="doRestoreW27W28()">✅ กู้คืน W27+W28 ('+w2728+' obs) + รูปที่เกี่ยวข้อง</button>';
+
+  if(_reconObs.length>0){
+    html+='<button class="btn btn-orange" onclick="doRestoreFromLog()">📋 กู้คืนจาก Log เท่านั้น ('+_reconObs.length+' obs)</button>';
   }
 
-  html += '<button class="btn btn-green" onclick="doRestoreW27W28()">✅ Restore W27 (7 obs) + W28 (19 obs) — Full Data</button>';
+  html+='<br><br><small style="color:#64748B">⚠ ทุก restore จะ merge กับข้อมูลที่มีอยู่ (ไม่มี duplicate). Supabase ตอนนี้มี '+_currentCloud.length+' obs</small></div>';
 
-  if (_reconObs.length > 0) {
-    html += '<button class="btn btn-orange" onclick="doRestoreAll()">🔄 Restore ALL: Log (' + _reconObs.length + ') + W27 + W28 (deduplicated)</button>';
-  }
-
-  html += '<br><br><small style="color:#64748B">⚠ All restore operations will MERGE with any existing Supabase data (no duplicates). Current Supabase has ' + _currentCloud.length + ' observations.</small>';
-  html += '</div>';
-
-  // Photos info
-  if (_photos.length > 0) {
-    var photoObsIds = {};
-    _photos.forEach(function(p){photoObsIds[p.obs_id]=(photoObsIds[p.obs_id]||0)+1;});
-    html += '<div class="section"><strong>📸 Photos in ctpa_photos table (' + _photos.length + ' records for ' + Object.keys(photoObsIds).length + ' observations):</strong>';
-    html += '<br><small style="color:#15803D">These photos will be accessible once the observations are restored. No photo data is lost.</small>';
-    html += '<table><thead><tr><th>OBS ID</th><th>Slot</th><th>Index</th><th>Name</th><th>Added At</th></tr></thead><tbody>';
-    _photos.slice(0,50).forEach(function(p) {
-      html += '<tr><td><code style="font-size:10px">' + p.obs_id + '</code></td>';
-      html += '<td>' + (p.slot==='pb'?'Before':'After') + '</td>';
-      html += '<td>#' + ((p.idx||0)+1) + '</td>';
-      html += '<td>' + (p.name||'—') + '</td>';
-      html += '<td style="font-size:11px;color:#64748B">' + (p.at ? new Date(p.at).toLocaleDateString('th-TH') : '—') + '</td></tr>';
+  // Log-based obs table
+  if(_reconObs.length>0){
+    html+='<div class="section"><strong>Observations จาก Activity Log ('+_reconObs.length+'):</strong>';
+    html+='<table><thead><tr><th>OBS ID</th><th>สร้างโดย</th><th>วันที่</th><th>Status</th><th>มีรูป</th><th>Log</th></tr></thead><tbody>';
+    _reconObs.forEach(function(o){
+      var hasPhoto=_photoMap[o.id]&&(_photoMap[o.id].pb.length+_photoMap[o.id].pa.length)>0;
+      var photoCount=hasPhoto?(_photoMap[o.id].pb.length+_photoMap[o.id].pa.length):0;
+      html+='<tr><td><code style="font-size:10px">'+o.id+'</code></td>';
+      html+='<td>'+(o.createdBy||'—')+'</td>';
+      html+='<td style="font-size:11px">'+(o.ts?new Date(o.ts).toLocaleDateString('th-TH'):'—')+'</td>';
+      html+='<td><span class="badge '+(o.status==='CLOSED'?'badge-green':'badge-blue')+'">'+o.status+'</span></td>';
+      html+='<td>'+(hasPhoto?'<span class="badge badge-green">📸 '+photoCount+'</span>':'<span style="color:#94A3B8">—</span>')+'</td>';
+      html+='<td style="color:#64748B">'+o._logCount+'</td></tr>';
     });
-    if (_photos.length > 50) html += '<tr><td colspan="5" style="color:#64748B;text-align:center">... and ' + (_photos.length-50) + ' more</td></tr>';
-    html += '</tbody></table></div>';
+    html+='</tbody></table></div>';
   }
 
-  document.getElementById("resultContent").innerHTML = html;
+  document.getElementById("resultContent").innerHTML=html;
 }
 
-async function doRestoreW27W28() {
-  await doRestore(W27_OBS.concat(W28_OBS), "W27+W28 (26 observations)");
-}
-
-async function doRestoreFromLog() {
-  await doRestore(_reconObs, "Activity Log (" + _reconObs.length + " observations)");
-}
-
-async function doRestoreAll() {
-  // Merge: log obs + W27 + W28, dedup by id
-  var all = _reconObs.concat(W27_OBS).concat(W28_OBS);
-  var seen = {}, merged = [];
-  all.forEach(function(o){
-    if (!seen[o.id]) { seen[o.id]=true; merged.push(o); }
+function attachPhotos(obsList){
+  return obsList.map(function(o){
+    if(!_photoMap[o.id]) return o;
+    var pm=_photoMap[o.id];
+    var o2=Object.assign({},o);
+    if(pm.pb&&pm.pb.length) o2.pb=pm.pb;
+    if(pm.pa&&pm.pa.length) o2.pa=pm.pa;
+    return o2;
   });
-  await doRestore(merged, "ALL sources (" + merged.length + " observations)");
 }
 
-async function doRestore(newObs, label) {
-  if (!confirm("Restore " + newObs.length + " observations from " + label + " to Supabase?\n\nThis will MERGE with existing data (currently " + _currentCloud.length + " obs).\n\nProceed?")) return;
+async function doRestoreAll(){
+  var all=_reconObs.concat(W27_OBS).concat(W28_OBS);
+  var seen={},merged=[];
+  all.forEach(function(o){if(!seen[o.id]){seen[o.id]=true;merged.push(o);}});
+  await doRestore(merged,"ALL sources ("+merged.length+" obs) + รูปทั้งหมด");
+}
+async function doRestoreW27W28(){
+  await doRestore(W27_OBS.concat(W28_OBS),"W27+W28 ("+(W27_OBS.length+W28_OBS.length)+" obs)");
+}
+async function doRestoreFromLog(){
+  await doRestore(_reconObs,"Activity Log ("+_reconObs.length+" obs)");
+}
+
+async function doRestore(newObs, label){
+  var totalPhotos=newObs.reduce(function(s,o){var pm=_photoMap[o.id];return s+(pm?(pm.pb.length+pm.pa.length):0);},0);
+  if(!confirm("กู้คืน "+newObs.length+" observations\nรูปภาพ: "+totalPhotos+" รูป\nจาก: "+label+"\n\nMerge กับ Supabase (ตอนนี้ "+_currentCloud.length+" obs)\n\nดำเนินการ?")) return;
 
   document.getElementById("importCard").style.display="block";
   document.getElementById("log2").innerHTML="";
-  log("Restoring from " + label + "...","info","log2");
+  log("กำลังกู้คืน: "+label,"info","log2");
 
   try {
-    // Merge: existing cloud + new, dedup by id
-    var existing = _currentCloud.slice();
-    var existingIds = {};
+    // Attach photos to each obs
+    var withPhotos=attachPhotos(newObs);
+    log("แนบรูปภาพเข้า observations...","info","log2");
+    var photoCount=withPhotos.reduce(function(s,o){return s+((o.pb?o.pb.length:0)+(o.pa?o.pa.length:0));},0);
+    log("   รูปที่แนบ: "+photoCount+" รูป","ok","log2");
+
+    // Merge with existing
+    var existing=_currentCloud.slice();
+    var existingIds={};
     existing.forEach(function(o){existingIds[o.id]=true;});
-
-    var added = 0;
-    newObs.forEach(function(o){
-      if (!existingIds[o.id]) {
-        existing.push(o);
-        existingIds[o.id]=true;
-        added++;
-      }
+    var added=0;
+    withPhotos.forEach(function(o){
+      if(!existingIds[o.id]){existing.push(o);existingIds[o.id]=true;added++;}
     });
+    log("เพิ่ม: "+added+" obs | รวม: "+existing.length+" obs","info","log2");
 
-    log("Existing: " + _currentCloud.length + " | Adding: " + added + " | Total: " + existing.length,"info","log2");
+    if(existing.length===0) throw new Error("SAFETY ABORT: merged data empty");
 
-    // Also link photos from ctpa_photos to observations
-    if (_photos.length > 0) {
-      log("Linking " + _photos.length + " photos to observations...","info","log2");
-      var photosByObs = {};
-      _photos.forEach(function(p){
-        if (!photosByObs[p.obs_id]) photosByObs[p.obs_id]={pb:[],pa:[]};
-        var slot = p.slot||"pb";
-        photosByObs[p.obs_id][slot].push({
-          id: p.id||("ph_"+p.obs_id+"_"+slot+"_"+(p.idx||0)),
-          name: p.name||"photo.jpg",
-          at: p.at||new Date().toISOString(),
-          _hasPhoto: true
-        });
-      });
-
-      existing = existing.map(function(o){
-        if (photosByObs[o.id]) {
-          var o2 = Object.assign({},o);
-          if (photosByObs[o.id].pb && photosByObs[o.id].pb.length) o2.pb = photosByObs[o.id].pb;
-          if (photosByObs[o.id].pa && photosByObs[o.id].pa.length) o2.pa = photosByObs[o.id].pa;
-          return o2;
-        }
-        return o;
-      });
-      log("Photos linked.","ok","log2");
-    }
-
-    // SAFETY CHECK
-    if (existing.length === 0) {
-      throw new Error("SAFETY ABORT: merged data is empty — refusing to write empty array");
-    }
-
-    log("Writing " + existing.length + " observations to Supabase...","info","log2");
-
-    var base = CLOUD.url + "/rest/v1/";
-    var p = await fetch(base + CLOUD.table + "?id=eq." + CLOUD.row, {
+    log("กำลัง PATCH Supabase...","info","log2");
+    var p=await fetch(CLOUD.url+"/rest/v1/"+CLOUD.table+"?id=eq."+CLOUD.row,{
       method:"PATCH",
       headers:Object.assign({"Prefer":"return=minimal"},H()),
       body:JSON.stringify({data:existing}),
       cache:"no-store"
     });
-
-    if (!p.ok) {
-      var t = await p.text();
-      throw new Error("PATCH HTTP " + p.status + ": " + t);
-    }
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
 
     log("","ok","log2");
-    log("✅ SUCCESS! Restored " + existing.length + " observations to Supabase.","ok","log2");
-    log("   Added from " + label + ": " + added,"ok","log2");
-    if (_photos.length > 0) log("   Photos linked: " + _photos.length + " records","ok","log2");
+    log("✅ สำเร็จ! กู้คืน "+existing.length+" observations","ok","log2");
+    log("   รูปภาพที่ link แล้ว: "+photoCount+" รูป","ok","log2");
     log("","ok","log2");
-    log("→ Refresh the main app and check the dashboard.","info","log2");
-    log("→ Photos should load when you open each observation.","info","log2");
+    log("→ Refresh หน้าแอปหลัก แล้วเปิด observation เพื่อดูรูป","info","log2");
+    log("→ ถ้ารูปไม่แสดง ให้กด 📷 Sync Photos ในแอปหลัก","info","log2");
 
-    // Update current count for future operations
-    _currentCloud = existing;
+    _currentCloud=existing;
 
-  } catch(e) {
-    log("ERROR: " + e.message,"err","log2");
+    document.getElementById("resultContent").innerHTML='<div style="background:#DCFCE7;color:#15803D;padding:16px;border-radius:8px;font-weight:700;font-size:15px">✅ กู้คืนสำเร็จ! '+existing.length+' observations + '+photoCount+' รูปภาพ<br><br><span style="font-weight:400;font-size:13px">Refresh หน้าแอปหลักเพื่อดูข้อมูล</span></div>';
+
+  } catch(e){
+    log("ERROR: "+e.message,"err","log2");
   }
 }
 </script>
