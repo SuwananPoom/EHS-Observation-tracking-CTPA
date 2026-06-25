@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import W27 — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:780px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:6px 8px;text-align:left}
+td{padding:5px 8px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+</style>
+</head>
+<body>
+<h1>Import W27 — Customer Site Walk</h1>
+<div class="sub">Zone A · Building A · 16 Apr 2026 · 7 observations (all CLOSED)</div>
+
+<div class="card">
+<table>
+<thead><tr><th>#</th><th>Description</th><th>Category</th><th>obsType</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Sharp wire ends at the handrail may cause injury upon contact.</td><td>Equipment Safety</td><td>UNSAFE_CON</td><td>MAJOR</td><td>CLOSED</td></tr>
+<tr><td>2</td><td>Protruding rebar above ground level is not fitted with protective caps, posing a risk of injury.</td><td>Equipment Safety</td><td>UNSAFE_CON</td><td>SERIOUS</td><td>CLOSED</td></tr>
+<tr><td>3</td><td>Scaffolding platform is cluttered with scaffolding components and debris. The scaffold is in incomplete/unsafe condition and is not tagged with a "Do Not Use" (Red Tag).</td><td>Scaffold</td><td>UNSAFE_CON</td><td>SERIOUS</td><td>CLOSED</td></tr>
+<tr><td>4</td><td>Guardrails should be installed to prevent access to exposed rebar.</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td>SERIOUS</td><td>CLOSED</td></tr>
+<tr><td>5</td><td>The drinking/rest area is not provided with a roof or shelter for sun protection.</td><td>Health &amp; Hygiene</td><td>UNSAFE_CON</td><td>MINOR</td><td>CLOSED</td></tr>
+<tr><td>6</td><td>No guardrails are installed around the area, posing a risk of falling.</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td>SERIOUS</td><td>CLOSED</td></tr>
+<tr><td>7</td><td>There are open holes and scattered steel plates. Poor housekeeping is observed, and the area is not properly managed or cleaned.</td><td>Housekeeping</td><td>UNSAFE_CON</td><td>MAJOR</td><td>CLOSED</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="card">
+  <button class="btn" id="btnImport" onclick="doImport()">⬆ Import W27 to Supabase</button>
+  <div class="log" id="log">กดปุ่มเพื่อนำเข้าข้อมูล...\n</div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var W27_OBS = [
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Equipment Safety", risk:"MAJOR",
+    desc:"Sharp wire ends at the handrail may cause injury upon contact.",
+    rect:"Wire ties are being used for fastening instead of cable ties.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Equipment Safety", risk:"SERIOUS",
+    desc:"Protruding rebar above ground level is not fitted with protective caps, posing a risk of injury.",
+    rect:"All exposed protruding rebars have been fitted with appropriate protective caps immediately to prevent injury.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Scaffold", risk:"SERIOUS",
+    desc:"Scaffolding platform is cluttered with scaffolding components and debris, creating unsafe conditions. The scaffold is in incomplete/unsafe condition and is not tagged with a \"Do Not Use\" (Red Tag).",
+    rect:"All loose materials and debris have been removed from the scaffold platform to ensure a clean and safe working area.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"SERIOUS",
+    desc:"Guardrails should be installed to prevent access to exposed rebar.",
+    rect:"Guardrails have been installed around the exposed rebar area to restrict access and prevent injury.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Health & Hygiene", risk:"MINOR",
+    desc:"The drinking/rest area is not provided with a roof or shelter for sun protection.",
+    rect:"A temporary shelter/roof has been installed at the drinking/rest area to provide adequate shade.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"SERIOUS",
+    desc:"No guardrails are installed around the area, posing a risk of falling.",
+    rect:"Guardrails have been installed around the area to prevent fall hazards.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  },
+  {
+    date:"2026-04-16", zone:"Zone A", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Housekeeping", risk:"MAJOR",
+    desc:"There are open holes and scattered steel plates. Poor housekeeping is observed, and the area is not properly managed or cleaned.",
+    rect:"All openings have been properly covered or barricaded. Steel plates have been neatly arranged, and the area has been cleaned immediately.",
+    by:"DAYONE", due:"2026-04-17", status:"CLOSED", closed:"2026-04-17", closedBy:"Ritta", week:"W27"
+  }
+];
+
+async function doImport(){
+  document.getElementById("btnImport").disabled=true;
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var r=await fetch(base+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("GET HTTP "+r.status);
+    var rows=await r.json();
+    var obs=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations ปัจจุบัน: "+obs.length,"ok");
+
+    // Duplicate guard
+    var hasW27=obs.some(function(o){return o.week==="W27";});
+    if(hasW27){log("⚠ พบข้อมูล W27 อยู่แล้ว — ยกเลิกการนำเข้าเพื่อป้องกัน duplicate","warn");document.getElementById("btnImport").disabled=false;return;}
+
+    // Find max OBS id
+    var mx=0;
+    obs.forEach(function(o){var n=parseInt((o.id||"").replace(/^OBS-/i,""),10);if(!isNaN(n)&&n>mx)mx=n;});
+    log("Max OBS ID ปัจจุบัน: OBS-"+String(mx).padStart(3,"0"),"info");
+
+    var newObs=W27_OBS.map(function(o,i){
+      return Object.assign({},o,{id:"OBS-"+String(mx+1+i).padStart(3,"0"),pb:[],pa:[]});
+    });
+
+    log("จะเพิ่ม "+newObs.length+" observations: "+newObs[0].id+" → "+newObs[newObs.length-1].id,"info");
+    newObs.forEach(function(o){log("  "+o.id+" | "+o.risk+" | "+o.cat+" | "+o.desc.slice(0,60)+"…","info");});
+
+    var merged=newObs.concat(obs);
+    var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:merged})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== นำเข้าสำเร็จ ===","ok");
+    log("เพิ่ม "+newObs.length+" observations (W27) เรียบร้อย","ok");
+    log("OBS IDs: "+newObs[0].id+" – "+newObs[newObs.length-1].id,"ok");
+    log("รีเฟรชแอปเพื่อยืนยัน","info");
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnImport").disabled=false;
+  }
+}
+</script>
+</body>
+</html>

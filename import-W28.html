@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Import W28 — EHS</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:900px;margin:40px auto;padding:0 20px;background:#F8FAFC;color:#1E293B}
+h1{font-size:20px;font-weight:700;margin-bottom:4px}
+.sub{color:#64748B;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:20px;margin-bottom:16px}
+.btn{padding:10px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;background:#3B82F6;color:#fff}
+.btn:hover{background:#2563EB}.btn:disabled{background:#94A3B8;cursor:not-allowed}
+.log{font-family:monospace;font-size:12px;white-space:pre-wrap;background:#0F172A;color:#94A3B8;border-radius:8px;padding:16px;max-height:420px;overflow-y:auto;margin-top:12px}
+.ok{color:#4ADE80}.err{color:#F87171}.warn{color:#FCD34D}.info{color:#60A5FA}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-top:12px}
+th{background:#1E3A5F;color:#fff;padding:6px 8px;text-align:left}
+td{padding:5px 8px;border-bottom:1px solid #E2E8F0;vertical-align:top}
+.SERIOUS{color:#DC2626;font-weight:700}.MAJOR{color:#D97706;font-weight:700}.MINOR{color:#0284C7}
+</style>
+</head>
+<body>
+<h1>Import W28 — Customer Site Walk</h1>
+<div class="sub">Multiple Zones · Building A · 24 Apr 2026 · 19 observations (all CLOSED)</div>
+
+<div class="card">
+<table>
+<thead><tr><th>#</th><th>Zone / Area</th><th>Category</th><th>Obs Type</th><th>Risk</th><th>Description (truncated)</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Rebar Yard</td><td>Lifting Operations (HRA)</td><td>UNSAFE_CON</td><td class="SERIOUS">SERIOUS</td><td>Lifting area not properly barricaded; no warning signage for lift radius.</td></tr>
+<tr><td>2</td><td>Rebar Yard</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="SERIOUS">SERIOUS</td><td>Electrical lead loosened from plug at fabrication shop.</td></tr>
+<tr><td>3</td><td>Rebar Yard</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="SERIOUS">SERIOUS</td><td>Improper cable jointing and unsafe taping for spotlight connection.</td></tr>
+<tr><td>4</td><td>External South side</td><td>Lifting Operations (HRA)</td><td>UNSAFE_ACT</td><td class="SERIOUS">SERIOUS</td><td>Unauthorized persons inside lifting zone; no clearance by supervisor. (Repeated)</td></tr>
+<tr><td>5</td><td>External South side</td><td>Lifting Operations (HRA)</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>Warning signage only in 2 languages; missing Myanmar language.</td></tr>
+<tr><td>6</td><td>TC01 Fl.1</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>CPR procedure signage at electrical panels not in 3 languages.</td></tr>
+<tr><td>7</td><td>TC01 Fl.1</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>Certified electrician list on electrical panels not updated.</td></tr>
+<tr><td>8</td><td>Zone A Fl.1</td><td>Documentation</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>MEWP/Scissor Lift: Authorized Operator list and safety signage not provided.</td></tr>
+<tr><td>9</td><td>Zone C ST06</td><td>Scaffold</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>Stair Tower Summary Report (SWL + wall tie) not prepared.</td></tr>
+<tr><td>10</td><td>Zone C Lower Roof</td><td>Scaffold</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>Scaffolding structures without Red/Green tags.</td></tr>
+<tr><td>11</td><td>ST06</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>Electrical cables laid on rebar without proper S-hook suspension.</td></tr>
+<tr><td>12</td><td>Zone D Lower Roof</td><td>Electrical Safety (HRA)</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>Electrical cables on ground without elevation — trip hazard.</td></tr>
+<tr><td>13</td><td>Zone D Lower Roof</td><td>Equipment Safety</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>Exposed rebar without protective caps in working areas.</td></tr>
+<tr><td>14</td><td>Zone D Lower Roof</td><td>Access and Egress</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>No safe access and egress on east side of second floor.</td></tr>
+<tr><td>15</td><td>Zone D Lower Roof</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td class="SERIOUS">SERIOUS</td><td>Loose materials in elevated areas near openings — falling object risk.</td></tr>
+<tr><td>16</td><td>Zone D Lower Roof</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td class="SERIOUS">SERIOUS</td><td>Lifelines not inspected; some removed without authorization; SWL not displayed.</td></tr>
+<tr><td>17</td><td>Zone D Lower Roof</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td class="MAJOR">MAJOR</td><td>Grating installation next week — MSRA review meeting not yet conducted.</td></tr>
+<tr><td>18</td><td>Zone D Lower Roof</td><td>Working from Heights (HRA)</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>No mandatory full body harness signage at WAH areas.</td></tr>
+<tr><td>19</td><td>Zone B</td><td>Housekeeping</td><td>UNSAFE_CON</td><td class="MINOR">MINOR</td><td>Inadequate housekeeping; site not cleaned before commencing work.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="card">
+  <button class="btn" id="btnImport" onclick="doImport()">⬆ Import W28 to Supabase</button>
+  <div class="log" id="log">กดปุ่มเพื่อนำเข้าข้อมูล...\n</div>
+</div>
+
+<script>
+var CLOUD={url:"https://ocwdnvblpjfzkgzratqb.supabase.co",key:"sb_publishable_4Vm__otNg0T3iEV8_ni43Q_vhA1-_tt",table:"ctpa_state",row:"bkk22"};
+function H(){return{apikey:CLOUD.key,Authorization:"Bearer "+CLOUD.key,"Content-Type":"application/json"};}
+function log(m,c){var e=document.getElementById("log");var s=document.createElement("span");if(c)s.className=c;s.textContent=m+"\n";e.appendChild(s);e.scrollTop=e.scrollHeight;}
+
+var W28_OBS = [
+  {
+    date:"2026-04-24", zone:"Rebar Yard", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Lifting Operations (HRA)", risk:"SERIOUS",
+    desc:"Lifting activities at the rebar yard area were not properly barricaded to cover the lift radius. No warning signage was provided to alert unauthorized personnel of ongoing lifting operations.",
+    rect:"The lifting area was immediately re-barricaded to fully cover the lift radius, warning signage was installed, and a safety standdown was conducted with all related workers.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Rebar Yard", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"SERIOUS",
+    desc:"Electrical Cable Condition — The electrical lead had loosened from electrical plug posing a potential electrical hazard at the fabrication shop.",
+    rect:"The loose electrical lead was immediately disconnected and repaired/replaced.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Rebar Yard", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"SERIOUS",
+    desc:"Improper Electrical Connection — Unsafe cable jointing and improper taping were observed for the connection to the spotlight at the rebar yard, posing a potential electrical hazard.",
+    rect:"Immediately stop using the unsafe electrical connection. Replace the improper cable jointing with proper connectors and ensure all wiring is correctly insulated using approved materials. Inspect the spotlight connection and verify it is safe before re-energizing.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"External South side", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_ACT", cat:"Lifting Operations (HRA)", risk:"SERIOUS",
+    desc:"Lifting operation was operating while many unauthorized persons were inside the lifting zone and no cordoning off the lifting zone with proper signage. Lifting supervisor and signaling did not clear unauthorized persons before lifting. (Repeated case) Stand down has been conducted but disciplinary action should be issued to crane operator, lifting supervisor and signaling.",
+    rect:"Immediately stop the lifting operation and clear all unauthorized persons from the lifting zone. Properly cordon off the entire lifting area with barricades and warning signage before resuming work.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"External South side", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Lifting Operations (HRA)", risk:"MAJOR",
+    desc:"Warning signage for lifting operations was not adequately displayed in all directions — only 2 languages provided, missing Myanmar language. Required signage must include: No Unauthorized Entry & Only Authorised Persons Allowed (Red Prohibition Sign); Lifting Operation in Progress / Beware Falling Object Hazard / Line of Fire (Yellow Warning Sign). All signage must be in Thai, English and Myanmar.",
+    rect:"Immediately install sufficient warning signage around the lifting operation area in all access directions. Replace and update existing signs to include three languages: Thai, English, and Myanmar.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"TC01 Fl.1", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"MINOR",
+    desc:"Electrical Panel Signage — CPR procedure signage displayed at electrical panels across all areas are not provided in three languages, which may lead to misunderstanding among workers.",
+    rect:"Immediately replace or update the CPR procedure signage displayed at all electrical panels to include three languages: Thai, English, and Myanmar.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"TC01 Fl.1", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"MINOR",
+    desc:"Electrician Responsibility Update on Electrical Distribution Boxes — The list of certified electricians assigned displayed on electrical panels has not been updated.",
+    rect:"Immediately review and update the list of certified electricians displayed on all electrical panels to ensure names, qualifications, and contact details are current and accurate.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone A Fl.1", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Documentation", risk:"MINOR",
+    desc:"Authorized Operator & Safety Signage (MEWP / Scissor Lift) — Authorized Operator list, including operator identification (photo and contact number), has not been provided. Required safety instruction signage is insufficient and not available in three languages.",
+    rect:"Immediately prepare and display the Authorized Operator list at the equipment location, including operator identification photo and contact number. Update and install all required safety instruction signage in three languages: Thai, English, and Myanmar.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone C ST06", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Scaffold", risk:"MINOR",
+    desc:"Scaffolding Documentation — The Stair Tower Summary Report, including the SWL (Safe Working Load) calculation and wall tie point, shall be prepared and submitted accordingly.",
+    rect:"Immediately prepare the Stair Tower Summary Report, including SWL calculation and wall tie point details, and submit it to relevant parties for review and approval.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone C Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Scaffold", risk:"MAJOR",
+    desc:"Scaffolding Tagging System — Scaffolding structures were found without scaffolding tags (Red Tag – Do Not Use / Green Tag – Safe for Use).",
+    rect:"Immediately stop the use of all untagged scaffolding structures. Inspect scaffolds by a competent person and install appropriate tags: Red Tag – Do Not Use for unsafe/incomplete scaffolds; Green Tag – Safe for Use for inspected and approved scaffolds.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"ST06", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"MAJOR",
+    desc:"Cable Management – Rebar Contact — Electrical cables were found laid directly on rebar without proper suspension using S-hooks.",
+    rect:"Immediately remove the electrical cables from direct contact with the rebar and re-route them using proper suspension with approved S-hooks or suitable cable support systems.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Electrical Safety (HRA)", risk:"MINOR",
+    desc:"Cable Management – Ground Condition — Electrical cables were found lying on the ground without being elevated above ground level, creating potential trip hazards.",
+    rect:"Immediately lift and secure all electrical cables found lying on the ground using approved cable stands, hooks, or overhead support systems to maintain adequate clearance above ground level.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Equipment Safety", risk:"MAJOR",
+    desc:"Rebar Protection — Exposed rebar was identified within working areas without protective caps, creating an unsafe condition.",
+    rect:"Immediately install approved protective rebar caps or suitable covers on all exposed rebar located within working areas.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Access and Egress", risk:"MAJOR",
+    desc:"Safe Access — The working area east side of second floor has not provided safe access & egress for workforce.",
+    rect:"Immediately provide safe access and egress for the workforce at the east side working area on the second floor. Install suitable access routes such as secured stairways, ladders, or temporary walkways with proper handrails and stable footing.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"SERIOUS",
+    desc:"Loose Materials at Height — Loose materials were not properly secured in elevated work areas with openings or gaps, posing a risk of falling objects to lower levels.",
+    rect:"Conduct an immediate standdown with the concerned work team. Remove or properly secure all loose materials in elevated work areas, especially near openings or gaps. Install toe boards, edge protection, netting, or other containment measures. Barricade the area below until the hazard is eliminated.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"SERIOUS",
+    desc:"WAH 15.1 Lifeline Inspection — Lifelines installed in work-at-height areas have not been inspected and verified by a responsible person; some lifelines have been removed without verification and permission. SWL, Lifeline Checklist, Maximum Persons to Hook Up on each anchorage point have not been displayed.",
+    rect:"Conduct an immediate standdown regarding lifeline control and WAH safety requirements. Reinspect all installed lifelines, verify condition and anchorage points, and reapprove before further use. Display SWL, Lifeline Checklist, and Maximum Persons Allowed to Hook Up on Each Anchorage Point.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"MAJOR",
+    desc:"WAH 15.2 — Grating installation work activity will be started next week. LP has been recommended to get PMC to conduct effectiveness of MSRA review meeting with GC team.",
+    rect:"Prior to commencement of grating installation, LP shall coordinate with PMC to conduct an effective MSRA review meeting with the GC team covering work sequence, risk assessment, control measures, manpower, tools/equipment, lifting activities, access arrangements, and emergency response requirements.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone D Lower Roof", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Working from Heights (HRA)", risk:"MINOR",
+    desc:"Full Body Harness Signage — No clear signage was identified indicating the mandatory use of full body harnesses in work-at-height areas.",
+    rect:"Install clear and visible mandatory signage in all work-at-height areas indicating the required use of full body harnesses. Ensure signage is positioned at all access points and relevant working locations, and provided in three languages: Thai, English, and Myanmar.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  },
+  {
+    date:"2026-04-24", zone:"Zone B", company:"DayOne", fc:"Customer Site Walk",
+    obsType:"UNSAFE_CON", cat:"Housekeeping", risk:"MINOR",
+    desc:"Housekeeping — Housekeeping is inadequate. The site must be properly cleaned and maintained before commencing work. A weekly \"Big Cleaning\" program should be implemented and consistently followed.",
+    rect:"Carry out a full housekeeping cleanup of the affected site area and ensure all debris, waste materials, unused tools, and obstructions are removed before commencing work.",
+    by:"DAYONE", due:"2026-04-27", status:"CLOSED", closed:"2026-04-27", closedBy:"Suwanan Poomchaveng", week:"W28"
+  }
+];
+
+async function doImport(){
+  document.getElementById("btnImport").disabled=true;
+  log("กำลังโหลดข้อมูลจาก Supabase...","info");
+  try{
+    var base=CLOUD.url+"/rest/v1/"+CLOUD.table;
+    var r=await fetch(base+"?id=eq."+CLOUD.row+"&select=data",{headers:H(),cache:"no-store"});
+    if(!r.ok) throw new Error("GET HTTP "+r.status);
+    var rows=await r.json();
+    var obs=Array.isArray(rows[0].data)?rows[0].data:[];
+    log("Observations ปัจจุบัน: "+obs.length,"ok");
+
+    // Duplicate guard
+    var hasW28=obs.some(function(o){return o.week==="W28";});
+    if(hasW28){log("⚠ พบข้อมูล W28 อยู่แล้ว — ยกเลิกการนำเข้าเพื่อป้องกัน duplicate","warn");document.getElementById("btnImport").disabled=false;return;}
+
+    // Find max OBS id
+    var mx=0;
+    obs.forEach(function(o){var n=parseInt((o.id||"").replace(/^OBS-/i,""),10);if(!isNaN(n)&&n>mx)mx=n;});
+    log("Max OBS ID ปัจจุบัน: OBS-"+String(mx).padStart(3,"0"),"info");
+
+    var newObs=W28_OBS.map(function(o,i){
+      return Object.assign({},o,{id:"OBS-"+String(mx+1+i).padStart(3,"0"),pb:[],pa:[]});
+    });
+
+    log("จะเพิ่ม "+newObs.length+" observations: "+newObs[0].id+" → "+newObs[newObs.length-1].id,"info");
+    newObs.forEach(function(o){log("  "+o.id+" | "+o.risk+" | "+o.cat+" | "+o.desc.slice(0,70)+"…","info");});
+
+    var merged=newObs.concat(obs);
+    var p=await fetch(base+"?id=eq."+CLOUD.row,{method:"PATCH",headers:H(),body:JSON.stringify({data:merged})});
+    if(!p.ok){var t=await p.text();throw new Error("PATCH HTTP "+p.status+": "+t);}
+
+    log("\n=== นำเข้าสำเร็จ ===","ok");
+    log("เพิ่ม "+newObs.length+" observations (W28) เรียบร้อย","ok");
+    log("OBS IDs: "+newObs[0].id+" – "+newObs[newObs.length-1].id,"ok");
+    log("รีเฟรชแอปเพื่อยืนยัน","info");
+  }catch(e){
+    log("ERROR: "+e.message,"err");
+    document.getElementById("btnImport").disabled=false;
+  }
+}
+</script>
+</body>
+</html>
