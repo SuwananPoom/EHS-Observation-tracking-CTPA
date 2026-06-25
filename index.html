@@ -3656,7 +3656,7 @@ function ReportAuthGate(_ref_rgate) {
 
 /* ── DiagnosticsView component ── */
 function DiagnosticsView(_ref_diag) {
-  var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr;
+  var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr, setView = _ref_diag.setView;
 
   var _wfState = React.useState(null), wfResult = _wfState[0], setWfResult = _wfState[1];
   var _wfRun = React.useState(false), wfRunning = _wfRun[0], setWfRunning = _wfRun[1];
@@ -4954,6 +4954,91 @@ function DiagnosticsView(_ref_diag) {
         )
       );
     })()
+
+    /* ── DATA MANAGEMENT ── */
+    secBox("Data Management", "Import weekly observation batches and repair broken photo references.",
+      React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
+
+        /* Photo Repair */
+        (function(){
+          var missing = [];
+          obs.forEach(function(o){
+            ["pb","pa"].forEach(function(slot){
+              (o[slot]||[]).forEach(function(p, i){
+                if(p && !p.url && !(p.src && p.src.length > 32))
+                  missing.push({ obsId: o.id, slot: slot, idx: i, name: p.name || "photo" });
+              });
+            });
+          });
+          return React.createElement("div", { style: { border: "1px solid " + (missing.length ? "#EF4444" : "#86EFAC"), borderRadius: 10, padding: 16, background: missing.length ? "#FEF2F2" : "#F0FDF4" } },
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: missing.length ? "#B91C1C" : "#15803D", marginBottom: 6 } },
+              missing.length ? ("⚠ " + missing.length + " Missing Photo Reference(s)") : "✅ No Missing Photo References"
+            ),
+            missing.length ? React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 12, color: "#7F1D1D", marginBottom: 10 } },
+                "Photos with metadata but no image data — OBS IDs: " + missing.map(function(r){ return r.obsId + " (" + (r.slot==="pb"?"Before":"After") + "#" + (r.idx+1) + ")"; }).join(", ")
+              ),
+              React.createElement("button", {
+                onClick: function(){
+                  if(!window.confirm("Remove " + missing.length + " broken photo placeholder(s) from:\n" + missing.map(function(r){ return r.obsId; }).join(", ") + "\n\nThis cannot be undone.")) return;
+                  var fixed = obs.map(function(o){
+                    var o2 = Object.assign({}, o);
+                    o2.pb = (o.pb||[]).filter(function(p){ return p && (p.url || (p.src && p.src.length > 32)); });
+                    o2.pa = (o.pa||[]).filter(function(p){ return p && (p.url || (p.src && p.src.length > 32)); });
+                    return o2;
+                  });
+                  cloudMergeSave(fixed, []).then(function(res){
+                    if(res.ok){ window.location.reload(); }
+                    else alert("Cloud save failed — try again");
+                  });
+                },
+                style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontWeight: 700, fontSize: 13, cursor: "pointer" }
+              }, "🗑 Clear " + missing.length + " Broken Reference(s)")
+            ) : React.createElement("div", { style: { fontSize: 12, color: "#15803D" } }, "All photo references have valid image data.")
+          );
+        })(),
+
+        /* W27 Import */
+        (function(){
+          var done = obs.some(function(o){ return o.week === "W27"; });
+          return React.createElement("div", { style: { border: "1px solid #E2E8F0", borderRadius: 10, padding: 16, background: "#fff" } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontWeight: 700, fontSize: 13 } }, "W27 — Customer Site Walk · Zone A · 16 Apr 2026 · 7 obs"),
+                React.createElement("div", { style: { fontSize: 11, color: "#64748B" } }, "All CLOSED")
+              ),
+              done ? React.createElement("span", { style: { background: "#ECFDF5", color: "#00AA66", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700 } }, "✓ Already imported") :
+              React.createElement("button", {
+                onClick: function(){ setView("admin_import"); },
+                style: { background: "#00AA66", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }
+              }, "⬆ Import W27")
+            )
+          );
+        })(),
+
+        /* W28 Import */
+        (function(){
+          var done = obs.some(function(o){ return o.week === "W28"; });
+          return React.createElement("div", { style: { border: "1px solid #E2E8F0", borderRadius: 10, padding: 16, background: "#fff" } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontWeight: 700, fontSize: 13 } }, "W28 — Customer Site Walk · Zones A–D · 24 Apr 2026 · 19 obs"),
+                React.createElement("div", { style: { fontSize: 11, color: "#64748B" } }, "All CLOSED")
+              ),
+              done ? React.createElement("span", { style: { background: "#ECFDF5", color: "#00AA66", borderRadius: 20, padding: "5px 12px", fontSize: 12, fontWeight: 700 } }, "✓ Already imported") :
+              React.createElement("button", {
+                onClick: function(){ setView("admin_import"); },
+                style: { background: "#00AA66", color: "#fff", border: "none", borderRadius: 8, padding: "9px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }
+              }, "⬆ Import W28")
+            )
+          );
+        })()
+
+      )
+    ),
+
+    /* ── END ── */
+    React.createElement("div", null)
 
   );
 }
@@ -8844,7 +8929,7 @@ function App(_refApp) {
     }
   }, "Cancel"))), view === "report" && (reportAuth
   ? /*#__PURE__*/React.createElement(ReportView, { obs: obs })
-  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && isAdmin() && /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr }),
+  : /*#__PURE__*/React.createElement(ReportAuthGate, { onAuth: function(){ setReportAuth(true); }, onBack: function(){ setView("dashboard"); } })), view === "diag" && isAdmin() && /*#__PURE__*/React.createElement(DiagnosticsView, { obs: obs, lastSynced: lastSynced, syncErr: syncErr, setView: setView }),
 /* ── Admin views (DayOne Admin only) ── */
 view === "admin_users"   && isAdmin() && /*#__PURE__*/React.createElement(AdminUsersView,          { setView: setView }),
 view === "admin_access"  && isAdmin() && /*#__PURE__*/React.createElement(AdminAccessView,         { setView: setView }),
