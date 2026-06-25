@@ -311,7 +311,7 @@ function uploadPhotoToStorage(obsId, slot, idx, photo){
   var url = CLOUD.url.replace(/\/$/,"") + "/storage/v1/object/" + CLOUD.bucket + "/" + path.split("/").map(encodeURIComponent).join("/");
   return fetch(url, {
     method: "POST",
-    headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": blob.type || "image/jpeg", "x-upsert": "true" },
+    headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + ((window.CTPA_AUTH && window.CTPA_AUTH.session && window.CTPA_AUTH.session.access_token) || CLOUD.key), "Content-Type": blob.type || "image/jpeg", "x-upsert": "true" },
     body: blob
   }).then(function(r){
     if(r.ok){ __lastStorageErr = ""; return storagePublicUrl(path); }
@@ -597,11 +597,15 @@ function cloudCheck(){
     .catch(function(e){ console.warn("[CTPA] cloudCheck network error:", e && e.message); return false; });
 }
 function cloudHeaders(){
-  /* Send both apikey and Authorization headers for all key formats.
-     Supabase REST API requires Authorization: Bearer for RLS policies. */
+  /* Use the authenticated user's JWT when available so RLS policies that require
+     an authenticated role (e.g. ctpa_photos INSERT) work correctly.
+     Fall back to anon key when no session is active. */
+  var jwt = (window.CTPA_AUTH && window.CTPA_AUTH.session && window.CTPA_AUTH.session.access_token)
+    ? window.CTPA_AUTH.session.access_token
+    : CLOUD.key;
   return {
     "apikey": CLOUD.key,
-    "Authorization": "Bearer " + CLOUD.key,
+    "Authorization": "Bearer " + jwt,
     "Content-Type": "application/json"
   };
 }
@@ -5915,8 +5919,17 @@ function App(_refApp) {
       /* per-photo localStorage key survives pull() / cloudMergeSave overwrites */
       if(p && p.src) cachePhotoLocal(id, k, idx, p.src);
       var uploadP = savePhotoToCloud(id, k, idx, p).then(function(url){
-        console.log("[CTPA] savePhotoToCloud", id, k, idx, url ? "✅ Storage" : "⚠ table-only (bucket not set up?)");
-        if(url) attachPhotoUrl(id, k, idx, url);
+        if(url){
+          console.log("[CTPA] savePhotoToCloud", id, k, idx, "✅ Storage URL:", url);
+          attachPhotoUrl(id, k, idx, url);
+          toast$("📷 Photo uploaded ✔");
+        } else {
+          console.warn("[CTPA] savePhotoToCloud", id, k, idx, "⚠ Storage failed — saved to table fallback. Err:", __lastStorageErr);
+          if(__lastStorageErr) toast$("⚠ Photo saved locally — cloud upload failed: " + __lastStorageErr.slice(0,80));
+        }
+      }).catch(function(e){
+        console.error("[CTPA] photo upload error:", e && e.message);
+        toast$("❌ Photo upload error: " + ((e && e.message) || "unknown"));
       });
       uploadPromises.push(uploadP);
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
