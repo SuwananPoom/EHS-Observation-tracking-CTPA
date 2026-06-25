@@ -1138,7 +1138,8 @@ function ctpaMigrate(arr) {
         date: o.date || (o.ts ? o.ts.slice(0,10) : ""),
         due: o.due || (o.dueDate ? o.dueDate.slice(0,10) : ""),
         closed: o.closed || (o.closedAt ? o.closedAt.slice(0,10) : ""),
-        week: o.week || ""
+        week: o.week || "",
+        status: o.status === "PENDING" ? "OPEN" : (o.status || "OPEN")
       });
     }
     var ap = apOf(o);
@@ -8274,7 +8275,7 @@ function App(_refApp) {
     }, ot.label), /*#__PURE__*/React.createElement("span", {
       style: pill(rk.bg, rk.text, 9)
     }, rk.label), /*#__PURE__*/React.createElement("span", {
-      style: pill(STATUS[o.status].bg, STATUS[o.status].text, 9)
+      style: pill((STATUS[o.status]||STATUS["OPEN"]).bg, (STATUS[o.status]||STATUS["OPEN"]).text, 9)
     }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
       style: pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
@@ -9020,15 +9021,15 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
       justifyContent: "flex-end"
     }
   }, det.obsType && OBS_TYPE[det.obsType] && /*#__PURE__*/React.createElement("span", {
-    style: pill(OBS_TYPE[det.obsType].bg, OBS_TYPE[det.obsType].text, 10)
+    style: pill((OBS_TYPE[det.obsType]||OBS_TYPE["UNSAFE_CON"]).bg, (OBS_TYPE[det.obsType]||OBS_TYPE["UNSAFE_CON"]).text, 10)
   }, OBS_TYPE[det.obsType].label), det.risk && RISK[det.risk] && /*#__PURE__*/React.createElement("span", {
-    style: pill(RISK[det.risk].bg, RISK[det.risk].text, 10)
+    style: pill((RISK[det.risk]||RISK["MINOR"]).bg, (RISK[det.risk]||RISK["MINOR"]).text, 10)
   }, RISK[det.risk].label), /*#__PURE__*/React.createElement("span", {
     style: pill((_STATUS$det$status = STATUS[det.status]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[det.status]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
   }, (_STATUS$det$status3 = STATUS[det.status]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
     style: pill(C.redBg, C.redDk, 10)
   }, "OVERDUE"), APPROVAL[apOf(det)] && /*#__PURE__*/React.createElement("span", {
-    style: pill(APPROVAL[apOf(det)].bg, APPROVAL[apOf(det)].text, 10)
+    style: pill((APPROVAL[apOf(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[apOf(det)]||APPROVAL["OPEN"]).text, 10)
   }, APPROVAL[apOf(det)].label))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
