@@ -10251,7 +10251,7 @@ function AdminImportView(_ref) {
     cloudMergeSave(fixed, []).then(function(res){ addLog(res.ok ? "✅ Saved to Supabase" : "❌ Cloud save failed", res.ok ? "ok" : "err"); });
   }
 
-  return React.createElement(AdminPage, { title: "Import", subtitle: "Import observation batches from site walks. Duplicate guard prevents re-importing the same week.", setView: setView },
+  return React.createElement(AdminPage, { title: "Import", subtitle: "Import v2.0 · Excel Wizard + Batch Import · Build 2026-06-26", setView: setView },
     React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 16 } },
       /* Photo repair panel — always visible to admin */
       React.createElement("div", { style: { background: missingPhotoRefs.length > 0 ? "#FEF2F2" : "#F0FDF4", border: "1.5px solid " + (missingPhotoRefs.length > 0 ? "#EF4444" : "#86EFAC"), borderRadius: 12, padding: 20 } },
