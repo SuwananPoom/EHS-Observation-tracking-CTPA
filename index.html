@@ -9774,41 +9774,110 @@ function AdminImportView(_ref) {
     setLogLines(function(prev){ return prev.concat([{ msg: msg, type: type || "info" }]); });
   }
 
+  /* ── IMPORT VALIDATION ─────────────────────────────────────────────── */
+  var VALID_OBS_TYPES = ["UNSAFE_ACT", "UNSAFE_CON", "GOOD_OBS"];
+  var VALID_RISKS     = ["MAJOR", "SERIOUS", "MINOR"];
+  var VALID_STATUSES  = ["OPEN", "CLOSED"];
+  var REQUIRED_FIELDS = ["desc", "obsType", "risk", "status", "date", "cat", "fc", "week"];
+
+  function fixDateFormat(d) {
+    if (!d) return "";
+    /* DD/MM/YYYY → YYYY-MM-DD */
+    var m = (d + "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return m[3] + "-" + m[2] + "-" + m[1];
+    /* Already ISO YYYY-MM-DD */
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    return d;
+  }
+
+  function validateRow(o, rowIdx) {
+    var errors = [];
+    /* Required fields */
+    REQUIRED_FIELDS.forEach(function(f){
+      if (!o[f] || (o[f] + "").trim() === "") errors.push("Row " + rowIdx + ": missing required field '" + f + "'");
+    });
+    /* Enum checks */
+    if (o.obsType && VALID_OBS_TYPES.indexOf(o.obsType) === -1)
+      errors.push("Row " + rowIdx + ": invalid obsType '" + o.obsType + "' (must be UNSAFE_ACT / UNSAFE_CON / GOOD_OBS)");
+    if (o.risk && VALID_RISKS.indexOf(o.risk) === -1)
+      errors.push("Row " + rowIdx + ": invalid risk '" + o.risk + "' (must be MAJOR / SERIOUS / MINOR)");
+    if (o.status && VALID_STATUSES.indexOf(o.status) === -1)
+      errors.push("Row " + rowIdx + ": invalid status '" + o.status + "' (must be OPEN / CLOSED)");
+    /* Date format after normalization */
+    var fd = fixDateFormat(o.date);
+    if (fd && !/^\d{4}-\d{2}-\d{2}$/.test(fd))
+      errors.push("Row " + rowIdx + ": invalid date format '" + o.date + "' (use YYYY-MM-DD or DD/MM/YYYY)");
+    return errors;
+  }
+
   async function doImport(batch) {
     setBusy(true); setDone(false); setLogLines([]);
     try {
-      addLog("Loading current observations from Supabase...", "info");
+      addLog("─── Import: " + batch.week + " (" + batch.obs.length + " rows) ───", "info");
+
+      /* STEP 1: Validate all rows before touching Supabase */
+      addLog("Step 1/4: Validating " + batch.obs.length + " rows...", "info");
+      var allErrors = [];
+      batch.obs.forEach(function(o, i){ allErrors = allErrors.concat(validateRow(o, i + 1)); });
+      if (allErrors.length > 0) {
+        addLog("❌ Validation failed — " + allErrors.length + " error(s) found. No data was saved.", "err");
+        allErrors.forEach(function(e){ addLog("  " + e, "err"); });
+        setBusy(false); return;
+      }
+      addLog("✓ All " + batch.obs.length + " rows passed validation", "ok");
+
+      /* STEP 2: Load current Supabase data */
+      addLog("Step 2/4: Loading current data from Supabase...", "info");
       var res = await supabaseClient.from("ctpa_state").select("data").eq("id", "bkk22").single();
-      if (res.error) throw new Error(res.error.message);
+      if (res.error) throw new Error("Supabase load failed: " + res.error.message);
       var current = Array.isArray(res.data.data) ? res.data.data : [];
-      addLog("Current count: " + current.length + " observations", "ok");
+      addLog("✓ Current count: " + current.length + " observations", "ok");
 
+      /* Duplicate week guard */
       var hasWeek = current.some(function(o){ return o.week === batch.week; });
-      if (hasWeek) { addLog("⚠ " + batch.week + " already exists — import cancelled (duplicate prevention)", "warn"); setBusy(false); return; }
+      if (hasWeek) {
+        addLog("⚠ Week " + batch.week + " already exists in database — import cancelled (no data changed)", "warn");
+        setBusy(false); return;
+      }
 
+      /* STEP 3: Assign sequential IDs from max+1 (always above existing max) */
+      addLog("Step 3/4: Assigning IDs and normalizing dates...", "info");
       var mx = 0;
-      current.forEach(function(o){ var n = parseInt((o.id||"").replace(/^OBS-/i,""), 10); if (!isNaN(n) && n > mx) mx = n; });
-      addLog("Max OBS ID: OBS-" + String(mx).padStart(3,"0"), "info");
+      current.forEach(function(o){ var n = parseInt((o.id || "").replace(/[^0-9]/g, ""), 10); if (!isNaN(n) && n > mx) mx = n; });
+      addLog("✓ Current max OBS ID: OBS-" + String(mx).padStart(3, "0"), "info");
 
-      var existingIds = {};
-      current.forEach(function(o){ if (o.id) existingIds[o.id] = true; if (o.obsNum) existingIds[o.obsNum] = true; });
-      var newObs = batch.obs.map(function(o, i){
-        var useId = (o.id && !existingIds[o.id]) ? o.id : "OBS-" + String(mx+1+i).padStart(3,"0");
-        return Object.assign({}, o, { id: useId, obsNum: useId, pb: o.pb||[], pa: o.pa||[] });
+      var newObs = batch.obs.map(function(o, i) {
+        var newId = "OBS-" + String(mx + 1 + i).padStart(3, "0");
+        return Object.assign({}, o, {
+          id:     newId,
+          obsNum: newId,
+          date:   fixDateFormat(o.date),
+          due:    fixDateFormat(o.due),
+          closed: fixDateFormat(o.closed),
+          status: o.status || "OPEN",
+          pb: [],
+          pa: []
+        });
       });
-      addLog("Adding " + newObs.length + " observations: " + newObs[0].id + " → " + newObs[newObs.length-1].id, "info");
-      newObs.forEach(function(o){ addLog("  " + o.id + " | " + o.risk + " | " + o.cat, "info"); });
 
+      newObs.forEach(function(o){ addLog("  + " + o.id + " | " + o.obsType + " | " + o.risk + " | " + o.cat + " | " + o.status, "info"); });
+      addLog("✓ IDs assigned: " + newObs[0].id + " → " + newObs[newObs.length - 1].id, "ok");
+
+      /* STEP 4: Append to existing — NEVER replace */
+      addLog("Step 4/4: Saving to Supabase (append only)...", "info");
       var merged = newObs.concat(current);
+      if (merged.length < current.length) throw new Error("SAFETY ABORT: merged (" + merged.length + ") < current (" + current.length + ") — refusing to save");
+      if (merged.length === 0) throw new Error("SAFETY ABORT: merged data is empty — refusing to save");
+
       var upd = await supabaseClient.from("ctpa_state").update({ data: merged }).eq("id", "bkk22");
-      if (upd.error) throw new Error(upd.error.message);
+      if (upd.error) throw new Error("Supabase save failed: " + upd.error.message);
 
       addLog("", "info");
-      addLog("✅ Import successful — " + newObs.length + " observations added (" + batch.week + ")", "ok");
-      addLog("Refresh the app to see new observations", "ok");
+      addLog("✅ Import complete — added " + newObs.length + " obs | total now " + merged.length, "ok");
+      addLog("Refresh the page to see new observations", "ok");
       setDone(true);
     } catch(e) {
-      addLog("ERROR: " + e.message, "err");
+      addLog("❌ ERROR: " + e.message, "err");
     }
     setBusy(false);
   }
