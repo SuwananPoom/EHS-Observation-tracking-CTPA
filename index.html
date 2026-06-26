@@ -9774,6 +9774,213 @@ function AdminImportView(_ref) {
     setLogLines(function(prev){ return prev.concat([{ msg: msg, type: type || "info" }]); });
   }
 
+  /* ══ EXCEL IMPORT WIZARD ════════════════════════════════════════════════
+     Steps: idle → validating → preview → importing → done
+     Never overwrites existing data. IDs always assigned from max+1.
+  ══════════════════════════════════════════════════════════════════════ */
+  var _xlStep = React.useState("idle"); var xlStep = _xlStep[0], setXlStep = _xlStep[1];
+  var _xlFile = React.useState(""); var xlFileName = _xlFile[0], setXlFileName = _xlFile[1];
+  var _xlVal  = React.useState(null); var xlValidated = _xlVal[0], setXlValidated = _xlVal[1];
+  var _xlRes  = React.useState(null); var xlResult = _xlRes[0], setXlResult = _xlRes[1];
+  var _xlBak  = React.useState(null); var xlBackupKey = _xlBak[0], setXlBackupKey = _xlBak[1];
+  var _xlLog  = React.useState([]); var xlImportLog = _xlLog[0], setXlImportLog = _xlLog[1];
+  var _xlErr  = React.useState(""); var xlError = _xlErr[0], setXlError = _xlErr[1];
+
+  /* ── Column mapping: handles multiple header name variants ── */
+  function pickCol(row, names) {
+    for (var i = 0; i < names.length; i++) {
+      for (var k in row) { if (k.trim().toLowerCase() === names[i].toLowerCase() && row[k] !== undefined && row[k] !== "") return (row[k] + "").trim(); }
+    }
+    return "";
+  }
+
+  function mapExcelRow(raw) {
+    var obsType = pickCol(raw, ["obsType","observation type","type","obs type"]);
+    if (obsType === "Unsafe Act" || obsType === "UNSAFE_ACT" || /unsafe.?act/i.test(obsType)) obsType = "UNSAFE_ACT";
+    else if (/unsafe.?con/i.test(obsType) || obsType === "UNSAFE_CON") obsType = "UNSAFE_CON";
+    else if (/good/i.test(obsType) || obsType === "GOOD_OBS") obsType = "GOOD_OBS";
+
+    var risk = pickCol(raw, ["risk","risk level","severity","riskLevel"]);
+    if (/^(high|major)$/i.test(risk)) risk = "MAJOR";
+    else if (/^(medium|serious)$/i.test(risk)) risk = "SERIOUS";
+    else if (/^(low|minor)$/i.test(risk)) risk = "MINOR";
+
+    var status = pickCol(raw, ["status"]);
+    if (/^(open|pending)$/i.test(status)) status = "OPEN";
+    else if (/^closed$/i.test(status)) status = "CLOSED";
+    else status = "OPEN";
+
+    return {
+      obsType:  obsType,
+      risk:     risk,
+      status:   status,
+      desc:     pickCol(raw, ["desc","description","detail","finding","observation"]),
+      rect:     pickCol(raw, ["rect","rectification","corrective action","correctiveAction","action"]),
+      by:       pickCol(raw, ["by","inspector","created by","createdBy","raised by"]),
+      cat:      pickCol(raw, ["cat","category"]),
+      fc:       pickCol(raw, ["fc","finding category","findingCategory","finding type"]),
+      date:     fixDateFormat(pickCol(raw, ["date","observation date","ts","created","created date"])),
+      due:      fixDateFormat(pickCol(raw, ["due","due date","dueDate","target date"])),
+      closed:   fixDateFormat(pickCol(raw, ["closed","close date","closedAt","closed date","completion date"])),
+      week:     pickCol(raw, ["week","week no","weekNo"]),
+      zone:     pickCol(raw, ["zone","area","location"]),
+      company:  pickCol(raw, ["company","contractor","subcontractor"]),
+      site:     pickCol(raw, ["site"]) || "bkk22",
+      _srcNum:  pickCol(raw, ["obsNum","obs id","obs no","observation no","id"])  /* reference only */
+    };
+  }
+
+  function validateMappedRow(o, rowNum) {
+    var errs = [];
+    /* Required */
+    ["obsType","risk","status","desc","date","cat","fc","week"].forEach(function(f){
+      if (!o[f]) errs.push("Row " + rowNum + ": missing '" + f + "'");
+    });
+    /* Enums */
+    if (o.obsType && ["UNSAFE_ACT","UNSAFE_CON","GOOD_OBS"].indexOf(o.obsType) === -1)
+      errs.push("Row " + rowNum + ": obsType='" + o.obsType + "' invalid (Unsafe Act / Unsafe Condition / Good Observation)");
+    if (o.risk && ["MAJOR","SERIOUS","MINOR"].indexOf(o.risk) === -1)
+      errs.push("Row " + rowNum + ": risk='" + o.risk + "' invalid (High/MAJOR · Medium/SERIOUS · Low/MINOR)");
+    if (o.status && ["OPEN","CLOSED"].indexOf(o.status) === -1)
+      errs.push("Row " + rowNum + ": status='" + o.status + "' invalid (Open / Closed)");
+    /* Date format */
+    if (o.date && !/^\d{4}-\d{2}-\d{2}$/.test(o.date))
+      errs.push("Row " + rowNum + ": date='" + o.date + "' could not be parsed (use YYYY-MM-DD or DD/MM/YYYY)");
+    return errs;
+  }
+
+  function handleExcelFileSelect(e) {
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setXlFileName(file.name); setXlStep("validating"); setXlError(""); setXlValidated(null); setXlResult(null);
+    var reader = new FileReader();
+    reader.onload = function(ev) {
+      try {
+        var wb = XLSX.read(ev.target.result, { type: "array", cellDates: false });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var rawRows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        if (!rawRows.length) { setXlError("Excel file is empty or has no readable rows."); setXlStep("idle"); return; }
+
+        /* Load current DB to check duplicates */
+        supabaseClient.from("ctpa_state").select("data").eq("id","bkk22").single().then(function(res) {
+          if (res.error) { setXlError("Cannot load current data: " + res.error.message); setXlStep("idle"); return; }
+          var existing = Array.isArray(res.data.data) ? res.data.data : [];
+          var existingDescs = {};
+          existing.forEach(function(o){ existingDescs[(o.desc||"").trim().toLowerCase()] = o.id; });
+
+          var valid = [], invalid = [], duplicates = [];
+          rawRows.forEach(function(raw, i) {
+            var rowNum = i + 2; /* row 1 = header */
+            var mapped = mapExcelRow(raw);
+            var errs = validateMappedRow(mapped, rowNum);
+            if (errs.length) { invalid.push({ rowNum: rowNum, raw: raw, mapped: mapped, errors: errs }); return; }
+            /* Duplicate check: same desc already in DB */
+            var descKey = mapped.desc.trim().toLowerCase();
+            if (existingDescs[descKey]) { duplicates.push({ rowNum: rowNum, mapped: mapped, existingId: existingDescs[descKey] }); return; }
+            valid.push({ rowNum: rowNum, mapped: mapped });
+          });
+
+          /* Find current max OBS ID */
+          var mx = 0;
+          existing.forEach(function(o){ var n=parseInt((o.id||"").replace(/[^0-9]/g,""),10); if(!isNaN(n)&&n>mx) mx=n; });
+
+          setXlValidated({ valid: valid, invalid: invalid, duplicates: duplicates, total: rawRows.length, currentCount: existing.length, maxId: mx, existing: existing });
+          setXlStep("preview");
+        });
+      } catch(e2) { setXlError("Parse error: " + e2.message); setXlStep("idle"); }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function doConfirmedExcelImport() {
+    if (!xlValidated || !xlValidated.valid.length) return;
+    setXlStep("importing");
+
+    /* BACKUP: save current state to localStorage before any write */
+    var backupKey = "ctpa_excel_import_backup_" + Date.now();
+    try { localStorage.setItem(backupKey, JSON.stringify(xlValidated.existing)); } catch(_){}
+    setXlBackupKey(backupKey);
+
+    var t0 = Date.now();
+    try {
+      /* Re-fetch fresh data (in case anything changed since preview) */
+      var res = await supabaseClient.from("ctpa_state").select("data").eq("id","bkk22").single();
+      if (res.error) throw new Error("Re-fetch failed: " + res.error.message);
+      var current = Array.isArray(res.data.data) ? res.data.data : [];
+      if (current.length < xlValidated.currentCount) throw new Error("SAFETY: DB has fewer records than at preview time — aborting to prevent data loss");
+
+      /* Find real current max (re-check) */
+      var mx = 0;
+      current.forEach(function(o){ var n=parseInt((o.id||"").replace(/[^0-9]/g,""),10); if(!isNaN(n)&&n>mx) mx=n; });
+
+      /* Build new obs with sequential IDs */
+      var reassigned = [];
+      var newObs = xlValidated.valid.map(function(v, i) {
+        var newId = "OBS-" + String(mx + 1 + i).padStart(3, "0");
+        if (v.mapped._srcNum && v.mapped._srcNum !== newId) reassigned.push({ src: v.mapped._srcNum, assigned: newId });
+        var o = Object.assign({}, v.mapped);
+        delete o._srcNum;
+        return Object.assign(o, { id: newId, obsNum: newId, site: o.site || "bkk22", pb: [], pa: [] });
+      });
+
+      /* ALL-OR-NOTHING: build merged array then save once */
+      var merged = newObs.concat(current);
+      if (merged.length !== current.length + newObs.length) throw new Error("SAFETY: merged count mismatch — aborting");
+      if (merged.length < current.length) throw new Error("SAFETY: merged is smaller than current — aborting");
+
+      var upd = await supabaseClient.from("ctpa_state").update({ data: merged }).eq("id","bkk22");
+      if (upd.error) throw new Error("Supabase save failed: " + upd.error.message);
+
+      /* POST-IMPORT INTEGRITY CHECK */
+      var verify = await supabaseClient.from("ctpa_state").select("data").eq("id","bkk22").single();
+      if (verify.error) throw new Error("Integrity check fetch failed: " + verify.error.message);
+      var verifiedData = Array.isArray(verify.data.data) ? verify.data.data : [];
+      var verifiedMax = 0, idSet = {}, verifyDups = [];
+      verifiedData.forEach(function(o){ var n=parseInt((o.id||"").replace(/[^0-9]/g,""),10); if(!isNaN(n)&&n>verifiedMax) verifiedMax=n; if(o.id){if(idSet[o.id]) verifyDups.push(o.id); idSet[o.id]=true;} });
+
+      /* Log entry */
+      var logEntry = {
+        at: new Date().toISOString(), user: (typeof currentUser !== "undefined" && currentUser && currentUser.name) || "Admin",
+        file: xlFileName, imported: newObs.length, skipped: xlValidated.duplicates.length,
+        invalid: xlValidated.invalid.length, totalAfter: verifiedData.length,
+        maxIdAfter: "OBS-" + String(verifiedMax).padStart(3,"0"), durationMs: Date.now() - t0,
+        duplicatesAfter: verifyDups.length, reassigned: reassigned.length
+      };
+      try {
+        var logs = JSON.parse(localStorage.getItem("ctpa_import_log") || "[]");
+        logs.unshift(logEntry); if (logs.length > 50) logs = logs.slice(0,50);
+        localStorage.setItem("ctpa_import_log", JSON.stringify(logs));
+      } catch(_){}
+      setXlImportLog(function(p){ return [logEntry].concat(p); });
+
+      setXlResult({
+        imported: newObs.length, skipped: xlValidated.duplicates.length,
+        invalid: xlValidated.invalid.length, reassigned: reassigned,
+        totalAfter: verifiedData.length, maxIdAfter: "OBS-" + String(verifiedMax).padStart(3,"0"),
+        verifyDups: verifyDups, firstId: newObs[0] && newObs[0].id, lastId: newObs[newObs.length-1] && newObs[newObs.length-1].id,
+        durationMs: Date.now() - t0, backupKey: backupKey
+      });
+      setXlStep("done");
+    } catch(err) {
+      setXlError("Import failed — ROLLED BACK (no data written): " + err.message);
+      setXlStep("preview");
+    }
+  }
+
+  async function doRestoreBackup() {
+    if (!xlBackupKey) return;
+    var raw = localStorage.getItem(xlBackupKey);
+    if (!raw) { alert("Backup not found in localStorage"); return; }
+    if (!window.confirm("Restore database to state before last import?\n\nThis will REMOVE the imported records. Are you sure?")) return;
+    try {
+      var backup = JSON.parse(raw);
+      var upd = await supabaseClient.from("ctpa_state").update({ data: backup }).eq("id","bkk22");
+      if (upd.error) throw new Error(upd.error.message);
+      alert("✅ Restored successfully (" + backup.length + " records). Please refresh the app.");
+      setXlStep("idle"); setXlResult(null); setXlValidated(null); setXlBackupKey(null);
+    } catch(e2) { alert("Restore failed: " + e2.message); }
+  }
+
   /* ── ID AUDIT STATE ─────────────────────────────────────────────────── */
   var _auditState = React.useState(null);
   var auditReport = _auditState[0], setAuditReport = _auditState[1];
@@ -10130,24 +10337,174 @@ function AdminImportView(_ref) {
           !auditReport.needsFix && !auditReport.fixApplied && React.createElement("div", { style: { color: "#065F46", fontWeight: 700, marginTop: 4 } }, "✅ No ID issues found — all IDs are unique")
         )
       ),
-      BATCHES.map(function(batch) {
-        if (batch.isExcel) {
-          return React.createElement("div", { key: "excel", style: { background: "#EFF6FF", border: "1.5px solid #BFDBFE", borderRadius: 12, padding: 20 } },
-            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
-              React.createElement("div", null,
-                React.createElement("div", { style: { fontWeight: 700, fontSize: 15, color: "#1D4ED8" } }, "📊 Excel Full Report"),
-                React.createElement("div", { style: { fontSize: 12, color: "#1D4ED8", marginTop: 2, opacity: 0.8 } }, batch.label),
-                React.createElement("div", { style: { fontSize: 12, color: "#1E40AF" } }, "350 observations · 311 Closed · 38 Open · 1 Pending"),
-                React.createElement("div", { style: { fontSize: 11, color: "#64748B", marginTop: 4 } }, "นำเข้าครั้งเดียวทั้งหมด — merge กับข้อมูลที่มีอยู่")
-              ),
-              React.createElement("button", {
-                disabled: busy,
-                onClick: doImportExcel,
-                style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: busy ? "not-allowed" : "pointer", opacity: busy ? 0.6 : 1 }
-              }, "📥 Import 350 Obs → Supabase")
+      /* ── Excel Import Wizard Card ─────────────────────────────────── */
+      React.createElement("div", { key: "excel-wizard", style: { background: "#EFF6FF", border: "1.5px solid #BFDBFE", borderRadius: 12, padding: 20 } },
+        /* Header */
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 16 } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { fontWeight: 800, fontSize: 15, color: "#1D4ED8" } }, "📊 Excel Import — Production Wizard"),
+            React.createElement("div", { style: { fontSize: 12, color: "#3B82F6", marginTop: 2 } },
+              xlStep === "idle" ? "Upload any .xlsx file · Validates every row · Assigns sequential IDs · Never overwrites existing data"
+              : xlStep === "validating" ? "⏳ Parsing and validating…"
+              : xlStep === "preview" ? "Step 2 of 3 — Review before saving"
+              : xlStep === "importing" ? "⏳ Importing to Supabase…"
+              : "✅ Import complete"
             )
-          );
-        }
+          ),
+          xlStep !== "idle" && xlStep !== "importing" && React.createElement("button", {
+            onClick: function(){ setXlStep("idle"); setXlValidated(null); setXlResult(null); setXlError(""); setXlFileName(""); },
+            style: { background: "none", border: "1.5px solid #93C5FD", color: "#1D4ED8", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+          }, "↩ Start over")
+        ),
+
+        /* STEP: IDLE — file upload */
+        xlStep === "idle" && React.createElement("div", null,
+          React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 12, background: "#fff", border: "2px dashed #93C5FD", borderRadius: 10, padding: "20px 24px", cursor: "pointer" } },
+            React.createElement("span", { style: { fontSize: 28 } }, "📂"),
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontWeight: 700, color: "#1E40AF", fontSize: 14 } }, "Click to upload Excel file (.xlsx)"),
+              React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 4 } },
+                "Required columns: Observation Type · Risk Level · Description · Category · Finding Category · Date · Week · Status"
+              )
+            ),
+            React.createElement("input", { type: "file", accept: ".xlsx,.xls", style: { display: "none" }, onChange: handleExcelFileSelect })
+          ),
+          xlError && React.createElement("div", { style: { marginTop: 10, color: "#B91C1C", fontWeight: 700, fontSize: 13 } }, "❌ " + xlError)
+        ),
+
+        /* STEP: VALIDATING */
+        xlStep === "validating" && React.createElement("div", { style: { textAlign: "center", padding: "24px 0", color: "#1D4ED8" } },
+          React.createElement("div", { style: { fontSize: 20, marginBottom: 8 } }, "⏳"),
+          React.createElement("div", { style: { fontWeight: 700 } }, "Parsing " + xlFileName + "…"),
+          React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 4 } }, "Mapping columns · Validating fields · Checking duplicates")
+        ),
+
+        /* STEP: PREVIEW */
+        xlStep === "preview" && xlValidated && React.createElement("div", null,
+          /* Summary cards */
+          React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 } },
+            [
+              { label: "Total rows", val: xlValidated.total, color: "#1E3A8A" },
+              { label: "✅ Valid", val: xlValidated.valid.length, color: "#065F46" },
+              { label: "⚠ Duplicate", val: xlValidated.duplicates.length, color: "#92400E" },
+              { label: "❌ Invalid", val: xlValidated.invalid.length, color: "#B91C1C" },
+              { label: "Current DB", val: xlValidated.currentCount, color: "#374151" },
+              { label: "After import", val: xlValidated.currentCount + xlValidated.valid.length, color: "#1D4ED8" }
+            ].map(function(s){ return React.createElement("div", { key: s.label, style: { background: "#fff", border: "1.5px solid #DBEAFE", borderRadius: 8, padding: "8px 14px", minWidth: 90, textAlign: "center" } },
+              React.createElement("div", { style: { fontSize: 10, color: "#64748B", fontWeight: 600, textTransform: "uppercase" } }, s.label),
+              React.createElement("div", { style: { fontWeight: 800, fontSize: 20, color: s.color } }, s.val)
+            ); })
+          ),
+          /* ID assignment preview */
+          xlValidated.valid.length > 0 && React.createElement("div", { style: { background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, padding: 12, marginBottom: 10, fontSize: 12 } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#065F46", marginBottom: 4 } }, "🔢 ID Assignment (auto-generated, never from Excel)"),
+            React.createElement("div", { style: { color: "#064E3B" } },
+              "Current max: OBS-" + String(xlValidated.maxId).padStart(3,"0") +
+              "  →  New IDs: OBS-" + String(xlValidated.maxId+1).padStart(3,"0") +
+              " to OBS-" + String(xlValidated.maxId + xlValidated.valid.length).padStart(3,"0")
+            )
+          ),
+          /* Invalid rows */
+          xlValidated.invalid.length > 0 && React.createElement("div", { style: { background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: 12, marginBottom: 10, maxHeight: 180, overflowY: "auto" } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#B91C1C", marginBottom: 6, fontSize: 12 } }, "❌ Invalid rows (" + xlValidated.invalid.length + ") — will NOT be imported"),
+            xlValidated.invalid.map(function(r, i){
+              return React.createElement("div", { key: i, style: { fontSize: 11, color: "#7F1D1D", borderBottom: "1px solid #FECACA", paddingBottom: 4, marginBottom: 4 } },
+                React.createElement("span", { style: { fontWeight: 700 } }, "Row " + r.rowNum + ": "),
+                r.errors.join(" · ")
+              );
+            })
+          ),
+          /* Duplicate rows */
+          xlValidated.duplicates.length > 0 && React.createElement("div", { style: { background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 12, marginBottom: 10, maxHeight: 140, overflowY: "auto" } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#92400E", marginBottom: 6, fontSize: 12 } }, "⚠ Duplicate rows (" + xlValidated.duplicates.length + ") — already in DB, will be skipped"),
+            xlValidated.duplicates.slice(0,10).map(function(d, i){
+              return React.createElement("div", { key: i, style: { fontSize: 11, color: "#78350F" } },
+                "Row " + d.rowNum + ": matches " + d.existingId + " · " + (d.mapped.desc||"").slice(0,60) + "…"
+              );
+            })
+          ),
+          /* Valid rows preview table */
+          xlValidated.valid.length > 0 && React.createElement("div", { style: { background: "#fff", border: "1px solid #DBEAFE", borderRadius: 8, marginBottom: 14, maxHeight: 220, overflowY: "auto" } },
+            React.createElement("div", { style: { padding: "8px 12px", fontWeight: 700, fontSize: 12, color: "#1E40AF", borderBottom: "1px solid #DBEAFE" } }, "✅ Valid rows — will be imported"),
+            React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11 } },
+              React.createElement("thead", null, React.createElement("tr", { style: { background: "#EFF6FF" } },
+                ["Row","Type","Risk","Status","Week","Category","Date","Description (preview)"].map(function(h){
+                  return React.createElement("th", { key: h, style: { padding: "5px 8px", textAlign: "left", color: "#1E3A8A", whiteSpace: "nowrap" } }, h);
+                })
+              )),
+              React.createElement("tbody", null, xlValidated.valid.map(function(v, i){
+                return React.createElement("tr", { key: i, style: { borderBottom: "1px solid #EFF6FF", background: i%2===0?"#fff":"#F8FAFF" } },
+                  React.createElement("td", { style: { padding: "4px 8px", color: "#64748B" } }, v.rowNum),
+                  React.createElement("td", { style: { padding: "4px 8px", fontWeight: 700, color: v.mapped.obsType==="UNSAFE_ACT"?"#B45309":"#1D4ED8" } }, v.mapped.obsType === "UNSAFE_ACT" ? "ACT" : v.mapped.obsType === "GOOD_OBS" ? "GOOD" : "CON"),
+                  React.createElement("td", { style: { padding: "4px 8px", color: v.mapped.risk==="MAJOR"?"#B91C1C":v.mapped.risk==="SERIOUS"?"#D97706":"#065F46", fontWeight: 700 } }, v.mapped.risk),
+                  React.createElement("td", { style: { padding: "4px 8px" } }, v.mapped.status),
+                  React.createElement("td", { style: { padding: "4px 8px" } }, v.mapped.week),
+                  React.createElement("td", { style: { padding: "4px 8px" } }, (v.mapped.cat||"").slice(0,20)),
+                  React.createElement("td", { style: { padding: "4px 8px", whiteSpace: "nowrap" } }, v.mapped.date),
+                  React.createElement("td", { style: { padding: "4px 8px", color: "#334155" } }, (v.mapped.desc||"").slice(0,50) + ((v.mapped.desc||"").length>50?"…":""))
+                );
+              }))
+            )
+          ),
+          /* Error message */
+          xlError && React.createElement("div", { style: { color: "#B91C1C", fontWeight: 700, fontSize: 13, marginBottom: 10 } }, "❌ " + xlError),
+          /* Action buttons */
+          xlValidated.valid.length > 0
+            ? React.createElement("button", {
+                onClick: doConfirmedExcelImport,
+                style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "12px 28px", fontWeight: 800, fontSize: 14, cursor: "pointer", width: "100%" }
+              }, "✅ Confirm Import — " + xlValidated.valid.length + " rows → Supabase (IDs OBS-" + String(xlValidated.maxId+1).padStart(3,"0") + " to OBS-" + String(xlValidated.maxId+xlValidated.valid.length).padStart(3,"0") + ")")
+            : React.createElement("div", { style: { textAlign: "center", color: "#92400E", fontWeight: 700, padding: 12 } }, "⚠ No valid rows to import — fix errors and re-upload")
+        ),
+
+        /* STEP: IMPORTING */
+        xlStep === "importing" && React.createElement("div", { style: { textAlign: "center", padding: "24px 0", color: "#1D4ED8" } },
+          React.createElement("div", { style: { fontSize: 20, marginBottom: 8 } }, "⏳"),
+          React.createElement("div", { style: { fontWeight: 700 } }, "Saving to Supabase… do not close this tab"),
+          React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 4 } }, "Backup created · Running integrity check after save")
+        ),
+
+        /* STEP: DONE */
+        xlStep === "done" && xlResult && React.createElement("div", null,
+          /* Result summary */
+          React.createElement("div", { style: { background: "#F0FDF4", border: "1.5px solid #86EFAC", borderRadius: 10, padding: 16, marginBottom: 12 } },
+            React.createElement("div", { style: { fontWeight: 800, fontSize: 15, color: "#065F46", marginBottom: 12 } }, "✅ Import Complete"),
+            React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+              [
+                { label: "Imported", val: xlResult.imported, color: "#065F46" },
+                { label: "Skipped (dup)", val: xlResult.skipped, color: "#92400E" },
+                { label: "Invalid", val: xlResult.invalid, color: "#B91C1C" },
+                { label: "ID Reassigned", val: xlResult.reassigned.length, color: "#1E40AF" },
+                { label: "Total in DB", val: xlResult.totalAfter, color: "#1E3A8A" },
+                { label: "New Max ID", val: xlResult.maxIdAfter, color: "#065F46" }
+              ].map(function(s){ return React.createElement("div", { key: s.label, style: { background: "#fff", border: "1.5px solid #D1FAE5", borderRadius: 8, padding: "8px 14px", textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 10, color: "#64748B", fontWeight: 600 } }, s.label),
+                React.createElement("div", { style: { fontWeight: 800, fontSize: 18, color: s.color } }, String(s.val))
+              ); })
+            )
+          ),
+          /* ID range */
+          React.createElement("div", { style: { fontSize: 12, color: "#1E40AF", marginBottom: 8 } },
+            "New IDs assigned: " + xlResult.firstId + " → " + xlResult.lastId +
+            " · Duration: " + (xlResult.durationMs/1000).toFixed(1) + "s"
+          ),
+          /* Integrity check result */
+          xlResult.verifyDups.length === 0
+            ? React.createElement("div", { style: { fontSize: 12, color: "#065F46", fontWeight: 700, marginBottom: 10 } }, "✅ Integrity check passed — no duplicate IDs in database")
+            : React.createElement("div", { style: { fontSize: 12, color: "#B91C1C", fontWeight: 700, marginBottom: 10 } }, "⚠ Integrity check found " + xlResult.verifyDups.length + " duplicate IDs — run ID Audit"),
+          /* Restore backup button */
+          React.createElement("button", {
+            onClick: doRestoreBackup,
+            style: { background: "none", border: "1.5px solid #CBD5E1", color: "#64748B", borderRadius: 8, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer", marginRight: 10 }
+          }, "↩ Undo Import (Restore Backup)"),
+          React.createElement("button", {
+            onClick: function(){ window.location.reload(); },
+            style: { background: "#1D4ED8", color: "#fff", border: "none", borderRadius: 8, padding: "8px 18px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
+          }, "🔄 Refresh App to See New Data")
+        )
+      ),
+      BATCHES.map(function(batch) {
+        if (batch.isExcel) { return null; }
         var hasWeek = obs.some(function(o){ return o.week === batch.week; });
         return React.createElement("div", { key: batch.week, style: { background: "#fff", border: "1px solid #E2E8F0", borderRadius: 12, padding: 20 } },
           React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 } },
