@@ -9774,6 +9774,112 @@ function AdminImportView(_ref) {
     setLogLines(function(prev){ return prev.concat([{ msg: msg, type: type || "info" }]); });
   }
 
+  /* ── ID AUDIT STATE ─────────────────────────────────────────────────── */
+  var _auditState = React.useState(null);
+  var auditReport = _auditState[0], setAuditReport = _auditState[1];
+  var _auditBusy = React.useState(false);
+  var auditBusy = _auditBusy[0], setAuditBusy = _auditBusy[1];
+
+  async function runIdAudit() {
+    setAuditBusy(true); setAuditReport(null);
+    var res = await supabaseClient.from("ctpa_state").select("data").eq("id", "bkk22").single();
+    if (res.error) { setAuditBusy(false); alert("Load failed: " + res.error.message); return; }
+    var data = Array.isArray(res.data.data) ? res.data.data : [];
+
+    /* Collect ID info */
+    var idCount = {}, blankIds = [], nonStdIds = [], allNums = [];
+    data.forEach(function(o) {
+      var id = o.id || "";
+      if (!id) { blankIds.push(o); return; }
+      idCount[id] = (idCount[id] || 0) + 1;
+      var m = id.match(/^OBS-(\d+)$/i);
+      if (m) allNums.push(parseInt(m[1], 10));
+      else nonStdIds.push(id);
+    });
+
+    var duplicates = Object.keys(idCount).filter(function(k){ return idCount[k] > 1; });
+    allNums.sort(function(a,b){ return a - b; });
+    var maxNum = allNums.length ? allNums[allNums.length - 1] : 0;
+
+    /* Find gaps (missing sequential IDs) */
+    var missing = [];
+    for (var n = 1; n <= maxNum; n++) {
+      if (allNums.indexOf(n) === -1) missing.push("OBS-" + String(n).padStart(3, "0"));
+    }
+
+    /* Find out-of-order: obs whose OBS-number is ≤ max but were clearly imported later
+       (heuristic: obs with week=W29 having IDs below current max that aren't the original W27/W28 range) */
+    var outOfOrder = [];
+    if (maxNum > 0) {
+      data.forEach(function(o) {
+        var m = (o.id || "").match(/^OBS-(\d+)$/i);
+        if (!m) return;
+        var n = parseInt(m[1], 10);
+        /* Flag obs whose ID number < maxNum AND duplicate IDs */
+        if (idCount[o.id] > 1) outOfOrder.push({ id: o.id, week: o.week, cat: o.cat });
+      });
+    }
+
+    setAuditReport({
+      total: data.length,
+      maxId: "OBS-" + String(maxNum).padStart(3, "0"),
+      maxNum: maxNum,
+      duplicates: duplicates,
+      blankIds: blankIds.length,
+      nonStdIds: nonStdIds,
+      missingCount: missing.length,
+      missing: missing.slice(0, 20),
+      outOfOrder: outOfOrder,
+      needsFix: duplicates.length > 0 || blankIds.length > 0
+    });
+    setAuditBusy(false);
+  }
+
+  async function fixDuplicateIds() {
+    if (!window.confirm("Fix duplicate IDs by assigning new sequential IDs (from max+1) to duplicate records?\n\nExisting data will NOT be deleted. IDs only will change for duplicates.\n\nProceed?")) return;
+    setAuditBusy(true);
+    var res = await supabaseClient.from("ctpa_state").select("data").eq("id", "bkk22").single();
+    if (res.error) { setAuditBusy(false); alert("Load failed: " + res.error.message); return; }
+    var data = Array.isArray(res.data.data) ? res.data.data : [];
+
+    /* Find true max (count each ID once) */
+    var seenIds = {}, mx = 0;
+    data.forEach(function(o) {
+      var m = (o.id || "").match(/^OBS-(\d+)$/i);
+      if (m) { var n = parseInt(m[1], 10); if (n > mx) mx = n; }
+    });
+
+    /* Re-assign IDs for duplicates (keep first occurrence, fix subsequent) */
+    var reassigned = [], counter = mx;
+    var firstSeen = {};
+    var fixed = data.map(function(o) {
+      var id = o.id || "";
+      if (!id || !id.match(/^OBS-\d+$/i)) {
+        /* blank or non-standard: assign new */
+        counter++;
+        var newId = "OBS-" + String(counter).padStart(3, "0");
+        reassigned.push({ old: id || "(blank)", new: newId, week: o.week });
+        return Object.assign({}, o, { id: newId, obsNum: newId });
+      }
+      if (!firstSeen[id]) { firstSeen[id] = true; return o; }
+      /* Duplicate — give it a new ID */
+      counter++;
+      var newId2 = "OBS-" + String(counter).padStart(3, "0");
+      reassigned.push({ old: id, new: newId2, week: o.week });
+      return Object.assign({}, o, { id: newId2, obsNum: newId2 });
+    });
+
+    if (fixed.length < data.length) { setAuditBusy(false); alert("SAFETY: record count mismatch — aborting"); return; }
+
+    var upd = await supabaseClient.from("ctpa_state").update({ data: fixed }).eq("id", "bkk22");
+    if (upd.error) { setAuditBusy(false); alert("Save failed: " + upd.error.message); return; }
+
+    setAuditReport(function(prev){ return Object.assign({}, prev, {
+      fixApplied: true, reassigned: reassigned, newMax: "OBS-" + String(counter).padStart(3,"0"), duplicates: []
+    }); });
+    setAuditBusy(false);
+  }
+
   /* ── IMPORT VALIDATION ─────────────────────────────────────────────── */
   var VALID_OBS_TYPES = ["UNSAFE_ACT", "UNSAFE_CON", "GOOD_OBS"];
   var VALID_RISKS     = ["MAJOR", "SERIOUS", "MINOR"];
@@ -9967,6 +10073,62 @@ function AdminImportView(_ref) {
               }, "🗑 Clear " + missingPhotoRefs.length + " Broken Reference(s)")
             )
           : React.createElement("div", { style: { fontSize: 12, color: "#15803D" } }, "All photo references have valid image data in cloud storage or local cache.")
+      ),
+      /* ── ID Audit & Fix Panel ─────────────────────────────────── */
+      React.createElement("div", { style: { background: "#FAFAFA", border: "1.5px solid #E2E8F0", borderRadius: 12, padding: 20 } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: auditReport ? 16 : 0 } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 14, color: "#0F172A" } }, "🔍 OBS ID Audit & Fix"),
+            React.createElement("div", { style: { fontSize: 12, color: "#64748B", marginTop: 2 } }, "Validate ID sequence, detect duplicates, reassign conflicting IDs")
+          ),
+          React.createElement("button", {
+            onClick: runIdAudit, disabled: auditBusy,
+            style: { background: "#0F172A", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontWeight: 700, fontSize: 13, cursor: auditBusy ? "not-allowed" : "pointer", opacity: auditBusy ? 0.6 : 1 }
+          }, auditBusy ? "Running…" : "Run Audit")
+        ),
+        auditReport && React.createElement("div", { style: { fontSize: 13 } },
+          /* Summary row */
+          React.createElement("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 } },
+            [
+              { label: "Total Records", val: auditReport.total, color: "#1E3A8A" },
+              { label: "Max OBS ID", val: auditReport.maxId, color: "#065F46" },
+              { label: "Duplicates", val: auditReport.duplicates.length, color: auditReport.duplicates.length > 0 ? "#B91C1C" : "#065F46" },
+              { label: "Blank IDs", val: auditReport.blankIds, color: auditReport.blankIds > 0 ? "#B91C1C" : "#065F46" },
+              { label: "Non-std IDs", val: auditReport.nonStdIds.length, color: auditReport.nonStdIds.length > 0 ? "#92400E" : "#065F46" },
+              { label: "Missing in seq.", val: auditReport.missingCount, color: auditReport.missingCount > 0 ? "#92400E" : "#065F46" }
+            ].map(function(s){ return React.createElement("div", { key: s.label, style: { background: "#fff", border: "1.5px solid #E2E8F0", borderRadius: 8, padding: "8px 14px", minWidth: 100 } },
+              React.createElement("div", { style: { fontSize: 10, color: "#64748B", fontWeight: 600, textTransform: "uppercase" } }, s.label),
+              React.createElement("div", { style: { fontWeight: 800, fontSize: 18, color: s.color } }, String(s.val))
+            ); })
+          ),
+          /* Duplicates list */
+          auditReport.duplicates.length > 0 && React.createElement("div", { style: { background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8, padding: 12, marginBottom: 10 } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#B91C1C", marginBottom: 6 } }, "❌ Duplicate IDs (" + auditReport.duplicates.length + ")"),
+            React.createElement("div", { style: { fontFamily: "monospace", fontSize: 12, color: "#7F1D1D" } }, auditReport.duplicates.join("  |  "))
+          ),
+          /* Non-standard IDs */
+          auditReport.nonStdIds.length > 0 && React.createElement("div", { style: { background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 12, marginBottom: 10 } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#92400E", marginBottom: 6 } }, "⚠ Non-standard IDs (" + auditReport.nonStdIds.length + ") — these use old obs_17... format"),
+            React.createElement("div", { style: { fontFamily: "monospace", fontSize: 11, color: "#78350F", wordBreak: "break-all" } }, auditReport.nonStdIds.slice(0,10).join("  |  ") + (auditReport.nonStdIds.length > 10 ? "  … +" + (auditReport.nonStdIds.length-10) + " more" : ""))
+          ),
+          /* Missing IDs */
+          auditReport.missingCount > 0 && React.createElement("div", { style: { background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 8, padding: 12, marginBottom: 10 } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#0369A1", marginBottom: 6 } }, "ℹ Missing in sequence (" + auditReport.missingCount + ") — gaps are normal for deleted records"),
+            React.createElement("div", { style: { fontFamily: "monospace", fontSize: 11, color: "#0C4A6E" } }, auditReport.missing.join("  ") + (auditReport.missingCount > 20 ? "  … +" + (auditReport.missingCount-20) + " more" : ""))
+          ),
+          /* Fix applied */
+          auditReport.fixApplied && auditReport.reassigned && React.createElement("div", { style: { background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 8, padding: 12, marginBottom: 10 } },
+            React.createElement("div", { style: { fontWeight: 700, color: "#065F46", marginBottom: 6 } }, "✅ Fix Applied — " + auditReport.reassigned.length + " IDs reassigned | New max: " + auditReport.newMax),
+            React.createElement("div", { style: { fontFamily: "monospace", fontSize: 11 } },
+              auditReport.reassigned.map(function(r){ return r.old + " → " + r.new + " (W" + (r.week||"?") + ")"; }).join("\n"))
+          ),
+          /* Fix button */
+          !auditReport.fixApplied && auditReport.needsFix && React.createElement("button", {
+            onClick: fixDuplicateIds, disabled: auditBusy,
+            style: { background: "#B91C1C", color: "#fff", border: "none", borderRadius: 8, padding: "10px 22px", fontWeight: 700, fontSize: 14, cursor: "pointer", marginTop: 4 }
+          }, "🔧 Fix Duplicate IDs (reassign from max+1)"),
+          !auditReport.needsFix && !auditReport.fixApplied && React.createElement("div", { style: { color: "#065F46", fontWeight: 700, marginTop: 4 } }, "✅ No ID issues found — all IDs are unique")
+        )
       ),
       BATCHES.map(function(batch) {
         if (batch.isExcel) {
