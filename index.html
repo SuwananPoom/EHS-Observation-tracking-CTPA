@@ -1349,7 +1349,10 @@ var __ctpaOriginals = {};
    Display copy: max 1920px / JPEG 0.82 → keeps localStorage small.
    full: untouched original → uploaded to Storage so exports stay sharp. */
 var compressPhoto = function compressPhoto(f) {
-  var MAX_DIM = 1920, QUALITY = 0.82;
+  /* Display/fallback copy raised to 2560px / JPEG 0.92 for sharper images system-wide
+     (in-app display, ctpa_photos fallback, offline cache). The untouched ORIGINAL is
+     still uploaded to Storage for maximum export quality. */
+  var MAX_DIM = 2560, QUALITY = 0.92;
   return b64f(f).then(function(dataUri) {
     return new Promise(function(resolve) {
       var img = new Image();
