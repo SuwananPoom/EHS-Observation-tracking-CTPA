@@ -1352,6 +1352,19 @@ var __ctpaOriginals = {};
    cloud record (ctpa_state) never stores base64 — see stripPhotos(). */
 var compressPhoto = function compressPhoto(f) {
   return b64f(f).then(function(dataUri) {
+    /* TEMP DIAGNOSTIC (build v-diag1): prove new no-compress code is live and show the
+       ACTUAL source file size + pixel dimensions the browser received. Remove after verify. */
+    try {
+      var _im = new Image();
+      _im.onload = function(){
+        alert("UPLOAD DIAG (no-compress build)\n" +
+          "file: " + (f.name||"?") + "\n" +
+          "size: " + (f.size/1024/1024).toFixed(2) + " MB (" + f.size + " bytes)\n" +
+          "pixels: " + (_im.naturalWidth||0) + " x " + (_im.naturalHeight||0) + "\n\n" +
+          "→ this exact file is uploaded to Storage (no resize/recompress)");
+      };
+      _im.src = dataUri;
+    } catch(e){}
     return { src: dataUri, full: dataUri };
   });
 };
