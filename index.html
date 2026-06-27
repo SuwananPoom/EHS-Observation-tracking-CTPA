@@ -319,7 +319,14 @@ function uploadPhotoToStorage(obsId, slot, idx, photo){
     headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": blob.type || "image/jpeg", "x-upsert": "true" },
     body: blob
   }).then(function(r){
-    if(r.ok){ __lastStorageErr = ""; if(photo.id != null) delete __ctpaOriginals[photo.id]; return storagePublicUrl(path); }
+    if(r.ok){
+      __lastStorageErr = "";
+      if(photo.id != null) delete __ctpaOriginals[photo.id];
+      /* Cache-bust: the Storage path is reused (slot-idx) when a photo is replaced, so the
+         public URL string is identical and the browser would show the OLD cached image.
+         A version query param forces the browser to fetch the freshly-uploaded bytes. */
+      return storagePublicUrl(path) + "?v=" + (Date.now());
+    }
     return r.text().then(function(t){
       __lastStorageErr = explainStorageErr(r.status, t);
       console.warn("[CTPA] Storage upload failed:", r.status, t.slice(0,200), "| URL:", url);
@@ -438,6 +445,19 @@ function getCachedPhotoSrc(obsId, slot, idx){
   } catch(e){}
   /* Fall back to memory cache */
   return _memPhotoCache[key] || null;
+}
+/* Remove a single cached photo (localStorage + memory) so a deleted photo can never
+   be re-merged as a stale fallback by mergeLocalPhotoCache(). */
+function clearPhotoCache(obsId, slot, idx){
+  var key = photoLocalKey(obsId, slot, idx);
+  try { localStorage.removeItem(key); } catch(e){}
+  delete _memPhotoCache[key];
+}
+/* Purge ALL cached photos for one slot of an observation (indices 0..max-1).
+   Used on delete/replace where indices shift, to prevent stale fallbacks. */
+function clearSlotPhotoCache(obsId, slot, maxCount){
+  var n = (typeof maxCount === "number" && maxCount > 0) ? maxCount : 20;
+  for(var i = 0; i < n; i++){ clearPhotoCache(obsId, slot, i); }
 }
 
 /* Displayable image source for a photo object: prefer the cross-device Storage URL,
@@ -1352,19 +1372,6 @@ var __ctpaOriginals = {};
    cloud record (ctpa_state) never stores base64 — see stripPhotos(). */
 var compressPhoto = function compressPhoto(f) {
   return b64f(f).then(function(dataUri) {
-    /* TEMP DIAGNOSTIC (build v-diag1): prove new no-compress code is live and show the
-       ACTUAL source file size + pixel dimensions the browser received. Remove after verify. */
-    try {
-      var _im = new Image();
-      _im.onload = function(){
-        alert("UPLOAD DIAG (no-compress build)\n" +
-          "file: " + (f.name||"?") + "\n" +
-          "size: " + (f.size/1024/1024).toFixed(2) + " MB (" + f.size + " bytes)\n" +
-          "pixels: " + (_im.naturalWidth||0) + " x " + (_im.naturalHeight||0) + "\n\n" +
-          "→ this exact file is uploaded to Storage (no resize/recompress)");
-      };
-      _im.src = dataUri;
-    } catch(e){}
     return { src: dataUri, full: dataUri };
   });
 };
@@ -8965,23 +8972,43 @@ function App(_refApp) {
     onUp: function onUp(k, v) {
       var prev = k === "pb" ? fBef : fAft;
       if (k === "pb") setFBef(v); else setFAft(v);
-      /* cache any newly-added photos locally and upload to ctpa_photos */
-      var added = v.slice(prev.length);
       var obsId = edit ? edit.id : null;
       if(obsId){
-        added.forEach(function(p, i){
-          var idx = prev.length + i;
-          if(p && p.src){ cachePhotoLocal(obsId, k, idx, p.src); }
-          savePhotoToCloud(obsId, k, idx, p).then(function(url){
-            console.log("[CTPA] edit form photo:", obsId, k, idx, url ? "✅ Storage" : "⚠ table/local only");
-            if(url){
-              attachPhotoUrl(obsId, k, idx, url);
-              /* reflect the url in the open form arrays too */
-              if(k === "pb") setFBef(function(cur){ var a = cur.slice(); if(a[idx]) a[idx] = Object.assign({}, a[idx], { url: url }); return a; });
-              else setFAft(function(cur){ var a = cur.slice(); if(a[idx]) a[idx] = Object.assign({}, a[idx], { url: url }); return a; });
+        if(v.length < prev.length){
+          /* PHOTO REMOVED/REPLACED: indices shift, so purge ALL cached photos for this slot
+             then re-cache the ones that remain. Prevents mergeLocalPhotoCache() from
+             re-injecting the deleted photo as a stale fallback. */
+          clearSlotPhotoCache(obsId, k, prev.length);
+          v.forEach(function(p, ci){ if(p && p.src){ cachePhotoLocal(obsId, k, ci, p.src); } });
+          /* re-upload the remaining photos to their (new) Storage indices so Storage matches */
+          v.forEach(function(p, ci){
+            if(p && p.src && p.src.indexOf("data:") === 0){
+              savePhotoToCloud(obsId, k, ci, p).then(function(url){
+                if(url){
+                  attachPhotoUrl(obsId, k, ci, url);
+                  if(k === "pb") setFBef(function(cur){ var a = cur.slice(); if(a[ci]) a[ci] = Object.assign({}, a[ci], { url: url }); return a; });
+                  else setFAft(function(cur){ var a = cur.slice(); if(a[ci]) a[ci] = Object.assign({}, a[ci], { url: url }); return a; });
+                }
+              });
             }
           });
-        });
+        } else {
+          /* cache any newly-added photos locally and upload to ctpa_photos */
+          var added = v.slice(prev.length);
+          added.forEach(function(p, i){
+            var idx = prev.length + i;
+            if(p && p.src){ cachePhotoLocal(obsId, k, idx, p.src); }
+            savePhotoToCloud(obsId, k, idx, p).then(function(url){
+              console.log("[CTPA] edit form photo:", obsId, k, idx, url ? "✅ Storage" : "⚠ table/local only");
+              if(url){
+                attachPhotoUrl(obsId, k, idx, url);
+                /* reflect the url in the open form arrays too */
+                if(k === "pb") setFBef(function(cur){ var a = cur.slice(); if(a[idx]) a[idx] = Object.assign({}, a[idx], { url: url }); return a; });
+                else setFAft(function(cur){ var a = cur.slice(); if(a[idx]) a[idx] = Object.assign({}, a[idx], { url: url }); return a; });
+              }
+            });
+          });
+        }
       }
     }
   }), /*#__PURE__*/React.createElement("div", {
