@@ -529,13 +529,16 @@ function containFit(natW, natH, boxW, boxH){
    Returns the obs array (mutated in place) with src filled where possible. */
 function fetchPhotosForExport(obsArr){
   if(!cloudOn()) return Promise.resolve(obsArr);
-  /* obs IDs with photos lacking base64 src (PDF/PPT need base64 to embed) */
+  /* obs IDs that need a photo fetch for export. We fetch when:
+     - a photo has a Storage `url` (always pull the ORIGINAL for export, even if a
+       compressed display copy already exists in src), OR
+     - a photo has no usable src at all (need the ctpa_photos fallback). */
   var needIds = [];
   obsArr.forEach(function(o){
     var needsFetch = false;
     ["pb","pa"].forEach(function(slot){
       (o[slot] || []).forEach(function(p){
-        if(p && (!p.src || p.src.length < 32)) needsFetch = true;
+        if(p && (p.url || !p.src || p.src.length < 32)) needsFetch = true;
       });
     });
     if(needsFetch && o.id) needIds.push(o.id);
@@ -548,16 +551,17 @@ function fetchPhotosForExport(obsArr){
     var photoMap = {};
     rows.forEach(function(r){ photoMap[r.obs_id + "|" + r.slot + "|" + r.idx] = r.src; });
     /* Pass 1 (highest quality): fetch the ORIGINAL from Supabase Storage url → base64.
-       Storage holds the full uploaded image; prefer it over any other source so the
-       exported PDF/PPT embeds the sharpest available picture. */
+       Storage holds the full uploaded image. We do this WHENEVER a url exists — even if
+       a compressed display copy is already in src — so the export always embeds the
+       sharpest available picture (the in-app display copy is downscaled to 1920px). */
     var urlJobs = [];
     obsArr.forEach(function(o, oi){
       ["pb","pa"].forEach(function(slot){
         (o[slot] || []).forEach(function(p, pi){
-          if(p && (!p.src || p.src.length < 32) && p.url){
+          if(p && p.url){
             urlJobs.push(
               urlToDataUri(p.url).then(function(dataUri){
-                obsArr[oi][slot][pi] = Object.assign({}, obsArr[oi][slot][pi], { src: dataUri });
+                if(dataUri && dataUri.length > 32) obsArr[oi][slot][pi] = Object.assign({}, obsArr[oi][slot][pi], { src: dataUri, _nw: null, _nh: null });
               }).catch(function(e){ console.warn("[CTPA export] storage url→base64 failed", o.id, slot, pi, e && e.message); })
             );
           }
