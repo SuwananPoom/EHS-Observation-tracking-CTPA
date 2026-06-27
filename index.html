@@ -499,6 +499,25 @@ function urlToDataUri(url){
       });
     });
 }
+/* Read an image's natural pixel dimensions from a data URI / URL.
+   Used by PDF/PPT export to preserve the original aspect ratio (no distortion). */
+function imgNaturalSize(src){
+  return new Promise(function(res){
+    if(!src){ res(null); return; }
+    var im = new Image();
+    im.onload = function(){ res({ w: im.naturalWidth || im.width, h: im.naturalHeight || im.height }); };
+    im.onerror = function(){ res(null); };
+    im.src = src;
+  });
+}
+/* Fit (w,h) of a box around a natural image size, preserving aspect ratio (contain).
+   Returns { w, h, ox, oy } where ox/oy centre the image inside the box. */
+function containFit(natW, natH, boxW, boxH){
+  if(!natW || !natH){ return { w: boxW, h: boxH, ox: 0, oy: 0 }; }
+  var scale = Math.min(boxW / natW, boxH / natH);
+  var w = natW * scale, h = natH * scale;
+  return { w: w, h: h, ox: (boxW - w) / 2, oy: (boxH - h) / 2 };
+}
 
 /* Before generating PDF/PPTX, fill in base64 src for any photo that lacks it.
    Source order: ctpa_photos table (pass 1), then Storage url → base64 (pass 2).
@@ -523,34 +542,55 @@ function fetchPhotosForExport(obsArr){
     console.log("[CTPA export] ctpa_photos rows returned:", rows.length);
     var photoMap = {};
     rows.forEach(function(r){ photoMap[r.obs_id + "|" + r.slot + "|" + r.idx] = r.src; });
-    /* Pass 1: fill from ctpa_photos base64 table */
-    obsArr.forEach(function(o, oi){
-      ["pb","pa"].forEach(function(slot){
-        (o[slot] || []).forEach(function(p, pi){
-          var cloudSrc = photoMap[o.id + "|" + slot + "|" + pi];
-          if(cloudSrc && cloudSrc.length > 32 && (!p.src || p.src.length < 32)){
-            obsArr[oi][slot][pi] = Object.assign({}, p, { src: cloudSrc });
-          }
-        });
-      });
-    });
-    /* Pass 2: anything still missing src but with a Storage url → fetch url → base64 */
+    /* Pass 1 (highest quality): fetch the ORIGINAL from Supabase Storage url → base64.
+       Storage holds the full uploaded image; prefer it over any other source so the
+       exported PDF/PPT embeds the sharpest available picture. */
     var urlJobs = [];
     obsArr.forEach(function(o, oi){
       ["pb","pa"].forEach(function(slot){
         (o[slot] || []).forEach(function(p, pi){
-          var cur = obsArr[oi][slot][pi];
-          if(cur && (!cur.src || cur.src.length < 32) && cur.url){
+          if(p && (!p.src || p.src.length < 32) && p.url){
             urlJobs.push(
-              urlToDataUri(cur.url).then(function(dataUri){
+              urlToDataUri(p.url).then(function(dataUri){
                 obsArr[oi][slot][pi] = Object.assign({}, obsArr[oi][slot][pi], { src: dataUri });
-              }).catch(function(e){ console.warn("[CTPA export] url→base64 failed", o.id, slot, pi, e && e.message); })
+              }).catch(function(e){ console.warn("[CTPA export] storage url→base64 failed", o.id, slot, pi, e && e.message); })
             );
           }
         });
       });
     });
-    return Promise.all(urlJobs).then(function(){ return obsArr; });
+    return Promise.all(urlJobs).then(function(){
+      /* Pass 2 (fallback): anything still without src → fill from ctpa_photos base64 table */
+      obsArr.forEach(function(o, oi){
+        ["pb","pa"].forEach(function(slot){
+          (o[slot] || []).forEach(function(p, pi){
+            var cur = obsArr[oi][slot][pi];
+            var cloudSrc = photoMap[o.id + "|" + slot + "|" + pi];
+            if(cur && (!cur.src || cur.src.length < 32) && cloudSrc && cloudSrc.length > 32){
+              obsArr[oi][slot][pi] = Object.assign({}, cur, { src: cloudSrc });
+            }
+          });
+        });
+      });
+      /* Pass 3: precompute each photo's natural pixel size so PDF/PPT export can
+         preserve the original aspect ratio (no stretching). Stored as _nw/_nh. */
+      var sizeJobs = [];
+      obsArr.forEach(function(o, oi){
+        ["pb","pa"].forEach(function(slot){
+          (o[slot] || []).forEach(function(p, pi){
+            var cur = obsArr[oi][slot][pi];
+            if(cur && cur.src && cur.src.length > 32 && !cur._nw){
+              sizeJobs.push(
+                imgNaturalSize(cur.src).then(function(sz){
+                  if(sz) obsArr[oi][slot][pi] = Object.assign({}, obsArr[oi][slot][pi], { _nw: sz.w, _nh: sz.h });
+                })
+              );
+            }
+          });
+        });
+      });
+      return Promise.all(sizeJobs).then(function(){ return obsArr; });
+    });
   });
 }
 
@@ -1866,7 +1906,8 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
       if (befSrc) {
         sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fill:{ color:"1E3A8A" } });
         sl.addText("BEFORE", { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
-        try { sl.addImage({ data:befSrc, x:photoX+0.1, y:1.12, w:1.82, h:3.1 }); } catch(e) {}
+        /* sizing:contain preserves the original aspect ratio (no stretching) and keeps the embedded full-resolution image */
+        try { sl.addImage({ data:befSrc, x:photoX+0.1, y:1.12, w:1.82, h:3.1, sizing:{ type:"contain", w:1.82, h:3.1 } }); } catch(e) {}
       } else if (befMeta) {
         sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
         sl.addText("Before photo\nuploaded on\nanother device", { x:photoX+0.1, y:2.1, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
@@ -1878,7 +1919,8 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
         var ax = befMeta ? photoX+2.05 : photoX+0.1;
         sl.addShape(pptx.ShapeType.rect, { x:ax, y:0.82, w:1.82, h:0.29, fill:{ color:G } });
         sl.addText("AFTER", { x:ax, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
-        try { sl.addImage({ data:aftSrc, x:ax, y:1.12, w:1.82, h:3.1 }); } catch(e) {}
+        /* sizing:contain preserves the original aspect ratio (no stretching) */
+        try { sl.addImage({ data:aftSrc, x:ax, y:1.12, w:1.82, h:3.1, sizing:{ type:"contain", w:1.82, h:3.1 } }); } catch(e) {}
       } else if (aftMeta) {
         var ax2b = befMeta ? photoX+2.05 : photoX+0.1;
         sl.addShape(pptx.ShapeType.rect, { x:ax2b, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
@@ -2173,7 +2215,12 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
     if (befSrc2) {
       frect(photoX+2,22,photoW-4,6,"#1E3A8A");
       txt("BEFORE", photoX+photoW/2, 27, { size:8, bold:true, color:"#FFFFFF", align:"center" });
-      try { var bt=befSrc2.indexOf("png")>-1?"PNG":"JPEG"; doc.addImage(befSrc2,bt,photoX+2,29,photoW-4,photoH); } catch(e){}
+      /* contain-fit inside the box to preserve original aspect ratio; compression NONE keeps full quality */
+      try {
+        var bt=befSrc2.indexOf("png")>-1?"PNG":"JPEG";
+        var bpb=o.pb[0], bf=containFit(bpb._nw, bpb._nh, photoW-4, photoH);
+        doc.addImage(befSrc2,bt,photoX+2+bf.ox,29+bf.oy,bf.w,bf.h,undefined,"NONE");
+      } catch(e){}
     } else if (befMeta2) {
       frect(photoX+2,22,photoW-4,photoH+7,"#F8FAFC");
       txt("Before photo on", photoX+photoW/2, 22+photoH/2-4, { size:7, color:"#94A3B8", align:"center" });
@@ -2187,7 +2234,12 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
     if (aftSrc2) {
       frect(photoX+2,afy,photoW-4,6,"#00CC79");
       txt("AFTER", photoX+photoW/2, afy+5, { size:8, bold:true, color:"#FFFFFF", align:"center" });
-      try { var at2=aftSrc2.indexOf("png")>-1?"PNG":"JPEG"; doc.addImage(aftSrc2,at2,photoX+2,afy+7,photoW-4,photoH-3); } catch(e){}
+      /* contain-fit inside the box to preserve original aspect ratio; compression NONE keeps full quality */
+      try {
+        var at2=aftSrc2.indexOf("png")>-1?"PNG":"JPEG";
+        var apa=o.pa[0], af2=containFit(apa._nw, apa._nh, photoW-4, photoH-3);
+        doc.addImage(aftSrc2,at2,photoX+2+af2.ox,afy+7+af2.oy,af2.w,af2.h,undefined,"NONE");
+      } catch(e){}
     } else if (aftMeta2) {
       frect(photoX+2,afy,photoW-4,photoH+5,"#F8FAFC");
       txt("After photo on", photoX+photoW/2, afy+photoH/2-4, { size:7, color:"#94A3B8", align:"center" });
