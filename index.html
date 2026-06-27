@@ -1343,36 +1343,16 @@ var b64f = function b64f(f) {
    NEVER persisted to localStorage or ctpa_state — used only to upload the
    original to Supabase Storage, then deleted once the upload succeeds. */
 var __ctpaOriginals = {};
-/* compressPhoto: produce a small DISPLAY copy (for localStorage/ctpa_state)
-   while preserving the ORIGINAL full-resolution data URI for Storage upload.
-   Returns { src: compressedDisplayCopy, full: originalDataUri }.
-   Display copy: max 1920px / JPEG 0.82 → keeps localStorage small.
-   full: untouched original → uploaded to Storage so exports stay sharp. */
+/* compressPhoto: COMPRESSION DISABLED (per requirement — full quality uploads).
+   Returns the ORIGINAL, untouched image for BOTH the Storage upload (`full`) and the
+   in-app/transient display source (`src`). No canvas resize, no JPEG re-encode — the
+   exact file bytes the user selected are what get uploaded to Supabase Storage, so
+   PDF/PPT exports embed the original-resolution image.
+   NOTE: a small in-memory preview is kept only until the Storage URL is attached; the
+   cloud record (ctpa_state) never stores base64 — see stripPhotos(). */
 var compressPhoto = function compressPhoto(f) {
-  /* Display/fallback copy raised to 2560px / JPEG 0.92 for sharper images system-wide
-     (in-app display, ctpa_photos fallback, offline cache). The untouched ORIGINAL is
-     still uploaded to Storage for maximum export quality. */
-  var MAX_DIM = 2560, QUALITY = 0.92;
   return b64f(f).then(function(dataUri) {
-    return new Promise(function(resolve) {
-      var img = new Image();
-      img.onload = function() {
-        try {
-          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-          if (!w || !h) { resolve({ src: dataUri, full: dataUri }); return; }
-          var scale = Math.min(1, MAX_DIM / Math.max(w, h));
-          var cw = Math.round(w * scale), ch = Math.round(h * scale);
-          var cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
-          var ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cw, ch);
-          ctx.drawImage(img, 0, 0, cw, ch);
-          var compressed = cv.toDataURL("image/jpeg", QUALITY);
-          /* full = original when it is already <= display copy (no upscale gain), else keep original */
-          resolve({ src: compressed, full: dataUri });
-        } catch(e) { resolve({ src: dataUri, full: dataUri }); }
-      };
-      img.onerror = function() { resolve({ src: dataUri, full: dataUri }); };
-      img.src = dataUri;
-    });
+    return { src: dataUri, full: dataUri };
   });
 };
 var isOD = function isOD(o) {
