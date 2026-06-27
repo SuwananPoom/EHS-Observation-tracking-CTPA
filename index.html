@@ -305,7 +305,12 @@ function explainStorageErr(status, body){
 function uploadPhotoToStorage(obsId, slot, idx, photo){
   if(!cloudOn() || !photo || !photo.src) return Promise.resolve(null);
   if(photo.src.indexOf("data:") !== 0) return Promise.resolve(null); /* already a URL */
-  var blob = dataUriToBlob(photo.src);
+  /* Prefer the ORIGINAL full-resolution image (held transiently in __ctpaOriginals)
+     so Supabase Storage keeps the sharpest copy for PDF/PPT export. Falls back to the
+     compressed display src for older photos / after a reload. */
+  var original = (photo.id != null && __ctpaOriginals[photo.id]) ? __ctpaOriginals[photo.id] : null;
+  var srcToUpload = original || photo.src;
+  var blob = dataUriToBlob(srcToUpload);
   if(!blob){ __lastStorageErr = "Could not decode photo data (invalid base64)."; return Promise.resolve(null); }
   var path = storageObjectPath(obsId, slot, idx);
   var url = CLOUD.url.replace(/\/$/,"") + "/storage/v1/object/" + CLOUD.bucket + "/" + path.split("/").map(encodeURIComponent).join("/");
@@ -314,7 +319,7 @@ function uploadPhotoToStorage(obsId, slot, idx, photo){
     headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": blob.type || "image/jpeg", "x-upsert": "true" },
     body: blob
   }).then(function(r){
-    if(r.ok){ __lastStorageErr = ""; return storagePublicUrl(path); }
+    if(r.ok){ __lastStorageErr = ""; if(photo.id != null) delete __ctpaOriginals[photo.id]; return storagePublicUrl(path); }
     return r.text().then(function(t){
       __lastStorageErr = explainStorageErr(r.status, t);
       console.warn("[CTPA] Storage upload failed:", r.status, t.slice(0,200), "| URL:", url);
@@ -1330,9 +1335,15 @@ var b64f = function b64f(f) {
     fr.readAsDataURL(f);
   });
 };
-/* compressPhoto: resize + compress before storing.
-   Max 1920px on longest side, JPEG 0.82 quality → ~200-500 KB per photo.
-   Prevents localStorage quota failures from multi-MB phone photos. */
+/* Transient, in-memory map of full-resolution originals keyed by photo.id.
+   NEVER persisted to localStorage or ctpa_state — used only to upload the
+   original to Supabase Storage, then deleted once the upload succeeds. */
+var __ctpaOriginals = {};
+/* compressPhoto: produce a small DISPLAY copy (for localStorage/ctpa_state)
+   while preserving the ORIGINAL full-resolution data URI for Storage upload.
+   Returns { src: compressedDisplayCopy, full: originalDataUri }.
+   Display copy: max 1920px / JPEG 0.82 → keeps localStorage small.
+   full: untouched original → uploaded to Storage so exports stay sharp. */
 var compressPhoto = function compressPhoto(f) {
   var MAX_DIM = 1920, QUALITY = 0.82;
   return b64f(f).then(function(dataUri) {
@@ -1341,17 +1352,18 @@ var compressPhoto = function compressPhoto(f) {
       img.onload = function() {
         try {
           var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-          if (!w || !h) { resolve(dataUri); return; }
+          if (!w || !h) { resolve({ src: dataUri, full: dataUri }); return; }
           var scale = Math.min(1, MAX_DIM / Math.max(w, h));
           var cw = Math.round(w * scale), ch = Math.round(h * scale);
           var cv = document.createElement("canvas"); cv.width = cw; cv.height = ch;
           var ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cw, ch);
           ctx.drawImage(img, 0, 0, cw, ch);
           var compressed = cv.toDataURL("image/jpeg", QUALITY);
-          resolve(compressed);
-        } catch(e) { resolve(dataUri); }
+          /* full = original when it is already <= display copy (no upscale gain), else keep original */
+          resolve({ src: compressed, full: dataUri });
+        } catch(e) { resolve({ src: dataUri, full: dataUri }); }
       };
-      img.onerror = function() { resolve(dataUri); };
+      img.onerror = function() { resolve({ src: dataUri, full: dataUri }); };
       img.src = dataUri;
     });
   });
@@ -2986,9 +2998,12 @@ function Strip(_ref2) {
             return compressPhoto(f);
           case 4:
             src = _context.v;
+            var _pid = Date.now() + Math.random();
+            /* keep original full-res in transient map for Storage upload; display uses compressed src */
+            if (src && src.full) { __ctpaOriginals[_pid] = src.full; }
             onAdd({
-              id: Date.now() + Math.random(),
-              src: src,
+              id: _pid,
+              src: (src && src.src) ? src.src : src,
               name: f.name,
               at: td()
             });
