@@ -646,6 +646,7 @@ function checkReportPass(input){
 var __ctpaLastWrite = 0;   // ms timestamp of last local save IN FLIGHT — reset to 0 after cloud confirms
 var __ctpaLastSaveAt = 0;  // ms timestamp of last CONFIRMED local save — pull() honours a grace window after this
 var __ctpaWriteGraceMs = 10000; // pull() will not overwrite local edits within this window after a save
+var __ctpaSaveChain = Promise.resolve(); // serialises cloud saves so concurrent edits never clobber each other (lost-update fix)
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
 var __lastCloudSaveErr = ""; // last cloudSave failure detail — read by sv() for UI error message
 /* cloudCheck: lightweight poll — selects only id (~20 bytes) to confirm row exists.
@@ -5577,34 +5578,43 @@ function App(_refApp) {
     }
     setSyncBusy(true);
     setSyncErr(null);
-    /* cloudMergeSave: reads current cloud data first, merges, then writes.
-       Prevents this device from overwriting observations added by other devices. */
-    cloudMergeSave(d, getDeletedIds()).then(function(result) {
-      setSyncBusy(false);
-      if (!result.ok) {
-        var errDetail = __lastCloudSaveErr || "unknown error";
-        setSyncErr("Cloud save failed — " + errDetail);
-        setT({ msg: "❌ Supabase save failed: " + errDetail + ". Your data is on this device — tap ↻ Sync to retry.", type: "err" });
-        setTimeout(function(){ setT(null); }, 10000);
-      } else {
-        setSyncErr(null);
+    /* SERIALISED cloud save: chain each save so they run one-at-a-time. Concurrent
+       cloudMergeSave calls (e.g. status change + approval + photo url in quick succession)
+       each do read-merge-write; if they overlap, one overwrites the other's change
+       (lost update → "edit didn't save / reverted"). Chaining guarantees each save reads
+       the cloud AFTER the previous write has landed. */
+    __ctpaSaveChain = __ctpaSaveChain.then(function(){
+      return cloudMergeSave(d, getDeletedIds()).then(function(result) {
+        setSyncBusy(false);
+        if (!result.ok) {
+          /* reset in-flight marker but keep a short grace window so a poll can't immediately
+             revert the on-screen (unsaved) edit; user can retry via Sync */
+          __ctpaLastWrite = 0;
+          __ctpaLastSaveAt = Date.now();
+          var errDetail = __lastCloudSaveErr || "unknown error";
+          setSyncErr("Cloud save failed — " + errDetail);
+          setT({ msg: "❌ Supabase save failed: " + errDetail + ". Your data is on this device — tap ↻ Sync to retry.", type: "err" });
+          setTimeout(function(){ setT(null); }, 10000);
+        } else {
+          setSyncErr(null);
+          __ctpaLastWrite = 0;
+          __ctpaLastSaveAt = Date.now();
+          setLastWriteTime(new Date());
+          var migrated = mergeLocalPhotoCache(ctpaMigrate(result.merged));
+          setObs(migrated);
+          try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e) {}
+          setCloudObsCount(migrated.length);
+          console.log("[CTPA] sv() merge-save complete | final obs count:", migrated.length);
+        }
+      }).catch(function (err) {
+        setSyncBusy(false);
         __ctpaLastWrite = 0;
         __ctpaLastSaveAt = Date.now();
-        setLastWriteTime(new Date());
-        /* Update local state and cache with merged result so this device sees all obs.
-           mergeLocalPhotoCache restores any photo src that survived in per-photo cache keys. */
-        var migrated = mergeLocalPhotoCache(ctpaMigrate(result.merged));
-        setObs(migrated);
-        try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e) {}
-        setCloudObsCount(migrated.length);
-        console.log("[CTPA] sv() merge-save complete | final obs count:", migrated.length);
-      }
-    }).catch(function (err) {
-      setSyncBusy(false);
-      var msg = (err && err.message) ? err.message : "Network error";
-      setSyncErr(msg);
-      setT({ msg: "❌ Network error — not saved to Supabase. " + msg + ". Tap ↻ Sync when connection is restored.", type: "err" });
-      setTimeout(function(){ setT(null); }, 10000);
+        var msg = (err && err.message) ? err.message : "Network error";
+        setSyncErr(msg);
+        setT({ msg: "❌ Network error — not saved to Supabase. " + msg + ". Tap ↻ Sync when connection is restored.", type: "err" });
+        setTimeout(function(){ setT(null); }, 10000);
+      });
     });
   }, []);
   var ps = useCallback(function (nx) {
