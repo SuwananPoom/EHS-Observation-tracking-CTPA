@@ -5600,11 +5600,21 @@ function App(_refApp) {
           __ctpaLastWrite = 0;
           __ctpaLastSaveAt = Date.now();
           setLastWriteTime(new Date());
-          var migrated = mergeLocalPhotoCache(ctpaMigrate(result.merged));
-          setObs(migrated);
-          try { localStorage.setItem(SKEY, JSON.stringify(migrated)); } catch(e) {}
-          setCloudObsCount(migrated.length);
-          console.log("[CTPA] sv() merge-save complete | final obs count:", migrated.length);
+          /* Do NOT clobber the live state with this save's snapshot (result.merged was built
+             from the obs array at the time THIS save started — a newer optimistic edit may
+             already be in state). Keep the CURRENT state authoritative and only append
+             cloud-only obs that aren't present locally. Prevents edits reverting right after save. */
+          var mergedMigrated = ctpaMigrate(result.merged);
+          setObs(function(cur){
+            var curIds = {};
+            cur.forEach(function(o){ if(o.id) curIds[o.id] = true; });
+            var cloudExtra = mergedMigrated.filter(function(o){ return o.id && !curIds[o.id]; });
+            var combined = mergeLocalPhotoCache(cur.concat(cloudExtra));
+            try { localStorage.setItem(SKEY, JSON.stringify(combined)); } catch(e) {}
+            setCloudObsCount(combined.length);
+            return combined;
+          });
+          console.log("[CTPA] sv() merge-save complete (current state kept authoritative)");
         }
       }).catch(function (err) {
         setSyncBusy(false);
