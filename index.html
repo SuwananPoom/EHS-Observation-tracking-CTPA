@@ -6320,15 +6320,7 @@ function App(_refApp) {
     });
     delete fclean.floor; delete fclean.area; delete fclean.zoneOther;
     delete fclean.companyOther; delete fclean.catOther;
-    var nx;
     if (edit) {
-      nx = obs.map(function (o) {
-        return o.id === edit.id ? _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
-          id: edit.id,
-          pb: fBef,
-          pa: fAft
-        }) : o;
-      });
       /* build a concise change summary for the audit log */
       var changes = [];
       ["status","risk","obsType","zone","company","due","desc","by"].forEach(function(k){
@@ -6383,7 +6375,20 @@ function App(_refApp) {
       });
       return; /* exit early — ps() and navigation happen in the .then() callback */
     }
-    ps(nx);
+    /* EDIT save: build from the FRESHEST state (functional updater), never the stale `obs`
+       closure — otherwise sv() would write an old snapshot back and revert the edit. */
+    setObs(function (cur) {
+      var nx2 = cur.map(function (o) {
+        return o.id === edit.id ? _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
+          id: edit.id,
+          pb: fBef,
+          pa: fAft
+        }) : o;
+      });
+      sv(nx2);
+      try { localStorage.setItem(SKEY, JSON.stringify(nx2)); } catch(e){}
+      return nx2;
+    });
     setEdit(null);
     setView("list");
   };
