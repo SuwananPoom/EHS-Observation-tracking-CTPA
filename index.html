@@ -643,7 +643,9 @@ function checkReportPass(input){
     })
     .catch(function(){ return false; });
 }
-var __ctpaLastWrite = 0;   // ms timestamp of last local save — reset to 0 after cloud confirms
+var __ctpaLastWrite = 0;   // ms timestamp of last local save IN FLIGHT — reset to 0 after cloud confirms
+var __ctpaLastSaveAt = 0;  // ms timestamp of last CONFIRMED local save — pull() honours a grace window after this
+var __ctpaWriteGraceMs = 10000; // pull() will not overwrite local edits within this window after a save
 var __ctpaLastCloudAt = 0;  // ms timestamp of last known cloud update (for smart polling)
 var __lastCloudSaveErr = ""; // last cloudSave failure detail — read by sv() for UI error message
 /* cloudCheck: lightweight poll — selects only id (~20 bytes) to confirm row exists.
@@ -5587,6 +5589,7 @@ function App(_refApp) {
       } else {
         setSyncErr(null);
         __ctpaLastWrite = 0;
+        __ctpaLastSaveAt = Date.now();
         setLastWriteTime(new Date());
         /* Update local state and cache with merged result so this device sees all obs.
            mergeLocalPhotoCache restores any photo src that survived in per-photo cache keys. */
@@ -5645,6 +5648,14 @@ function App(_refApp) {
       return cloudLoad().then(function(row){
         setLastSynced(new Date());
         setSyncErr(null);
+        /* GUARD: do not let a background poll overwrite local edits that are still being
+           saved or were just saved. A pull firing mid-save reads stale cloud data (the
+           PATCH hasn't landed / replica lag) and would revert the user's edit on screen.
+           Manual Sync (isForcePull) bypasses this guard. */
+        if(!isForcePull && (__ctpaLastWrite !== 0 || (Date.now() - __ctpaLastSaveAt) < __ctpaWriteGraceMs)){
+          console.log("[CTPA] pull(): skipped apply — local write in flight or within grace window (protecting unsaved/just-saved edits)");
+          return false;
+        }
         console.log("[CTPA] pull() ← row:", row ? JSON.stringify({
           hasRow: true,
           dataType: typeof row.data,
