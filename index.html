@@ -5891,12 +5891,18 @@ function App(_refApp) {
     try { return new Date().toISOString().slice(0, 16).replace("T", " "); } catch (e) { return td(); }
   };
   var applyTo = function applyTo(id, patch) {
-    var nx = obs.map(function (o) {
-      return o.id === id ? _ctpaAssign({}, o, patch) : o;
+    /* Build from the FRESHEST state via the functional updater (never the stale `obs`
+       closure). Using a captured `obs` snapshot here would rebuild the whole array from
+       old data and sv() would write it back, reverting other recent edits/approvals. */
+    setObs(function (cur) {
+      var nx = cur.map(function (o) {
+        return o.id === id ? _ctpaAssign({}, o, patch) : o;
+      });
+      sv(nx);
+      if (det && det.id === id) setDet(nx.find(function (o) { return o.id === id; }));
+      try { localStorage.setItem(SKEY, JSON.stringify(nx)); } catch(e){}
+      return nx;
     });
-    ps(nx);
-    if (det && det.id === id) setDet(nx.find(function (o) { return o.id === id; }));
-    return nx;
   };
   /* normal user submits a completed corrective action for closure review */
   var submitClosure = function submitClosure(id) {
@@ -6102,12 +6108,17 @@ function App(_refApp) {
       }
     }
 
-    /* update local state immediately (optimistic) */
-    var nx0 = obs.map(function(o){
-      return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, photos)) : o;
+    /* update local state immediately (optimistic) — build from FRESH state, not the stale
+       `obs` closure, so saving this obs's photos never reverts other obs' recent edits. */
+    setObs(function(cur){
+      var nx0 = cur.map(function(o){
+        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, photos)) : o;
+      });
+      sv(nx0);
+      setDet(nx0.find(function(o){ return o.id === id; }));
+      try { localStorage.setItem(SKEY, JSON.stringify(nx0)); } catch(e){}
+      return nx0;
     });
-    ps(nx0);
-    setDet(nx0.find(function(o){ return o.id === id; }));
     /* cache each new photo immediately — also upload to Storage (+ table fallback) for cross-device */
     var uploadPromises = [];
     added.forEach(function(p, i){
