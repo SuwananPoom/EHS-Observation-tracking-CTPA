@@ -5588,6 +5588,8 @@ function App(_refApp) {
   var _qySt = useState(""),          qYear     = _qySt[0], setQYear     = _qySt[1];  /* "" = latest year in data */
   var _qqSt = useState([1,2,3,4]),   qQuarters = _qqSt[0], setQQuarters = _qqSt[1];  /* multi-select Q1..Q4 */
   var qQuartersKey = qQuarters.join(",");
+  var _qmSt = useState([1,2,3,4,5,6,7,8,9,10,11,12]), qMonths = _qmSt[0], setQMonths = _qmSt[1];  /* multi-select months */
+  var qMonthsKey = qMonths.join(",");
   var _useState25 = useState("ALL"),
     _useState26 = _slicedToArray(_useState25, 2),
     fSt = _useState26[0],
@@ -5932,11 +5934,12 @@ function App(_refApp) {
       var q = getQuarterFromDate(o.date);
       return q && String(q.year) === qYearEff && qQuarters.indexOf(q.quarter) !== -1;
     });
-    /* MONTHLY: months within the selected chart range */
-    var ks = {}; obs.forEach(function(o){ var k = getPeriodKey(o.date, "MONTHLY"); if(k) ks[k] = true; });
-    var vis = selectPeriodKeys(Object.keys(ks).sort(), qRange, "MONTHLY");
-    return obs.filter(function(o){ return vis.indexOf(getPeriodKey(o.date, "MONTHLY")) !== -1; });
-  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey]);
+    /* MONTHLY: selected year + selected month set (single, multiple, or all 12) */
+    return obs.filter(function(o){
+      var m = (o.date || "").match(/^(\d{4})-(\d{2})/);
+      return m && m[1] === qYearEff && qMonths.indexOf(parseInt(m[2], 10)) !== -1;
+    });
+  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey]);
   var obsAll = obs;  /* full unfiltered set — for period series/comparison context */
   var S = useMemo(function () {
     return {
@@ -7865,8 +7868,8 @@ function App(_refApp) {
             background: on ? C.green : "#fff", color: on ? "#fff" : C.textMid } },
           p.charAt(0) + p.slice(1).toLowerCase());
       }),
-      /* Year selector (Quarterly & Yearly) — years derived from data, never hard-coded */
-      (qPeriod === "QUARTERLY" || qPeriod === "YEARLY") && /*#__PURE__*/React.createElement("select", {
+      /* Year selector (Monthly, Quarterly & Yearly) — years derived from data, never hard-coded */
+      (qPeriod === "MONTHLY" || qPeriod === "QUARTERLY" || qPeriod === "YEARLY") && /*#__PURE__*/React.createElement("select", {
         value: qYearEff, onChange: function(e){ setQYear(e.target.value); },
         style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 700 } },
         __dsYears.map(function(y){ return /*#__PURE__*/React.createElement("option", { key: y, value: y }, y); })),
@@ -7885,13 +7888,26 @@ function App(_refApp) {
             background: on ? C.greenBg : "#fff", color: on ? C.greenDk : C.textMid } },
           "Q" + qn);
       }),
-      qPeriod === "MONTHLY" && /*#__PURE__*/React.createElement("select", {
-        value: qRange, onChange: function(e){ setQRange(e.target.value); },
-        style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, marginLeft: "auto" } },
-        /*#__PURE__*/React.createElement("option", { value: "L4" }, "Latest 4 Months"),
-        /*#__PURE__*/React.createElement("option", { value: "L8" }, "Latest 8 Months"),
-        /*#__PURE__*/React.createElement("option", { value: "CY" }, "Current Year"),
-        /*#__PURE__*/React.createElement("option", { value: "PY" }, "Previous Year"))
+      /* Multi-select month chips: single month, any combination, or All 12 */
+      qPeriod === "MONTHLY" && /*#__PURE__*/React.createElement("span", { style: { display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center" } },
+        /*#__PURE__*/React.createElement("button", {
+          onClick: function(){ setQMonths([1,2,3,4,5,6,7,8,9,10,11,12]); },
+          style: { fontSize: 10, padding: "5px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 800,
+            border: "1.5px solid " + (qMonths.length === 12 ? C.green : C.border),
+            background: qMonths.length === 12 ? C.green : "#fff", color: qMonths.length === 12 ? "#fff" : C.textMid } }, "All"),
+        ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"].map(function(mn, mi){
+          var mno = mi + 1, on = qMonths.indexOf(mno) !== -1;
+          return /*#__PURE__*/React.createElement("button", { key: mn,
+            onClick: function(){
+              setQMonths(function(cur){
+                var nx = cur.indexOf(mno) !== -1 ? cur.filter(function(x){ return x !== mno; }) : cur.concat([mno]).sort(function(a,b){ return a-b; });
+                return nx.length ? nx : cur;   /* at least one month stays selected */
+              });
+            },
+            style: { fontSize: 10, padding: "5px 9px", borderRadius: 8, cursor: "pointer", fontWeight: 700,
+              border: "1.5px solid " + (on ? C.green : C.border),
+              background: on ? C.greenBg : "#fff", color: on ? C.greenDk : C.textMid } }, mn);
+        }))
     ),
     qPeriod === "WEEKLY"
       ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 6 } },
@@ -7899,9 +7915,11 @@ function App(_refApp) {
       : (function(){
           /* dsObs IS the selected dataset — tiles cover the ENTIRE selection */
           var sel = dsObs;
+          var __MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
           var selLabel = qPeriod === "YEARLY" ? ("Year " + qYearEff)
             : qPeriod === "QUARTERLY" ? (qQuarters.map(function(q){ return "Q" + q; }).join("+") + " " + qYearEff)
-            : (qRange === "L4" ? "Latest 4 months" : qRange === "L8" ? "Latest 8 months" : qRange === "CY" ? "Current year (months)" : "Previous year (months)");
+            : (qMonths.length === 12 ? ("All 12 months " + qYearEff)
+               : qMonths.map(function(m){ return __MN[m-1]; }).join("+") + " " + qYearEff);
           if(!sel.length) return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, marginTop: 10 } }, "No observations in " + selLabel + ".");
           var UA_C = "#EF4444", UC_C = C.amber, GD_C = C.green, UN_C = "#94A3B8";
           function cnt(f){ return sel.filter(f).length; }
@@ -7938,11 +7956,21 @@ function App(_refApp) {
           /* Trend series from the FULL data (obsAll) so previous-period comparison has context */
           var series = aggregateObservationsByQuarter(obsAll, qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : "MONTHLY");
           var allKeys = series.map(function(r){ return r.key; });
-          var visKeys;
-          if(qPeriod === "QUARTERLY") visKeys = qQuarters.map(function(q){ return qYearEff + "-Q" + q; }).filter(function(k){ return allKeys.indexOf(k) !== -1; });
-          else if(qPeriod === "YEARLY") visKeys = allKeys;   /* chart shows all years; summary above uses selected year */
-          else visKeys = selectPeriodKeys(allKeys, qRange, "MONTHLY");
-          var vis = series.filter(function(r){ return visKeys.indexOf(r.key) !== -1; });
+          var vis;
+          if(qPeriod === "MONTHLY"){
+            /* One row per SELECTED month, zero-filled — months with no records stay
+               visible with 0 and are never removed from the chart/table. */
+            vis = qMonths.slice().sort(function(a,b){ return a-b; }).map(function(m){
+              var k = qYearEff + "-" + String(m).padStart(2, "0");
+              for(var si = 0; si < series.length; si++){ if(series[si].key === k) return series[si]; }
+              return { key: k, total: 0, ua: 0, uc: 0, good: 0 };
+            });
+          } else {
+            var visKeys;
+            if(qPeriod === "QUARTERLY") visKeys = qQuarters.map(function(q){ return qYearEff + "-Q" + q; }).filter(function(k){ return allKeys.indexOf(k) !== -1; });
+            else visKeys = allKeys;   /* YEARLY: chart shows all years; summary above uses selected year */
+            vis = series.filter(function(r){ return visKeys.indexOf(r.key) !== -1; });
+          }
           var maxTot = vis.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
           return /*#__PURE__*/React.createElement("div", { style: { marginTop: 12 } },
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
