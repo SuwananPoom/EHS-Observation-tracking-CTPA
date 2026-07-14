@@ -7995,8 +7995,11 @@ function App(_refApp) {
                     return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: "left", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
                   }))),
                 /*#__PURE__*/React.createElement("tbody", null, vis.map(function(r){
-                  var i = allKeys.indexOf(r.key);
-                  var pvr = i > 0 ? series[i - 1] : null;
+                  /* Prev = previous period WITHIN the selected/visible range only.
+                     The first displayed period must never compare against hidden
+                     data outside the selection — it shows "—" instead. */
+                  var vi = vis.indexOf(r);
+                  var pvr = vi > 0 ? vis[vi - 1] : null;
                   var diff = pvr ? r.total - pvr.total : null;
                   var pc = (pvr && pvr.total > 0) ? (((r.total - pvr.total) / pvr.total) * 100) : null;
                   var word = !pvr ? "—" : (r.total > pvr.total ? "increased" : r.total < pvr.total ? "decreased" : "unchanged");
