@@ -7963,138 +7963,150 @@ function App(_refApp) {
       color: C.text,
       marginBottom: 12
     }
-  }, "Findings Heat Map"), (function(){
-    /* ── Findings Heat Map (UI/visualisation only) ──────────────────────────
-       Rows = Area, Columns = Floor, cell = count of findings for that combo.
-       Source: the same `obs` array used by every other dashboard card, parsed
-       via the existing parseZone(). Blank zone/area/floor → "Unspecified" (the
-       stored record is never changed). No hard-coded Area/Floor values — the
-       axes are derived from the data plus the system's own FLOORS/FLOOR_AREAS
-       configuration order. */
-    var HB_HIGH = "#DC2626", HB_HIGH_T = "#FFFFFF";   /* >= 20  High   */
-    var HB_MED  = "#F59E0B", HB_MED_T  = "#FFFFFF";   /* 10-19  Medium */
-    var HB_LOW  = "#DCFCE7", HB_LOW_T  = "#166534";   /* 1-9    Low    */
-    var HB_ZERO = "#F1F5F9", HB_ZERO_T = "#CBD5E1";   /* 0      None   */
-
-    function hbColor(n){
-      if(n >= 20) return { bg: HB_HIGH, tx: HB_HIGH_T };
-      if(n >= 10) return { bg: HB_MED,  tx: HB_MED_T  };
-      if(n >= 1)  return { bg: HB_LOW,  tx: HB_LOW_T  };
-      return { bg: HB_ZERO, tx: HB_ZERO_T };
-    }
-    function hbCell(o){
-      var z = (o.zone || "").trim();
-      if(!z) return { floor: "Unspecified", area: "Unspecified" };
-      var pz = parseZone(z);
-      var floor = pz.floor || "Unspecified";
-      var area  = (pz.area === "Other") ? (pz.other || "Unspecified") : (pz.area || "Unspecified");
-      if(!floor) floor = "Unspecified";
-      if(!area)  area  = "Unspecified";
-      return { floor: floor, area: area };
-    }
-
-    /* Source: same filtered dashboard dataset. When the reporting period is
-       QUARTERLY, narrow to the selected quarter range (display-only). */
-    var hbSrc = obs;
-    if(qPeriod === "QUARTERLY"){
-      var _hbAll = {};
-      obs.forEach(function(o){ var k = getPeriodKey(o.date, "QUARTERLY"); if(k) _hbAll[k] = true; });
-      var _hbVis = selectPeriodKeys(Object.keys(_hbAll).sort(), qRange, "QUARTERLY");
-      hbSrc = obs.filter(function(o){ return _hbVis.indexOf(getPeriodKey(o.date, "QUARTERLY")) !== -1; });
-    }
-    /* Count findings per (area, floor); collect axis values dynamically */
-    var hbCounts = {}, hbFloorSet = {}, hbAreaSet = {};
-    hbSrc.forEach(function(o){
-      var c = hbCell(o);
-      hbFloorSet[c.floor] = true;
-      hbAreaSet[c.area]   = true;
-      if(!hbCounts[c.area]) hbCounts[c.area] = {};
-      hbCounts[c.area][c.floor] = (hbCounts[c.area][c.floor] || 0) + 1;
+  }, "By Area / Floor"), (function(){
+    /* Build floor-grouped structure \u2014 handles both zone formats:
+       New  : "1F \u00b7 Data Hall", "External \u00b7 Site Road"  \u2192 parse floor + area
+       Legacy: "Zone A", "Zone B1" etc.                 \u2192 group under same floor label */
+    var floorMap = {};   /* floor \u2192 { areas: { areaLabel \u2192 [zones] }, color, icon } */
+    var FLOOR_META = {
+      "1F":       { color: "#3B82F6", bg: "#EFF6FF", icon: "\ud83c\udfd7" },
+      "2F":       { color: "#8B5CF6", bg: "#ECFDF5", icon: "\ud83c\udfe2" },
+      "LRF":      { color: "#0EA5E9", bg: "#F0F9FF", icon: "\ud83c\udfdb" },
+      "External": { color: "#F59E0B", bg: "#FFFBEB", icon: "\ud83c\udf10" },
+      "Other":    { color: "#64748B", bg: "#F8FAFC", icon: "\ud83d\udccd" }
+    };
+    /* Categorise every obs */
+    obs.forEach(function(o){
+      if(!o.zone) return;
+      var z = o.zone;
+      /* Try new "Floor \u00b7 Area" format first */
+      var sep = z.indexOf(" \u00b7 ");
+      var floor, areaLabel;
+      if(sep > -1){
+        floor = z.slice(0, sep);
+        areaLabel = z.slice(sep + 3);
+      } else {
+        /* Legacy: "Zone A", "Zone B1" etc. \u2192 put under their own floor bucket */
+        floor = z;           /* e.g. "Zone A" */
+        areaLabel = null;    /* no sub-area */
+      }
+      if(!floorMap[floor]) floorMap[floor] = { areas: {}, zones: [] };
+      if(floorMap[floor].zones.indexOf(z) === -1) floorMap[floor].zones.push(z);
+      if(areaLabel){
+        if(!floorMap[floor].areas[areaLabel]) floorMap[floor].areas[areaLabel] = [];
+        if(floorMap[floor].areas[areaLabel].indexOf(z) === -1) floorMap[floor].areas[areaLabel].push(z);
+      }
     });
-    var hbFloors = Object.keys(hbFloorSet);
-    var hbAreas  = Object.keys(hbAreaSet);
-    if(!hbFloors.length || !hbAreas.length)
-      return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 0" } }, "No observations yet.");
-
-    /* Floor order: system-configured order first (FLOORS), then a general logical
-       building order for any other tokens, then alphabetical; "Unspecified" last.
-       No values from any reference image are used. */
-    var HB_FLOOR_PREF = (typeof FLOORS !== "undefined" && FLOORS.slice) ? FLOORS.slice() : [];
-    var HB_LOGICAL = ["B5","B4","B3","B2","B1","GF","G","GROUND","L1","L2","L3","L4","L5","1F","2F","3F","4F","5F","ROOF","LRF","EXTERNAL"];
-    function hbFloorRank(f){
-      var i = HB_FLOOR_PREF.indexOf(f);
-      if(i > -1) return [0, i];
-      if(f === "Unspecified") return [3, 0];
-      var oi = HB_LOGICAL.indexOf((f || "").toUpperCase());
-      if(oi > -1) return [1, oi];
-      return [2, 0];
-    }
-    hbFloors.sort(function(a,b){
-      var ra = hbFloorRank(a), rb = hbFloorRank(b);
-      if(ra[0] !== rb[0]) return ra[0] - rb[0];
-      if(ra[1] !== rb[1]) return ra[1] - rb[1];
-      return a < b ? -1 : (a > b ? 1 : 0);
+    /* Sort floors: known order first, then legacy zones alpha */
+    var FLOOR_ORDER = ["1F","2F","LRF","External","Other"];
+    var floors = Object.keys(floorMap).sort(function(a,b){
+      var ai = FLOOR_ORDER.indexOf(a), bi = FLOOR_ORDER.indexOf(b);
+      if(ai === -1 && bi === -1) return a < b ? -1 : 1;
+      if(ai === -1) return 1;
+      if(bi === -1) return -1;
+      return ai - bi;
     });
-
-    /* Area order: system-configured area order (from FLOOR_AREAS) first, else
-       alphabetical; "Unspecified" last. */
-    var HB_AREA_PREF = [];
-    if(typeof FLOOR_AREAS !== "undefined"){
-      (HB_FLOOR_PREF.length ? HB_FLOOR_PREF : Object.keys(FLOOR_AREAS)).forEach(function(fl){
-        (FLOOR_AREAS[fl] || []).forEach(function(a){ if(HB_AREA_PREF.indexOf(a) === -1) HB_AREA_PREF.push(a); });
-      });
-    }
-    function hbAreaRank(a){
-      if(a === "Unspecified") return [2, 0];
-      var i = HB_AREA_PREF.indexOf(a);
-      if(i > -1) return [0, i];
-      return [1, 0];
-    }
-    hbAreas.sort(function(a,b){
-      var ra = hbAreaRank(a), rb = hbAreaRank(b);
-      if(ra[0] !== rb[0]) return ra[0] - rb[0];
-      if(ra[1] !== rb[1]) return ra[1] - rb[1];
-      return a < b ? -1 : (a > b ? 1 : 0);
+    if(!floors.length) return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 0" } }, "No observations yet.");
+    /* \u2500\u2500 Vertical bar chart broken down by AREA \u2500\u2500 one bar per area/zone,
+         grouped by floor (floor-coloured base line), stacked Closed (green) + Open (amber) \u2500\u2500 */
+    var GREEN = C.green, AMBER = C.amber;
+    var units = [];   /* each = one vertical bar (an area, or a legacy zone) */
+    floors.forEach(function(floor){
+      var f = floorMap[floor];
+      var meta = FLOOR_META[floor] || { color: "#64748B", bg: "#F8FAFC", icon: "\ud83d\udccd" };
+      var areaKeys = Object.keys(f.areas);
+      if(areaKeys.length > 0){
+        /* break the floor out into its individual areas */
+        areaKeys.sort().forEach(function(area){
+          units.push({ floor: floor, meta: meta, label: area, sub: floor, zones: f.areas[area] });
+        });
+      } else {
+        /* legacy zone with no sub-area (e.g. "Zone A") \u2192 single bar */
+        units.push({ floor: floor, meta: meta, label: floor, sub: "", zones: f.zones });
+      }
     });
-
-    var hbTh = { position: "sticky", top: 0, background: C.green, color: "#fff", fontSize: 10, fontWeight: 700, padding: "7px 8px", whiteSpace: "nowrap", textAlign: "center", zIndex: 2 };
-    var hbFirst = { fontSize: 10, fontWeight: 700, color: C.text, padding: "6px 10px", whiteSpace: "nowrap", textAlign: "left", borderRight: "1px solid " + C.border, minWidth: 118, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" };
-
+    var barData = units.map(function(u){
+      var tot  = obs.filter(function(o){ return u.zones.indexOf(o.zone) !== -1; }).length;
+      var open = obs.filter(function(o){ return u.zones.indexOf(o.zone) !== -1 && o.status !== "CLOSED"; }).length;
+      return { floor: u.floor, meta: u.meta, label: u.label, sub: u.sub, tot: tot, open: open, closed: tot - open };
+    }).filter(function(d){ return d.tot > 0; })
+      .sort(function(a, b){ return a.floor === b.floor ? (b.tot - a.tot) : 0; });   /* keep floor grouping, sort within floor */
+    /* Nice round Y-axis maximum + ticks */
+    var rawMax = barData.reduce(function(m, d){ return Math.max(m, d.tot); }, 1);
+    function niceMax(v){
+      if(v <= 5)  return 5;
+      if(v <= 10) return 10;
+      var step = v <= 30 ? 5 : v <= 60 ? 15 : v <= 100 ? 25 : 50;
+      return Math.ceil(v / step) * step;
+    }
+    var axisMax = niceMax(rawMax);
+    /* \u2500\u2500 Horizontal bar chart, grouped by floor \u2500\u2500 */
+    /* Group barData by floor, preserving floor order */
+    var floorGroups = [];
+    floors.forEach(function(fl){
+      var rows = barData.filter(function(d){ return d.floor === fl; });
+      if(!rows.length) return;
+      var meta = FLOOR_META[fl] || { color: "#64748B", bg: "#F8FAFC", icon: "\ud83d\udccd" };
+      var flTot = rows.reduce(function(s,d){ return s+d.tot; }, 0);
+      var flOpen = rows.reduce(function(s,d){ return s+d.open; }, 0);
+      floorGroups.push({ floor: fl, meta: meta, rows: rows, flTot: flTot, flOpen: flOpen });
+    });
     return /*#__PURE__*/React.createElement("div", null,
-      /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 } },
-        /*#__PURE__*/React.createElement("table", { style: { borderCollapse: "separate", borderSpacing: 0, width: "100%", minWidth: (120 + hbFloors.length * 54) } },
-          /*#__PURE__*/React.createElement("thead", null,
-            /*#__PURE__*/React.createElement("tr", null,
-              /*#__PURE__*/React.createElement("th", { style: _ctpaAssign({}, hbTh, { position: "sticky", left: 0, zIndex: 3, textAlign: "left" }) }, "Area \\ Floor"),
-              hbFloors.map(function(f){ return /*#__PURE__*/React.createElement("th", { key: f, style: hbTh, title: f }, f); })
+      /* Legend */
+      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 16, marginBottom: 10, fontSize: 10, color: C.textMid } },
+        /*#__PURE__*/React.createElement("span", null,
+          /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: GREEN, marginRight: 5, verticalAlign: "middle" } }),
+          "Closed"),
+        /*#__PURE__*/React.createElement("span", null,
+          /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: AMBER, marginRight: 5, verticalAlign: "middle" } }),
+          "Open")
+      ),
+      /* Floor groups */
+      floorGroups.map(function(g){
+        return /*#__PURE__*/React.createElement("div", { key: g.floor, style: { marginBottom: 12 } },
+          /* Floor header */
+          /*#__PURE__*/React.createElement("div", { style: {
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "4px 8px", borderRadius: "6px 6px 0 0",
+            background: g.meta.bg, borderLeft: "3px solid " + g.meta.color,
+            marginBottom: 3
+          } },
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: g.meta.color } },
+              g.meta.icon + " " + g.floor),
+            /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.textMid } },
+              g.flTot + " obs" + (g.flOpen ? " \u00b7 " : " \u00b7 "),
+              g.flOpen
+                ? /*#__PURE__*/React.createElement("span", { style: { color: AMBER, fontWeight: 700 } }, g.flOpen + " open")
+                : /*#__PURE__*/React.createElement("span", { style: { color: GREEN, fontWeight: 700 } }, "\u2713 all closed")
             )
           ),
-          /*#__PURE__*/React.createElement("tbody", null,
-            hbAreas.map(function(a, ri){
-              return /*#__PURE__*/React.createElement("tr", { key: a },
-                /*#__PURE__*/React.createElement("td", { style: _ctpaAssign({}, hbFirst, { position: "sticky", left: 0, zIndex: 1, background: ri % 2 === 0 ? "#F8FAFC" : "#F1F5F9" }), title: a }, a),
-                hbFloors.map(function(f){
-                  var n = (hbCounts[a] && hbCounts[a][f]) || 0;
-                  var col = hbColor(n);
-                  return /*#__PURE__*/React.createElement("td", {
-                    key: f,
-                    title: "Area: " + a + "  |  Floor: " + f + "  |  Findings: " + n,
-                    style: { background: col.bg, color: col.tx, fontSize: 11, fontWeight: 800, textAlign: "center", padding: "8px 8px", borderRight: "1px solid #fff", borderBottom: "1px solid #fff", minWidth: 54 }
-                  }, n === 0 ? "" : n);
-                })
-              );
-            })
-          )
-        )
-      ),
-      /* Colour legend */
-      /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 10, color: C.textMid } },
-        [["High (≥ 20)", HB_HIGH], ["Medium (10–19)", HB_MED], ["Low (1–9)", HB_LOW], ["None (0)", HB_ZERO]].map(function(it){
-          return /*#__PURE__*/React.createElement("span", { key: it[0], style: { display: "inline-flex", alignItems: "center", gap: 5 } },
-            /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 12, height: 12, borderRadius: 3, background: it[1], border: "1px solid " + C.border } }),
-            it[0]);
-        })
-      )
+          /* Rows */
+          g.rows.map(function(d, ri){
+            var closedPct = axisMax > 0 ? (d.closed / axisMax * 100) : 0;
+            var openPct   = axisMax > 0 ? (d.open   / axisMax * 100) : 0;
+            var rowBg = ri % 2 === 0 ? "#FAFAFA" : "#fff";
+            return /*#__PURE__*/React.createElement("div", { key: d.label + ri,
+              title: d.label + ": " + d.closed + " closed, " + d.open + " open",
+              style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: rowBg, borderLeft: "3px solid " + g.meta.color + "40" }
+            },
+              /* Area label */
+              /*#__PURE__*/React.createElement("div", { style: { width: 118, minWidth: 118, fontSize: 10, fontWeight: 600, color: C.text, lineHeight: 1.2, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }, title: d.label }, d.label),
+              /* Bar track */
+              /*#__PURE__*/React.createElement("div", { style: { flex: 1, height: 16, borderRadius: 4, background: "#EEF2F6", overflow: "hidden", display: "flex" } },
+                closedPct > 0 && /*#__PURE__*/React.createElement("div", { style: { width: closedPct + "%", background: GREEN, transition: "width .4s" } }),
+                openPct   > 0 && /*#__PURE__*/React.createElement("div", { style: { width: openPct   + "%", background: AMBER, transition: "width .4s" } })
+              ),
+              /* Count badge */
+              /*#__PURE__*/React.createElement("div", { style: { minWidth: 44, textAlign: "right" } },
+                /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: C.text } }, d.tot),
+                d.open > 0
+                  ? /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, color: AMBER, fontWeight: 700, marginLeft: 3 } }, "(" + d.open + " \u25b2)")
+                  : /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, color: GREEN, marginLeft: 3 } }, "\u2713")
+              )
+            );
+          })
+        );
+      })
     );
   })()), /*#__PURE__*/React.createElement("div", {
     style: crd
