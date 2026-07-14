@@ -1318,6 +1318,90 @@ function composeZone(floor, area, other) {
   return floor + " · " + a;
 }
 
+/* ══ QUARTERLY REPORTING UTILITIES (in-memory only — never written back) ══
+   Observation dates are stored as plain "YYYY-MM-DD" strings (o.date), i.e.
+   already in the project's local calendar (Asia/Bangkok). Quarter is derived
+   by string parsing — no Date()/UTC conversion — so month-end and year-end
+   records can never shift quarter. Q1=Jan–Mar, Q2=Apr–Jun, Q3=Jul–Sep, Q4=Oct–Dec. */
+function getQuarterFromDate(dateStr){
+  var s = (dateStr || "").slice(0, 10);
+  var m = s.match(/^(\d{4})-(\d{2})/);
+  if(!m) return null;
+  var y = parseInt(m[1], 10), mo = parseInt(m[2], 10);
+  if(!y || !mo || mo < 1 || mo > 12) return null;
+  return { year: y, quarter: Math.floor((mo - 1) / 3) + 1 };
+}
+function getQuarterLabel(q){ return q ? ("Q" + q.quarter + " " + q.year) : "—"; }
+function quarterKey(q){ return q ? (q.year + "-Q" + q.quarter) : null; }
+/* Generic period bucket for the dashboard period selector */
+function getPeriodKey(dateStr, period){
+  var s = (dateStr || "").slice(0, 10);
+  var m = s.match(/^(\d{4})-(\d{2})/);
+  if(!m) return null;
+  if(period === "YEARLY")  return m[1];
+  if(period === "MONTHLY") return m[1] + "-" + m[2];
+  var q = getQuarterFromDate(s);
+  return q ? quarterKey(q) : null;   /* QUARTERLY */
+}
+function periodKeyLabel(key, period){
+  if(!key) return "—";
+  if(period === "YEARLY") return key;
+  if(period === "MONTHLY"){
+    var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    var p = key.split("-"); return MN[parseInt(p[1],10)-1] + " " + p[0];
+  }
+  var p2 = key.split("-Q"); return "Q" + p2[1] + " " + p2[0];
+}
+/* Aggregate the (already filtered) obs array into period buckets — pure function */
+function aggregateObservationsByQuarter(obsArr, period){
+  var buckets = {};
+  (obsArr || []).forEach(function(o){
+    var k = getPeriodKey(o.date, period);
+    if(!k) return;
+    if(!buckets[k]) buckets[k] = { key: k, total: 0, ua: 0, uc: 0, good: 0, open: 0, closed: 0, pending: 0, serious: 0, major: 0, minor: 0, areas: {}, floors: {}, contractors: {} };
+    var b = buckets[k];
+    b.total++;
+    if(o.obsType === "UNSAFE_ACT") b.ua++;
+    else if(o.obsType === "GOOD_OBS") b.good++;
+    else b.uc++;
+    if(o.status === "CLOSED") b.closed++;
+    else if(o.status === "PENDING_VERIFY") b.pending++;
+    else b.open++;
+    if(o.risk === "SERIOUS") b.serious++;
+    else if(o.risk === "MAJOR") b.major++;
+    else if(o.risk === "MINOR") b.minor++;
+    var pz = parseZone(o.zone || "");
+    var ar = (pz.area === "Other") ? (pz.other || "Unspecified") : (pz.area || "Unspecified");
+    var fl = pz.floor || "Unspecified";
+    b.areas[ar] = (b.areas[ar] || 0) + 1;
+    b.floors[fl] = (b.floors[fl] || 0) + 1;
+    var co = o.company || "Unspecified";
+    b.contractors[co] = (b.contractors[co] || 0) + 1;
+  });
+  var keys = Object.keys(buckets).sort();  /* chronological — "YYYY[-MM|-Qn]" sorts naturally */
+  return keys.map(function(k){ return buckets[k]; });
+}
+function topKeyOf(map){
+  var best = null, bn = -1;
+  Object.keys(map || {}).forEach(function(k){ if(map[k] > bn){ bn = map[k]; best = k; } });
+  return best ? (best + " (" + bn + ")") : "—";
+}
+/* Which period keys are visible for a range choice. Years come from the DATA (never hard-coded).
+   range: L4 = latest 4, L8 = latest 8, CY = current year, PY = previous year.
+   "Current year" = the latest year present in the observation data. */
+function selectPeriodKeys(allKeysSorted, range, period){
+  var keys = allKeysSorted.slice();
+  if(!keys.length) return keys;
+  if(range === "L8") return keys.slice(-8);
+  if(range === "CY" || range === "PY"){
+    var years = keys.map(function(k){ return k.slice(0,4); });
+    var latest = years[years.length - 1];
+    var target = (range === "CY") ? latest : String(parseInt(latest,10) - 1);
+    return keys.filter(function(k){ return k.slice(0,4) === target; });
+  }
+  return keys.slice(-4);  /* L4 default */
+}
+
 var AREA_GROUPS = [{
   g: "Roof Level",
   z: ["Lower Roof", "Roof Deck / LRF Rooms"]
@@ -5498,6 +5582,9 @@ function App(_refApp) {
     _useState24 = _slicedToArray(_useState23, 2),
     fAft = _useState24[0],
     setFAft = _useState24[1];
+  /* Dashboard reporting-period selector (display-only aggregation; default WEEKLY keeps current view) */
+  var _qpSt = useState("WEEKLY"), qPeriod = _qpSt[0], setQPeriod = _qpSt[1];
+  var _qrSt = useState("L4"),     qRange  = _qrSt[0], setQRange  = _qrSt[1];
   var _useState25 = useState("ALL"),
     _useState26 = _slicedToArray(_useState25, 2),
     fSt = _useState26[0],
@@ -7741,7 +7828,125 @@ function App(_refApp) {
         }, t.cnt));
       }));
     }));
-  }()))), /*#__PURE__*/React.createElement("div", {
+  }()))),   /* ══ Reporting Period Selector + Period Analytics (display-only; in-memory) ══ */
+  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
+    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+      /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "Reporting Period"),
+      ["WEEKLY","MONTHLY","QUARTERLY","YEARLY"].map(function(p){
+        var on = qPeriod === p;
+        return /*#__PURE__*/React.createElement("button", { key: p, onClick: function(){ setQPeriod(p); },
+          style: { fontSize: 11, padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontWeight: 700,
+            border: "1.5px solid " + (on ? C.green : C.border),
+            background: on ? C.green : "#fff", color: on ? "#fff" : C.textMid } },
+          p.charAt(0) + p.slice(1).toLowerCase());
+      }),
+      qPeriod !== "WEEKLY" && /*#__PURE__*/React.createElement("select", {
+        value: qRange, onChange: function(e){ setQRange(e.target.value); },
+        style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, marginLeft: "auto" } },
+        /*#__PURE__*/React.createElement("option", { value: "L4" }, qPeriod === "QUARTERLY" ? "Latest 4 Quarters" : "Latest 4 Periods"),
+        /*#__PURE__*/React.createElement("option", { value: "L8" }, qPeriod === "QUARTERLY" ? "Latest 8 Quarters" : "Latest 8 Periods"),
+        /*#__PURE__*/React.createElement("option", { value: "CY" }, "Current Year"),
+        /*#__PURE__*/React.createElement("option", { value: "PY" }, "Previous Year")
+      )
+    ),
+    qPeriod === "WEEKLY"
+      ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 6 } },
+          "Current dashboard view (weekly). Select Monthly / Quarterly / Yearly for period analytics — calculated in memory, nothing is written to the database.")
+      : (function(){
+          var rows = aggregateObservationsByQuarter(obs, qPeriod);
+          var allKeys = rows.map(function(r){ return r.key; });
+          var visKeys = selectPeriodKeys(allKeys, qRange, qPeriod);
+          var vis = rows.filter(function(r){ return visKeys.indexOf(r.key) !== -1; });
+          if(!vis.length) return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, marginTop: 10 } }, "No observations in the selected range.");
+          var latest = vis[vis.length - 1];
+          /* previous period = the row immediately before `latest` in the FULL series (not just visible) */
+          var li = allKeys.indexOf(latest.key);
+          var prevRow = li > 0 ? rows[li - 1] : null;
+          var UA_C = "#EF4444", UC_C = C.amber, GD_C = C.green;
+          var maxTot = vis.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
+          function pct(cur, prev){
+            if(!prevRow || prev === 0) return "N/A";
+            var v = ((cur - prev) / prev) * 100;
+            return (v > 0 ? "+" : "") + v.toFixed(1) + "%";
+          }
+          function dirWord(cur, prev){
+            if(!prevRow) return "no previous period";
+            if(cur > prev) return "increased";
+            if(cur < prev) return "decreased";
+            return "unchanged";
+          }
+          var closure = latest.total ? Math.round(latest.closed / latest.total * 100) : 0;
+          var METRICS = [
+            ["Total OBS", latest.total, C.text], ["Unsafe Act", latest.ua, UA_C], ["Unsafe Cond", latest.uc, "#B45309"], ["Good OBS", latest.good, GD_C],
+            ["Open", latest.open, UA_C], ["Closed", latest.closed, GD_C], ["Pending Verify", latest.pending, "#2563EB"],
+            ["Serious", latest.serious, UA_C], ["Major", latest.major, "#B45309"], ["Minor", latest.minor, C.textMid],
+            ["Closure Rate", closure + "%", GD_C]
+          ];
+          return /*#__PURE__*/React.createElement("div", { style: { marginTop: 12 } },
+            /* Latest-period metric tiles */
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
+              periodKeyLabel(latest.key, qPeriod) + " — summary",
+              prevRow && /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.textMid } },
+                "   (vs " + periodKeyLabel(prevRow.key, qPeriod) + ": total " + dirWord(latest.total, prevRow.total) +
+                ", " + (latest.total - prevRow.total >= 0 ? "+" : "") + (latest.total - prevRow.total) + " · " + pct(latest.total, prevRow.total) + ")")),
+            /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
+              METRICS.map(function(mt){
+                return /*#__PURE__*/React.createElement("div", { key: mt[0], style: { background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 8, padding: "7px 9px" } },
+                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, fontWeight: 600 } }, mt[0]),
+                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: mt[2] } }, String(mt[1])));
+              })),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginBottom: 12 } },
+              "Top Area: ", /*#__PURE__*/React.createElement("strong", null, topKeyOf(latest.areas)),
+              "   ·   Top Floor: ", /*#__PURE__*/React.createElement("strong", null, topKeyOf(latest.floors)),
+              "   ·   Top Contractor: ", /*#__PURE__*/React.createElement("strong", null, topKeyOf(latest.contractors))),
+            /* Stacked trend chart: UA + UC + GOOD with total above each bar */
+            /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 14, fontSize: 10, color: C.textMid, marginBottom: 6 } },
+              [["Unsafe Act", UA_C], ["Unsafe Condition", UC_C], ["Good Observation", GD_C]].map(function(lg){
+                return /*#__PURE__*/React.createElement("span", { key: lg[0] },
+                  /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: lg[1], marginRight: 5, verticalAlign: "middle" } }), lg[0]);
+              })),
+            /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 150, padding: "0 4px", overflowX: "auto" } },
+              vis.map(function(r){
+                var H = 118;
+                var hUA = r.total ? Math.round(r.ua / maxTot * H) : 0;
+                var hUC = r.total ? Math.round(r.uc / maxTot * H) : 0;
+                var hGD = r.total ? Math.round(r.good / maxTot * H) : 0;
+                return /*#__PURE__*/React.createElement("div", { key: r.key, title: periodKeyLabel(r.key, qPeriod) + ": " + r.total + " total (UA " + r.ua + ", UC " + r.uc + ", Good " + r.good + ")",
+                  style: { flex: 1, minWidth: 46, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 } },
+                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, fontWeight: 800, color: C.text } }, r.total),
+                  /*#__PURE__*/React.createElement("div", { style: { width: "70%", maxWidth: 44, display: "flex", flexDirection: "column-reverse", borderRadius: "4px 4px 0 0", overflow: "hidden" } },
+                    hUA > 0 && /*#__PURE__*/React.createElement("div", { style: { height: hUA, background: UA_C, borderTop: "2px solid #fff" } }),
+                    hUC > 0 && /*#__PURE__*/React.createElement("div", { style: { height: hUC, background: UC_C, borderTop: "2px solid #fff" } }),
+                    hGD > 0 && /*#__PURE__*/React.createElement("div", { style: { height: hGD, background: GD_C, borderTop: "2px solid #fff" } })),
+                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.textMid, fontWeight: 700, whiteSpace: "nowrap" } }, periodKeyLabel(r.key, qPeriod)));
+              })),
+            /* Period-over-period comparison table */
+            /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, overflowX: "auto" } },
+              /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
+                /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+                  ["Period","Total","Prev","Diff","% Change","Direction"].map(function(h){
+                    return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: "left", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
+                  }))),
+                /*#__PURE__*/React.createElement("tbody", null, vis.map(function(r){
+                  var i = allKeys.indexOf(r.key);
+                  var pv = i > 0 ? rows[i - 1] : null;
+                  var diff = pv ? r.total - pv.total : null;
+                  var pc = (pv && pv.total > 0) ? (((r.total - pv.total) / pv.total) * 100) : null;
+                  var word = !pv ? "—" : (r.total > pv.total ? "increased" : r.total < pv.total ? "decreased" : "unchanged");
+                  return /*#__PURE__*/React.createElement("tr", { key: r.key, style: { borderBottom: "1px solid " + C.border } },
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: C.text } }, periodKeyLabel(r.key, qPeriod)),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px" } }, r.total),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, pv ? pv.total : "—"),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, diff === null ? "—" : (diff > 0 ? "+" + diff : String(diff))),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, pv ? (pv.total === 0 ? "N/A" : ((pc > 0 ? "+" : "") + pc.toFixed(1) + "%")) : "—"),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, word));
+                })))),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, marginTop: 6 } },
+              "Note: an increase in observations is not automatically good or bad — it may reflect more reporting activity or more findings. Quarterly figures are computed in memory from existing records and are never saved back to the database.")
+          );
+        })()
+  ),
+  /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
@@ -7788,9 +7993,18 @@ function App(_refApp) {
       return { floor: floor, area: area };
     }
 
+    /* Source: same filtered dashboard dataset. When the reporting period is
+       QUARTERLY, narrow to the selected quarter range (display-only). */
+    var hbSrc = obs;
+    if(qPeriod === "QUARTERLY"){
+      var _hbAll = {};
+      obs.forEach(function(o){ var k = getPeriodKey(o.date, "QUARTERLY"); if(k) _hbAll[k] = true; });
+      var _hbVis = selectPeriodKeys(Object.keys(_hbAll).sort(), qRange, "QUARTERLY");
+      hbSrc = obs.filter(function(o){ return _hbVis.indexOf(getPeriodKey(o.date, "QUARTERLY")) !== -1; });
+    }
     /* Count findings per (area, floor); collect axis values dynamically */
     var hbCounts = {}, hbFloorSet = {}, hbAreaSet = {};
-    obs.forEach(function(o){
+    hbSrc.forEach(function(o){
       var c = hbCell(o);
       hbFloorSet[c.floor] = true;
       hbAreaSet[c.area]   = true;
