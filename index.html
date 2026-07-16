@@ -1361,6 +1361,57 @@ function weekRangeLabel(y, w){
   var sTxt = sd.getUTCDate() + (sd.getUTCMonth() === ed.getUTCMonth() ? "" : " " + MN[sd.getUTCMonth()]);
   return sTxt + "–" + ed.getUTCDate() + " " + MN[ed.getUTCMonth()] + " " + y;
 }
+/* ══ Weekly periods — from the EXISTING o.week labels on records ══
+   The system's weekly source of truth is the stored o.week field ("W29" etc.,
+   set by the form/imports). Each period's date range is derived from the actual
+   min–max o.date of its records (same approach the Reports page already uses).
+   CTPA_CUSTOM_WEEKS lets extra weeks be defined with explicit date ranges,
+   frontend-only. Custom entries that are invalid (end<start), duplicate an
+   existing week ID, or overlap any other period are SKIPPED with a console
+   warning — nothing existing is renamed or recalculated. */
+var CTPA_CUSTOM_WEEKS = [
+  /* example shape (do not auto-enable):
+     { id: "W40", year: 2026, startDate: "2026-07-11", endDate: "2026-07-17" } */
+];
+function fmtWeekRange(s, e){
+  var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var sm = s.match(/^(\d{4})-(\d{2})-(\d{2})/), em = e.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!sm || !em) return s + "–" + e;
+  var sTxt = parseInt(sm[3],10) + (sm[2] === em[2] ? "" : " " + MN[parseInt(sm[2],10)-1]);
+  return sTxt + "–" + parseInt(em[3],10) + " " + MN[parseInt(em[2],10)-1] + " " + em[1];
+}
+function weeklyPeriodsForYear(obsArr, yearStr){
+  var map = {};
+  (obsArr || []).forEach(function(o){
+    var wk = (o.week || "").trim();
+    var d = (o.date || "").slice(0, 10);
+    if(!wk || !/^\d{4}-\d{2}-\d{2}$/.test(d) || d.slice(0,4) !== String(yearStr)) return;
+    var m = map[wk];
+    if(!m) map[wk] = { id: wk, year: parseInt(yearStr,10), startDate: d, endDate: d, source: "data" };
+    else { if(d < m.startDate) m.startDate = d; if(d > m.endDate) m.endDate = d; }
+  });
+  var list = Object.keys(map).map(function(k){ return map[k]; });
+  (CTPA_CUSTOM_WEEKS || []).forEach(function(cw){
+    if(!cw || !cw.id || String(cw.year) !== String(yearStr)) return;
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(cw.startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(cw.endDate || "")){ console.warn("[CTPA] custom week has invalid dates — skipped:", cw.id); return; }
+    if(cw.endDate < cw.startDate){ console.warn("[CTPA] custom week end before start — skipped:", cw.id); return; }
+    if(list.some(function(p){ return p.id === cw.id; })){ console.warn("[CTPA] custom week duplicates existing week ID — skipped:", cw.id); return; }
+    if(list.some(function(p){ return !(cw.endDate < p.startDate || cw.startDate > p.endDate); })){ console.warn("[CTPA] custom week overlaps another period — skipped:", cw.id); return; }
+    list.push({ id: cw.id, year: parseInt(yearStr,10), startDate: cw.startDate, endDate: cw.endDate, source: "custom" });
+  });
+  list.sort(function(a,b){ return a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0; });
+  list.forEach(function(p){ p.label = p.id + ": " + fmtWeekRange(p.startDate, p.endDate); });
+  return list;
+}
+/* True when observation o belongs to weekly period p (read-only; never mutates o).
+   data-source week → match by the record's own stored week label;
+   custom week      → inclusive date-range match on the observation date. */
+function weekPeriodMatch(o, p){
+  if(!o || !p) return false;
+  var d = (o.date || "").slice(0, 10);
+  if(p.source === "custom") return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
+  return (o.week || "").trim() === p.id && d.slice(0,4) === String(p.year);
+}
 function getPeriodKey(dateStr, period){
   var s = (dateStr || "").slice(0, 10);
   var m = s.match(/^(\d{4})-(\d{2})/);
@@ -1377,7 +1428,10 @@ function getPeriodKey(dateStr, period){
 function periodKeyLabel(key, period){
   if(!key) return "—";
   if(period === "YEARLY") return key;
-  if(period === "WEEKLY"){ var pw = key.split("-W"); return "W" + parseInt(pw[1], 10); }
+  if(period === "WEEKLY"){
+    if(key.indexOf("-W") === -1) return key;            /* already a short week ID like "W29" */
+    var pw = key.split("-W"); return "W" + parseInt(pw[1], 10);
+  }
   if(period === "MONTHLY"){
     var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     var p = key.split("-"); return MN[parseInt(p[1],10)-1] + " " + p[0];
@@ -5622,7 +5676,13 @@ function App(_refApp) {
   var qQuartersKey = qQuarters.join(",");
   var _qmSt = useState([1,2,3,4,5,6,7,8,9,10,11,12]), qMonths = _qmSt[0], setQMonths = _qmSt[1];  /* multi-select months */
   var qMonthsKey = qMonths.join(",");
-  var _qwSt = useState(0), qWeek = _qwSt[0], setQWeek = _qwSt[1];  /* 0 = All Weeks (default view unchanged) */
+  var _qwSt = useState(""), qWeek = _qwSt[0], setQWeek = _qwSt[1];  /* "" = All Weeks (default view unchanged); else a week ID like "W29" */
+  /* Week-to-week comparison controls (UI state only — never written to records).
+     Pending selections apply ONLY when the Compare Weeks button is pressed. */
+  var _cASt = useState(""),  cmpA = _cASt[0], setCmpA = _cASt[1];
+  var _cBSt = useState(""),  cmpB = _cBSt[0], setCmpB = _cBSt[1];
+  var _cApSt = useState(null), cmpApplied = _cApSt[0], setCmpApplied = _cApSt[1];  /* {a,b} after button press */
+  var _cMoSt = useState("AB"), cmpMode = _cMoSt[0], setCmpMode = _cMoSt[1];        /* A | B | AB | TREND */
   var _useState25 = useState("ALL"),
     _useState26 = _slicedToArray(_useState25, 2),
     fSt = _useState26[0],
@@ -5960,13 +6020,15 @@ function App(_refApp) {
      MONTHLY = months in the chart range. Never written back to the database. */
   var __dsYears = (function(){ var s = {}; obs.forEach(function(o){ var m = (o.date||"").match(/^(\d{4})-/); if(m) s[m[1]] = true; }); return Object.keys(s).sort(); })();
   var qYearEff = qYear || (__dsYears.length ? __dsYears[__dsYears.length-1] : "");
+  /* Weekly periods for the selected year — existing o.week labels + validated custom weeks */
+  var __wkPeriods = useMemo(function(){ return weeklyPeriodsForYear(obs, qYearEff); }, [obs, qYearEff]);
   var dsObs = useMemo(function(){
     if(qPeriod === "WEEKLY"){
       if(!qWeek) return obs;   /* All Weeks — default dashboard view, unchanged */
-      return obs.filter(function(o){
-        var w = weekOfDate(o.date);
-        return w && String(w.year) === qYearEff && w.week === qWeek;
-      });
+      var wp = null;
+      for(var wi = 0; wi < __wkPeriods.length; wi++){ if(__wkPeriods[wi].id === qWeek){ wp = __wkPeriods[wi]; break; } }
+      if(!wp) return obs;
+      return obs.filter(function(o){ return weekPeriodMatch(o, wp); });
     }
     if(qPeriod === "YEARLY") return obs.filter(function(o){ return (o.date||"").slice(0,4) === qYearEff; });
     if(qPeriod === "QUARTERLY") return obs.filter(function(o){
@@ -5978,7 +6040,7 @@ function App(_refApp) {
       var m = (o.date || "").match(/^(\d{4})-(\d{2})/);
       return m && m[1] === qYearEff && qMonths.indexOf(parseInt(m[2], 10)) !== -1;
     });
-  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek]);
+  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek, __wkPeriods]);
   var obsAll = obs;  /* full unfiltered set — for period series/comparison context */
   var S = useMemo(function () {
     return {
@@ -7912,21 +7974,16 @@ function App(_refApp) {
         value: qYearEff, onChange: function(e){ setQYear(e.target.value); },
         style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 700 } },
         __dsYears.map(function(y){ return /*#__PURE__*/React.createElement("option", { key: y, value: y }, y); })),
-      /* Week dropdown (Weekly only): All Weeks + Week 1..last week of selected year */
+      /* Week dropdown (Weekly only): All Weeks + the system's existing weekly periods
+         (from stored o.week labels, ranges from actual record dates) + valid custom weeks.
+         Sorted by start date; follows the selected year. UI state only — never written. */
       qPeriod === "WEEKLY" && /*#__PURE__*/React.createElement("select", {
-        value: qWeek, onChange: function(e){ setQWeek(parseInt(e.target.value, 10) || 0); },
-        style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, maxWidth: 220 } },
-        /*#__PURE__*/React.createElement("option", { value: 0 }, "All Weeks"),
-        (function(){
-          var yNum = parseInt(qYearEff, 10);
-          if(!yNum) return null;
-          var opts = [];
-          for(var w = 1; w <= weeksInYear(yNum); w++){
-            opts.push(/*#__PURE__*/React.createElement("option", { key: w, value: w },
-              "Week " + w + ": " + weekRangeLabel(yNum, w)));
-          }
-          return opts;
-        })()),
+        value: qWeek, onChange: function(e){ setQWeek(e.target.value); },
+        style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, maxWidth: 230 } },
+        /*#__PURE__*/React.createElement("option", { value: "" }, "All Weeks"),
+        __wkPeriods.map(function(p){
+          return /*#__PURE__*/React.createElement("option", { key: p.id, value: p.id }, p.label);
+        })),
       /* Multi-select quarter chips */
       qPeriod === "QUARTERLY" && [1,2,3,4].map(function(qn){
         var on = qQuarters.indexOf(qn) !== -1;
@@ -7970,7 +8027,9 @@ function App(_refApp) {
           /* dsObs IS the selected dataset — tiles cover the ENTIRE selection */
           var sel = dsObs;
           var __MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          var selLabel = qPeriod === "WEEKLY" ? ("Week " + qWeek + ", " + weekRangeLabel(parseInt(qYearEff, 10), qWeek))
+          var __wkSel = null;
+          if(qPeriod === "WEEKLY"){ for(var _wi = 0; _wi < __wkPeriods.length; _wi++){ if(__wkPeriods[_wi].id === qWeek){ __wkSel = __wkPeriods[_wi]; break; } } }
+          var selLabel = qPeriod === "WEEKLY" ? (__wkSel ? (__wkSel.id + ", " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate)) : ("Week " + qWeek))
             : qPeriod === "YEARLY" ? ("Year " + qYearEff)
             : qPeriod === "QUARTERLY" ? (qQuarters.map(function(q){ return "Q" + q; }).join("+") + " " + qYearEff)
             : (qMonths.length === 12 ? ("All 12 months " + qYearEff)
@@ -8014,13 +8073,15 @@ function App(_refApp) {
           var allKeys = series.map(function(r){ return r.key; });
           var vis;
           if(qPeriod === "WEEKLY"){
-            /* Selected week + the immediately previous week (zero-filled), so the
-               comparison table always compares against week N-1. Week 1 has no prev. */
-            var wks = qWeek > 1 ? [qWeek - 1, qWeek] : [qWeek];
-            vis = wks.map(function(w){
-              var k = qYearEff + "-W" + String(w).padStart(2, "0");
-              for(var si = 0; si < series.length; si++){ if(series[si].key === k) return series[si]; }
-              return { key: k, total: 0, ua: 0, uc: 0, good: 0 };
+            /* Rows from the system's weekly PERIOD definitions (sorted by start date):
+               the selected week plus the period immediately before it in the list, so
+               the main table compares against the true previous configured week. */
+            var selIdx = -1;
+            for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
+            var wkRows = selIdx > 0 ? [__wkPeriods[selIdx-1], __wkPeriods[selIdx]] : (selIdx === 0 ? [__wkPeriods[0]] : []);
+            vis = wkRows.map(function(p){
+              var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
+              return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
             });
           } else if(qPeriod === "MONTHLY"){
             /* One row per SELECTED month, zero-filled — months with no records stay
@@ -8063,7 +8124,8 @@ function App(_refApp) {
                 var rUn = r.total - r.ua - r.uc - r.good;   /* aggregate uc includes untyped; recompute strict */
                 var strictUC = r.uc; /* aggregateObservationsByQuarter folds untyped into uc — split it out visually */
                 /* recompute strict per bucket from obsAll for exactness */
-                var bucket = obsAll.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
+                var bucket = r._p ? obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); })
+                  : obsAll.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
                 var bUA = bucket.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
                 var bUC = bucket.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
                 var bGD = bucket.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
@@ -8107,8 +8169,121 @@ function App(_refApp) {
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, marginTop: 6 } },
               "Note: an increase in observations is not automatically good or bad — it may reflect more reporting activity or more findings. All figures are computed in memory from existing records and are never saved back to the database.")
           );
-        })()
+        })(),
+    /* ══ Week-to-week comparison (Weekly only; UI state only — read-only on data) ══ */
+    qPeriod === "WEEKLY" && __wkPeriods.length > 0 && (function(){
+      var A_C = "#0EA5E9", B_C = "#8B5CF6";
+      function findP(id){ for(var i=0;i<__wkPeriods.length;i++){ if(__wkPeriods[i].id===id) return __wkPeriods[i]; } return null; }
+      var pA = cmpApplied ? findP(cmpApplied.a) : null;
+      var pB = cmpApplied ? findP(cmpApplied.b) : null;
+      function statsOf(p){
+        var s = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
+        var c = function(f){ return s.filter(f).length; };
+        var closed = c(function(o){ return o.status === "CLOSED"; });
+        return {
+          n: s.length,
+          "Total OBS": s.length,
+          "Unsafe Act": c(function(o){ return o.obsType === "UNSAFE_ACT"; }),
+          "Unsafe Condition": c(function(o){ return o.obsType === "UNSAFE_CON"; }),
+          "Good Observation": c(function(o){ return o.obsType === "GOOD_OBS"; }),
+          "Open": c(function(o){ return o.status === "OPEN"; }),
+          "In Progress": c(function(o){ return o.status === "IN_PROGRESS"; }),
+          "Pending Verify": c(function(o){ return o.status === "PENDING_VERIFY"; }),
+          "Closed": closed,
+          "Serious": c(function(o){ return o.risk === "SERIOUS"; }),
+          "Major": c(function(o){ return o.risk === "MAJOR"; }),
+          "Minor": c(function(o){ return o.risk === "MINOR"; }),
+          closureRate: s.length ? Math.round(closed / s.length * 100) : 0
+        };
+      }
+      var COUNT_METRICS = ["Total OBS","Unsafe Act","Unsafe Condition","Good Observation","Open","In Progress","Pending Verify","Closed","Serious","Major","Minor"];
+      var stA = pA ? statsOf(pA) : null, stB = pB ? statsOf(pB) : null;
+      var selSt = { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, maxWidth: 220 };
+      return /*#__PURE__*/React.createElement("div", { style: { marginTop: 14, borderTop: "1px dashed " + C.border, paddingTop: 12 } },
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 } }, "Week-to-Week Comparison"),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 } },
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.textMid, fontWeight: 600 } }, "Compare Week A:"),
+          /*#__PURE__*/React.createElement("select", { value: cmpA, onChange: function(e){ setCmpA(e.target.value); }, style: selSt },
+            /*#__PURE__*/React.createElement("option", { value: "" }, "Select a week"),
+            __wkPeriods.map(function(p){ return /*#__PURE__*/React.createElement("option", { key: p.id, value: p.id }, p.label); })),
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.textMid, fontWeight: 600 } }, "with Week B:"),
+          /*#__PURE__*/React.createElement("select", { value: cmpB, onChange: function(e){ setCmpB(e.target.value); }, style: selSt },
+            /*#__PURE__*/React.createElement("option", { value: "" }, "Select another week"),
+            __wkPeriods.map(function(p){ return /*#__PURE__*/React.createElement("option", { key: p.id, value: p.id }, p.label); })),
+          /*#__PURE__*/React.createElement("button", {
+            disabled: !cmpA || !cmpB || cmpA === cmpB,
+            onClick: function(){ setCmpApplied({ a: cmpA, b: cmpB }); },
+            style: { fontSize: 11, padding: "6px 16px", borderRadius: 8, cursor: (!cmpA || !cmpB || cmpA === cmpB) ? "not-allowed" : "pointer", fontWeight: 700,
+              border: "none", background: (!cmpA || !cmpB || cmpA === cmpB) ? "#CBD5E1" : C.green, color: "#fff" } }, "Compare Weeks"),
+          cmpApplied && /*#__PURE__*/React.createElement("select", { value: cmpMode, onChange: function(e){ setCmpMode(e.target.value); }, style: selSt },
+            /*#__PURE__*/React.createElement("option", { value: "AB" }, "Compare Week A and Week B"),
+            /*#__PURE__*/React.createElement("option", { value: "A" }, "Show Week A only"),
+            /*#__PURE__*/React.createElement("option", { value: "B" }, "Show Week B only"),
+            /*#__PURE__*/React.createElement("option", { value: "TREND" }, "Weekly trend — all weeks"))),
+        (!pA || !pB)
+          ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slate } }, "Select Week A and Week B (different weeks), then press Compare Weeks.")
+          : /*#__PURE__*/React.createElement("div", null,
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
+                "Comparison: " + pA.id + ", " + fmtWeekRange(pA.startDate, pA.endDate) + " vs " + pB.id + ", " + fmtWeekRange(pB.startDate, pB.endDate)),
+              /* Legend */
+              /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 16, fontSize: 10, color: C.textMid, marginBottom: 6, flexWrap: "wrap" } },
+                (cmpMode !== "B" && cmpMode !== "TREND") && /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: A_C, marginRight: 5, verticalAlign: "middle" } }), pA.label),
+                (cmpMode !== "A" && cmpMode !== "TREND") && /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: B_C, marginRight: 5, verticalAlign: "middle" } }), pB.label)),
+              /* Graph */
+              cmpMode === "TREND"
+                ? /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 8, height: 120, overflowX: "auto", padding: "0 2px" } },
+                    (function(){
+                      var mx = 1; var rows = __wkPeriods.map(function(p){ var n = obsAll.filter(function(o){ return weekPeriodMatch(o, p); }).length; if(n > mx) mx = n; return { p: p, n: n }; });
+                      return rows.map(function(rw){
+                        return /*#__PURE__*/React.createElement("div", { key: rw.p.id, title: rw.p.label + ": " + rw.n, style: { flex: 1, minWidth: 34, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } },
+                          /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, fontWeight: 800, color: C.text } }, rw.n),
+                          /*#__PURE__*/React.createElement("div", { style: { width: "68%", maxWidth: 34, height: Math.max(2, Math.round(rw.n / mx * 86)), background: (rw.p.id === pA.id ? A_C : rw.p.id === pB.id ? B_C : "#CBD5E1"), borderRadius: "3px 3px 0 0" } }),
+                          /*#__PURE__*/React.createElement("div", { style: { fontSize: 8, color: C.textMid, fontWeight: 700 } }, rw.p.id));
+                      });
+                    })())
+                : /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
+                    /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 140, padding: "0 2px", minWidth: 560 } },
+                      (function(){
+                        var mx = 1;
+                        COUNT_METRICS.forEach(function(mt){ if(cmpMode !== "B" && stA[mt] > mx) mx = stA[mt]; if(cmpMode !== "A" && stB[mt] > mx) mx = stB[mt]; });
+                        return COUNT_METRICS.map(function(mt){
+                          return /*#__PURE__*/React.createElement("div", { key: mt, title: mt + " — " + pA.id + ": " + stA[mt] + ", " + pB.id + ": " + stB[mt], style: { flex: 1, minWidth: 44, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 } },
+                            /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 3, height: 96 } },
+                              cmpMode !== "B" && /*#__PURE__*/React.createElement("div", { title: pA.id + ": " + stA[mt], style: { width: 14, height: Math.max(2, Math.round(stA[mt] / mx * 92)), background: A_C, borderRadius: "3px 3px 0 0" } }),
+                              cmpMode !== "A" && /*#__PURE__*/React.createElement("div", { title: pB.id + ": " + stB[mt], style: { width: 14, height: Math.max(2, Math.round(stB[mt] / mx * 92)), background: B_C, borderRadius: "3px 3px 0 0" } })),
+                            /*#__PURE__*/React.createElement("div", { style: { fontSize: 8, color: C.textMid, fontWeight: 700, textAlign: "center", lineHeight: 1.2, whiteSpace: "normal", maxWidth: 60 } }, mt));
+                        });
+                      })()),
+                    /* Closure Rate — percentage, kept separate from count bars */
+                    /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 16, fontSize: 10, color: C.textMid, marginTop: 6 } },
+                      cmpMode !== "B" && /*#__PURE__*/React.createElement("span", null, "Closure Rate " + pA.id + ": ", /*#__PURE__*/React.createElement("strong", { style: { color: A_C } }, stA.closureRate + "%")),
+                      cmpMode !== "A" && /*#__PURE__*/React.createElement("span", null, "Closure Rate " + pB.id + ": ", /*#__PURE__*/React.createElement("strong", { style: { color: B_C } }, stB.closureRate + "%")))),
+              /* Comparison table: Difference = A − B; %Change = (A−B)/B*100, N/A when B=0 */
+              cmpMode === "AB" && /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, overflowX: "auto" } },
+                /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
+                  /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+                    ["Metric", pA.id, pB.id, "Difference", "% Change", "Direction"].map(function(h){
+                      return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: "left", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
+                    }))),
+                  /*#__PURE__*/React.createElement("tbody", null,
+                    COUNT_METRICS.concat(["Closure Rate"]).map(function(mt){
+                      var isRate = mt === "Closure Rate";
+                      var a = isRate ? stA.closureRate : stA[mt], b = isRate ? stB.closureRate : stB[mt];
+                      var diff = a - b;
+                      var pc = b === 0 ? null : (diff / b) * 100;
+                      var word = a > b ? "increased" : a < b ? "decreased" : "unchanged";
+                      return /*#__PURE__*/React.createElement("tr", { key: mt, style: { borderBottom: "1px solid " + C.border } },
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: C.text } }, mt),
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: A_C, fontWeight: 700 } }, isRate ? a + "%" : a),
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: B_C, fontWeight: 700 } }, isRate ? b + "%" : b),
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, (diff > 0 ? "+" : "") + diff + (isRate ? " pt" : "")),
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, pc === null ? "N/A" : ((pc > 0 ? "+" : "") + pc.toFixed(1) + "%")),
+                        /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, word));
+                    })))))
+      );
+    })()
   ),
+
   /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
