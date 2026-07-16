@@ -1334,18 +1334,50 @@ function getQuarterFromDate(dateStr){
 function getQuarterLabel(q){ return q ? ("Q" + q.quarter + " " + q.year) : "—"; }
 function quarterKey(q){ return q ? (q.year + "-Q" + q.quarter) : null; }
 /* Generic period bucket for the dashboard period selector */
+/* Week-of-year (7-day blocks from Jan 1): week N covers days (N-1)*7+1 .. N*7.
+   Computed from the stored "YYYY-MM-DD" observation date via Date.UTC — no
+   timezone shift, null-safe. Week 1 = 1–7 Jan; the last week ends 31 Dec. */
+function weekOfDate(dateStr){
+  var s = (dateStr || "").slice(0, 10);
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return null;
+  var y = +m[1], mo = +m[2], d = +m[3];
+  if(!y || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  var doy = Math.floor((Date.UTC(y, mo-1, d) - Date.UTC(y, 0, 1)) / 86400000) + 1;
+  if(doy < 1) return null;
+  return { year: y, week: Math.floor((doy - 1) / 7) + 1 };
+}
+function weeksInYear(y){
+  var days = ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
+  return Math.ceil(days / 7);   /* 53 */
+}
+/* "15–21 Jul 2026" for week w of year y (last week capped at 31 Dec) */
+function weekRangeLabel(y, w){
+  var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var startDoy = (w - 1) * 7 + 1;
+  var days = ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
+  var endDoy = Math.min(w * 7, days);
+  var sd = new Date(Date.UTC(y, 0, startDoy)), ed = new Date(Date.UTC(y, 0, endDoy));
+  var sTxt = sd.getUTCDate() + (sd.getUTCMonth() === ed.getUTCMonth() ? "" : " " + MN[sd.getUTCMonth()]);
+  return sTxt + "–" + ed.getUTCDate() + " " + MN[ed.getUTCMonth()] + " " + y;
+}
 function getPeriodKey(dateStr, period){
   var s = (dateStr || "").slice(0, 10);
   var m = s.match(/^(\d{4})-(\d{2})/);
   if(!m) return null;
   if(period === "YEARLY")  return m[1];
   if(period === "MONTHLY") return m[1] + "-" + m[2];
+  if(period === "WEEKLY"){
+    var w = weekOfDate(s);
+    return w ? (w.year + "-W" + String(w.week).padStart(2, "0")) : null;
+  }
   var q = getQuarterFromDate(s);
   return q ? quarterKey(q) : null;   /* QUARTERLY */
 }
 function periodKeyLabel(key, period){
   if(!key) return "—";
   if(period === "YEARLY") return key;
+  if(period === "WEEKLY"){ var pw = key.split("-W"); return "W" + parseInt(pw[1], 10); }
   if(period === "MONTHLY"){
     var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     var p = key.split("-"); return MN[parseInt(p[1],10)-1] + " " + p[0];
@@ -5590,6 +5622,7 @@ function App(_refApp) {
   var qQuartersKey = qQuarters.join(",");
   var _qmSt = useState([1,2,3,4,5,6,7,8,9,10,11,12]), qMonths = _qmSt[0], setQMonths = _qmSt[1];  /* multi-select months */
   var qMonthsKey = qMonths.join(",");
+  var _qwSt = useState(0), qWeek = _qwSt[0], setQWeek = _qwSt[1];  /* 0 = All Weeks (default view unchanged) */
   var _useState25 = useState("ALL"),
     _useState26 = _slicedToArray(_useState25, 2),
     fSt = _useState26[0],
@@ -5928,7 +5961,13 @@ function App(_refApp) {
   var __dsYears = (function(){ var s = {}; obs.forEach(function(o){ var m = (o.date||"").match(/^(\d{4})-/); if(m) s[m[1]] = true; }); return Object.keys(s).sort(); })();
   var qYearEff = qYear || (__dsYears.length ? __dsYears[__dsYears.length-1] : "");
   var dsObs = useMemo(function(){
-    if(qPeriod === "WEEKLY") return obs;
+    if(qPeriod === "WEEKLY"){
+      if(!qWeek) return obs;   /* All Weeks — default dashboard view, unchanged */
+      return obs.filter(function(o){
+        var w = weekOfDate(o.date);
+        return w && String(w.year) === qYearEff && w.week === qWeek;
+      });
+    }
     if(qPeriod === "YEARLY") return obs.filter(function(o){ return (o.date||"").slice(0,4) === qYearEff; });
     if(qPeriod === "QUARTERLY") return obs.filter(function(o){
       var q = getQuarterFromDate(o.date);
@@ -5939,7 +5978,7 @@ function App(_refApp) {
       var m = (o.date || "").match(/^(\d{4})-(\d{2})/);
       return m && m[1] === qYearEff && qMonths.indexOf(parseInt(m[2], 10)) !== -1;
     });
-  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey]);
+  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek]);
   var obsAll = obs;  /* full unfiltered set — for period series/comparison context */
   var S = useMemo(function () {
     return {
@@ -7868,11 +7907,26 @@ function App(_refApp) {
             background: on ? C.green : "#fff", color: on ? "#fff" : C.textMid } },
           p.charAt(0) + p.slice(1).toLowerCase());
       }),
-      /* Year selector (Monthly, Quarterly & Yearly) — years derived from data, never hard-coded */
-      (qPeriod === "MONTHLY" || qPeriod === "QUARTERLY" || qPeriod === "YEARLY") && /*#__PURE__*/React.createElement("select", {
+      /* Year selector (all periods) — years derived from data, never hard-coded */
+      (qPeriod === "WEEKLY" || qPeriod === "MONTHLY" || qPeriod === "QUARTERLY" || qPeriod === "YEARLY") && /*#__PURE__*/React.createElement("select", {
         value: qYearEff, onChange: function(e){ setQYear(e.target.value); },
         style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 700 } },
         __dsYears.map(function(y){ return /*#__PURE__*/React.createElement("option", { key: y, value: y }, y); })),
+      /* Week dropdown (Weekly only): All Weeks + Week 1..last week of selected year */
+      qPeriod === "WEEKLY" && /*#__PURE__*/React.createElement("select", {
+        value: qWeek, onChange: function(e){ setQWeek(parseInt(e.target.value, 10) || 0); },
+        style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.text, fontWeight: 600, maxWidth: 220 } },
+        /*#__PURE__*/React.createElement("option", { value: 0 }, "All Weeks"),
+        (function(){
+          var yNum = parseInt(qYearEff, 10);
+          if(!yNum) return null;
+          var opts = [];
+          for(var w = 1; w <= weeksInYear(yNum); w++){
+            opts.push(/*#__PURE__*/React.createElement("option", { key: w, value: w },
+              "Week " + w + ": " + weekRangeLabel(yNum, w)));
+          }
+          return opts;
+        })()),
       /* Multi-select quarter chips */
       qPeriod === "QUARTERLY" && [1,2,3,4].map(function(qn){
         var on = qQuarters.indexOf(qn) !== -1;
@@ -7909,14 +7963,15 @@ function App(_refApp) {
               background: on ? C.greenBg : "#fff", color: on ? C.greenDk : C.textMid } }, mn);
         }))
     ),
-    qPeriod === "WEEKLY"
+    (qPeriod === "WEEKLY" && !qWeek)
       ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 6 } },
-          "Current dashboard view — all records. Select Monthly / Quarterly / Yearly to focus every dashboard number on that period (in-memory only; nothing is written to the database).")
+          "All Weeks — current dashboard view, all records. Pick a week (or Monthly / Quarterly / Yearly) to focus every dashboard number on that period (in-memory only; nothing is written to the database).")
       : (function(){
           /* dsObs IS the selected dataset — tiles cover the ENTIRE selection */
           var sel = dsObs;
           var __MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          var selLabel = qPeriod === "YEARLY" ? ("Year " + qYearEff)
+          var selLabel = qPeriod === "WEEKLY" ? ("Week " + qWeek + ", " + weekRangeLabel(parseInt(qYearEff, 10), qWeek))
+            : qPeriod === "YEARLY" ? ("Year " + qYearEff)
             : qPeriod === "QUARTERLY" ? (qQuarters.map(function(q){ return "Q" + q; }).join("+") + " " + qYearEff)
             : (qMonths.length === 12 ? ("All 12 months " + qYearEff)
                : qMonths.map(function(m){ return __MN[m-1]; }).join("+") + " " + qYearEff);
@@ -7954,10 +8009,20 @@ function App(_refApp) {
             .concat(unRk > 0 ? [["No Risk Set", unRk, UN_C]] : [])
             .concat([["Closure Rate", closure + "%", GD_C]]);
           /* Trend series from the FULL data (obsAll) so previous-period comparison has context */
-          var series = aggregateObservationsByQuarter(obsAll, qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : "MONTHLY");
+          var __serPeriod = qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : qPeriod === "WEEKLY" ? "WEEKLY" : "MONTHLY";
+          var series = aggregateObservationsByQuarter(obsAll, __serPeriod);
           var allKeys = series.map(function(r){ return r.key; });
           var vis;
-          if(qPeriod === "MONTHLY"){
+          if(qPeriod === "WEEKLY"){
+            /* Selected week + the immediately previous week (zero-filled), so the
+               comparison table always compares against week N-1. Week 1 has no prev. */
+            var wks = qWeek > 1 ? [qWeek - 1, qWeek] : [qWeek];
+            vis = wks.map(function(w){
+              var k = qYearEff + "-W" + String(w).padStart(2, "0");
+              for(var si = 0; si < series.length; si++){ if(series[si].key === k) return series[si]; }
+              return { key: k, total: 0, ua: 0, uc: 0, good: 0 };
+            });
+          } else if(qPeriod === "MONTHLY"){
             /* One row per SELECTED month, zero-filled — months with no records stay
                visible with 0 and are never removed from the chart/table. */
             vis = qMonths.slice().sort(function(a,b){ return a-b; }).map(function(m){
@@ -7998,7 +8063,7 @@ function App(_refApp) {
                 var rUn = r.total - r.ua - r.uc - r.good;   /* aggregate uc includes untyped; recompute strict */
                 var strictUC = r.uc; /* aggregateObservationsByQuarter folds untyped into uc — split it out visually */
                 /* recompute strict per bucket from obsAll for exactness */
-                var bucket = obsAll.filter(function(o){ return getPeriodKey(o.date, qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : "MONTHLY") === r.key; });
+                var bucket = obsAll.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
                 var bUA = bucket.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
                 var bUC = bucket.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
                 var bGD = bucket.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
