@@ -8020,16 +8020,19 @@ function App(_refApp) {
               background: on ? C.greenBg : "#fff", color: on ? C.greenDk : C.textMid } }, mn);
         }))
     ),
-    (qPeriod === "WEEKLY" && !qWeek)
-      ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slate, marginTop: 6 } },
-          "All Weeks — current dashboard view, all records. Pick a week (or Monthly / Quarterly / Yearly) to focus every dashboard number on that period (in-memory only; nothing is written to the database).")
-      : (function(){
+    (function(){
           /* dsObs IS the selected dataset — tiles cover the ENTIRE selection */
           var sel = dsObs;
+          /* WEEKLY + All Weeks: the card summarises the selected YEAR (all weeks),
+             while dsObs (main dashboard default view) stays all-records as before.
+             Immutable filter — original array/objects untouched. */
+          if(qPeriod === "WEEKLY" && !qWeek){
+            sel = obsAll.filter(function(o){ return (o.date || "").slice(0, 4) === qYearEff; });
+          }
           var __MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
           var __wkSel = null;
           if(qPeriod === "WEEKLY"){ for(var _wi = 0; _wi < __wkPeriods.length; _wi++){ if(__wkPeriods[_wi].id === qWeek){ __wkSel = __wkPeriods[_wi]; break; } } }
-          var selLabel = qPeriod === "WEEKLY" ? (__wkSel ? (__wkSel.id + ", " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate)) : ("Week " + qWeek))
+          var selLabel = qPeriod === "WEEKLY" ? (__wkSel ? (__wkSel.id + ", " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate)) : ("All Weeks " + qYearEff))
             : qPeriod === "YEARLY" ? ("Year " + qYearEff)
             : qPeriod === "QUARTERLY" ? (qQuarters.map(function(q){ return "Q" + q; }).join("+") + " " + qYearEff)
             : (qMonths.length === 12 ? ("All 12 months " + qYearEff)
@@ -8078,7 +8081,9 @@ function App(_refApp) {
                the main table compares against the true previous configured week. */
             var selIdx = -1;
             for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
-            var wkRows = selIdx > 0 ? [__wkPeriods[selIdx-1], __wkPeriods[selIdx]] : (selIdx === 0 ? [__wkPeriods[0]] : []);
+            /* All Weeks → one row per configured week of the year; else selected week + its previous */
+            var wkRows = !qWeek ? __wkPeriods
+              : selIdx > 0 ? [__wkPeriods[selIdx-1], __wkPeriods[selIdx]] : (selIdx === 0 ? [__wkPeriods[0]] : []);
             vis = wkRows.map(function(p){
               var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
               return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
