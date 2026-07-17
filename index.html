@@ -8592,7 +8592,63 @@ function App(_refApp) {
         fontWeight: 600
       }
     }, o.due));
-  })), /*#__PURE__*/React.createElement("div", {
+  })),   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
+  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 10 } },
+      "Open Observations by Contractor"),
+    (function(){
+      /* Not Closed = OPEN + IN_PROGRESS + PENDING_VERIFY (existing status values, exact) */
+      var notClosed = dsObs.filter(function(o){
+        return o.status === "OPEN" || o.status === "IN_PROGRESS" || o.status === "PENDING_VERIFY";
+      });
+      if(!notClosed.length)
+        return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "6px 0" } },
+          "No outstanding observations for the selected period.");
+      var byCo = {};
+      notClosed.forEach(function(o){
+        var co = (o.company || "").trim() || "Unassigned";   /* display-only normalisation */
+        var r = byCo[co] = byCo[co] || { co: co, open: 0, ip: 0, pv: 0 };
+        if(o.status === "OPEN") r.open++;
+        else if(o.status === "IN_PROGRESS") r.ip++;
+        else r.pv++;
+      });
+      var rows = Object.keys(byCo).map(function(k){
+        var r = byCo[k]; r.total = r.open + r.ip + r.pv; return r;
+      }).sort(function(a,b){ return b.total - a.total || (a.co < b.co ? -1 : 1); });
+      var grand = rows.reduce(function(s,r){ return s + r.total; }, 0);
+      var mx = rows[0].total || 1;
+      return /*#__PURE__*/React.createElement("div", null,
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
+          "Total outstanding observations: " + grand),
+        /* Horizontal bars — contractor (Y) vs Total Not Closed (X), highest first */
+        rows.map(function(r){
+          return /*#__PURE__*/React.createElement("div", { key: r.co,
+            title: r.co + " — Open " + r.open + ", In Progress " + r.ip + ", Pending Verify " + r.pv,
+            style: { display: "flex", alignItems: "center", gap: 8, padding: "3px 0" } },
+            /*#__PURE__*/React.createElement("div", { style: { width: 110, minWidth: 110, fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.co),
+            /*#__PURE__*/React.createElement("div", { style: { flex: 1, height: 14, borderRadius: 4, background: "#EEF2F6", overflow: "hidden" } },
+              /*#__PURE__*/React.createElement("div", { style: { width: Math.max(2, Math.round(r.total / mx * 100)) + "%", height: "100%", background: C.amber, transition: "width .3s" } })),
+            /*#__PURE__*/React.createElement("div", { style: { minWidth: 26, textAlign: "right", fontSize: 11, fontWeight: 800, color: C.text } }, r.total));
+        }),
+        /* Supporting table */
+        /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, overflowX: "auto" } },
+          /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
+            /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+              ["Contractor","Open","In Progress","Pending Verify","Total Not Closed"].map(function(h, hi){
+                return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: hi === 0 ? "left" : "right", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
+              }))),
+            /*#__PURE__*/React.createElement("tbody", null,
+              rows.map(function(r){
+                return /*#__PURE__*/React.createElement("tr", { key: r.co, style: { borderBottom: "1px solid " + C.border } },
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: C.text } }, r.co),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.open),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.ip),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.pv),
+                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right", fontWeight: 800 } }, r.total));
+              }))))
+      );
+    })()
+  ), /*#__PURE__*/React.createElement("div", {
     style: crd
   }, /*#__PURE__*/React.createElement("div", {
     style: {
