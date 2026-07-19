@@ -8126,9 +8126,14 @@ function App(_refApp) {
                the main table compares against the true previous configured week. */
             var selIdx = -1;
             for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
-            /* All Weeks → one row per configured week of the year; else selected week + its previous */
+            /* All Weeks → one row per configured week of the year.
+               Selected week → exactly 5 consecutive weeks: the 4 week definitions
+               immediately BEFORE it in the ordered period list + the selected week
+               (position-based, so it works across year boundaries; fewer are shown
+               only when fewer earlier weeks exist). Zero-observation weeks still
+               render with 0 — rows come from the period definitions, not the data. */
             var wkRows = !qWeek ? __wkPeriods
-              : selIdx > 0 ? [__wkPeriods[selIdx-1], __wkPeriods[selIdx]] : (selIdx === 0 ? [__wkPeriods[0]] : []);
+              : selIdx >= 0 ? __wkPeriods.slice(Math.max(0, selIdx - 4), selIdx + 1) : [];
             vis = wkRows.map(function(p){
               var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
               return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
