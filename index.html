@@ -8132,7 +8132,8 @@ function App(_refApp) {
                (position-based, so it works across year boundaries; fewer are shown
                only when fewer earlier weeks exist). Zero-observation weeks still
                render with 0 — rows come from the period definitions, not the data. */
-            var wkRows = !qWeek ? __wkPeriods
+            var wkRows = !qWeek
+              ? __wkPeriods.filter(function(p){ return obsAll.some(function(o){ return weekPeriodMatch(o, p); }); })  /* All Weeks: hide weeks with no records */
               : selIdx >= 0 ? __wkPeriods.slice(Math.max(0, selIdx - 4), selIdx + 1) : [];
             vis = wkRows.map(function(p){
               var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
