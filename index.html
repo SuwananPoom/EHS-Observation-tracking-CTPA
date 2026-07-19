@@ -216,6 +216,12 @@ function canApprovePMC(){
   return r === "dayone_admin" || r === "dayone_user" || r === "pmc_manager";
 }
 function isAdmin(){ return userRole() === "dayone_admin"; }
+/* Role-based UI visibility (frontend-only; role from the authenticated profile).
+   userRole() falls back to "viewer" when the profile is missing/not yet loaded,
+   so restricted components stay HIDDEN by default — no privileged default, no
+   flash-before-role-load. */
+function canSeeSupaStatus(){ return userRole() === "dayone_admin"; }                       /* admin / DayOne admin only */
+function canSeeReporting(){ var r = userRole(); return r === "dayone_admin" || r === "dayone_user"; }  /* + user */
 
 /* Log login to ctpa_login_logs (best-effort, fire-and-forget) */
 function logLogin(userId, email){
@@ -6804,8 +6810,8 @@ function App(_refApp) {
       style: { marginLeft: 10, fontSize: 11, padding: "4px 10px", borderRadius: 5, border: "1px solid #EF4444", background: "#fff", color: "#B91C1C", cursor: "pointer", fontWeight: 700 }
     }, "\uD83D\uDD0D Admin Diagnostics") : null
   ) : null,
-  /* \u2500\u2500 Cloud Sync Status bar \u2500\u2500 */
-  /*#__PURE__*/React.createElement("div", {
+  /* \u2500\u2500 Cloud Sync Status bar \u2014 visible to admin (dayone_admin) only \u2500\u2500 */
+  canSeeSupaStatus() && /*#__PURE__*/React.createElement("div", {
     style: { background: lastSynced && !syncErr ? "#F0FDF4" : "#FFFBEB", borderBottom: "1px solid " + (lastSynced && !syncErr ? "#BBF7D0" : "#FDE68A"), padding: "5px 20px", fontSize: 11, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", color: "#374151" }
   },
     /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: lastSynced && !syncErr ? "#15803D" : "#92400E" } },
@@ -7957,8 +7963,11 @@ function App(_refApp) {
     }));
   }()))),   /* ══ Reporting Period Selector + Period Analytics (display-only; in-memory) ══
      dsObs (single source of truth) already reflects this selection — every
-     dashboard card/chart below derives from the same selected dataset. */
-  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
+     dashboard card/chart below derives from the same selected dataset.
+     Visible to admin (dayone_admin) and user (dayone_user) roles only — hidden
+     roles keep the default WEEKLY/All-Weeks state, so dsObs stays the full
+     dataset and every dashboard number is unchanged for them. */
+  canSeeReporting() && /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
     /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
       /*#__PURE__*/React.createElement("span", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "Reporting Period"),
       ["WEEKLY","MONTHLY","QUARTERLY","YEARLY"].map(function(p){
