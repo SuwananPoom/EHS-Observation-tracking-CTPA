@@ -8173,8 +8173,87 @@ function App(_refApp) {
                 return /*#__PURE__*/React.createElement("span", { key: lg[0] },
                   /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: lg[1], marginRight: 5, verticalAlign: "middle" } }), lg[0]);
               }),
+              qPeriod === "WEEKLY" && qWeek && /*#__PURE__*/React.createElement("span", { key: "tcurve" },
+                /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 14, height: 3, borderRadius: 2, background: "#2563EB", marginRight: 5, verticalAlign: "middle" } }),
+                /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#fff", border: "2px solid #2563EB", marginRight: 5, verticalAlign: "middle", marginLeft: -12 } }),
+                "Total (Curve)"),
               qPeriod === "YEARLY" && /*#__PURE__*/React.createElement("span", { style: { color: C.slate } }, "(chart shows all years; tiles above = selected year only)")),
-            /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 150, padding: "0 4px", overflowX: "auto" } },
+            (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
+              ? (function(){
+              /* Weekly 5-week combo chart: stacked bars + monotone-spline Total curve (read-only) */
+              var LN = "#2563EB";
+              var rows = vis.map(function(r){
+                var b = obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); });
+                var ua = 0, uc = 0, gd = 0;
+                b.forEach(function(o){ if(o.obsType === "UNSAFE_ACT") ua++; else if(o.obsType === "GOOD_OBS") gd++; else if(o.obsType === "UNSAFE_CON") uc++; });
+                return { p: r._p, ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
+              });
+              var mxT = rows.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
+              function niceTop(v){ if(v <= 5) return 5; if(v <= 10) return 10; var s = v <= 30 ? 5 : v <= 60 ? 10 : v <= 100 ? 20 : 50; return Math.ceil(v / s) * s; }
+              var top = niceTop(mxT);
+              var padL = 46, padR = 46, padT = 28, plotH = 170, padB = 46, bw = 96, barW = 40;
+              var Wd = padL + padR + rows.length * bw, Ht = padT + plotH + padB;
+              function Y(v){ return padT + plotH - (v / top) * plotH; }
+              function X(i){ return padL + i * bw + bw / 2; }
+              var pts = rows.map(function(r, i){ return [X(i), Y(r.total)]; });
+              var d = "M" + pts[0][0] + "," + pts[0][1];
+              if(pts.length > 1){
+                var n = pts.length, dxs = [], ms = [], ts = [];
+                for(var i2 = 0; i2 < n - 1; i2++){ dxs.push(pts[i2+1][0] - pts[i2][0]); ms.push((pts[i2+1][1] - pts[i2][1]) / dxs[i2]); }
+                ts.push(ms[0]);
+                for(var i3 = 1; i3 < n - 1; i3++){ ts.push(ms[i3-1] * ms[i3] <= 0 ? 0 : (ms[i3-1] + ms[i3]) / 2); }
+                ts.push(ms[n-2]);
+                for(var i4 = 0; i4 < n - 1; i4++){
+                  if(ms[i4] === 0){ ts[i4] = 0; ts[i4+1] = 0; }
+                  else { var aa = ts[i4] / ms[i4], bb = ts[i4+1] / ms[i4], hh = Math.sqrt(aa*aa + bb*bb); if(hh > 3){ ts[i4] = 3 * ms[i4] * aa / hh; ts[i4+1] = 3 * ms[i4] * bb / hh; } }
+                }
+                for(var i5 = 0; i5 < n - 1; i5++){
+                  d += " C" + (pts[i5][0] + dxs[i5]/3) + "," + (pts[i5][1] + ts[i5]*dxs[i5]/3) + " " +
+                       (pts[i5+1][0] - dxs[i5]/3) + "," + (pts[i5+1][1] - ts[i5+1]*dxs[i5]/3) + " " +
+                       pts[i5+1][0] + "," + pts[i5+1][1];
+                }
+              }
+              var areaD = d + " L" + pts[pts.length-1][0] + "," + (padT + plotH) + " L" + pts[0][0] + "," + (padT + plotH) + " Z";
+              var ticks = []; for(var tv = 0; tv <= 5; tv++) ticks.push(Math.round(top * tv / 5));
+              return /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
+                /*#__PURE__*/React.createElement("svg", { width: Wd, height: Ht, style: { display: "block", minWidth: Wd } },
+                  /*#__PURE__*/React.createElement("defs", null,
+                    /*#__PURE__*/React.createElement("linearGradient", { id: "wkArea", x1: "0", y1: "0", x2: "0", y2: "1" },
+                      /*#__PURE__*/React.createElement("stop", { offset: "0%", stopColor: LN, stopOpacity: 0.22 }),
+                      /*#__PURE__*/React.createElement("stop", { offset: "100%", stopColor: LN, stopOpacity: 0 })),
+                    /*#__PURE__*/React.createElement("linearGradient", { id: "wkLine", x1: "0", y1: "0", x2: "0", y2: "1" },
+                      /*#__PURE__*/React.createElement("stop", { offset: "0%", stopColor: "#60A5FA" }),
+                      /*#__PURE__*/React.createElement("stop", { offset: "100%", stopColor: "#1D4ED8" }))),
+                  /*#__PURE__*/React.createElement("rect", { x: padL + (rows.length - 1) * bw + 4, y: 6, width: bw - 8, height: padT + plotH + 28, rx: 8, fill: "#3B82F6", opacity: 0.08 }),
+                  ticks.map(function(tk, ti){ return /*#__PURE__*/React.createElement("g", { key: ti },
+                    /*#__PURE__*/React.createElement("line", { x1: padL - 4, x2: Wd - padR + 4, y1: Y(tk), y2: Y(tk), stroke: "#CBD5E1", strokeDasharray: "3 4", strokeWidth: 1 }),
+                    /*#__PURE__*/React.createElement("text", { x: padL - 8, y: Y(tk) + 3, fontSize: 8, fill: "#94A3B8", textAnchor: "end" }, tk),
+                    /*#__PURE__*/React.createElement("text", { x: Wd - padR + 8, y: Y(tk) + 3, fontSize: 8, fill: LN, textAnchor: "start" }, tk)); }),
+                  rows.map(function(r, ri){
+                    var bx = X(ri) - barW / 2, base = padT + plotH, acc = 0;
+                    var segs = [[r.ua, UA_C], [r.uc, UC_C], [r.gd, GD_C], [r.un, UN_C]];
+                    return /*#__PURE__*/React.createElement("g", { key: r.p.id },
+                      segs.map(function(sg, si){
+                        if(!sg[0]) return null;
+                        var h = (sg[0] / top) * plotH;
+                        var el = /*#__PURE__*/React.createElement("rect", { key: si, x: bx, y: base - acc - h, width: barW, height: Math.max(1, h - 2), rx: 2, fill: sg[1] });
+                        acc += h; return el;
+                      }));
+                  }),
+                  /*#__PURE__*/React.createElement("path", { d: areaD, fill: "url(#wkArea)" }),
+                  /*#__PURE__*/React.createElement("path", { d: d, fill: "none", stroke: "url(#wkLine)", strokeWidth: 2.5, strokeLinecap: "round" }),
+                  rows.map(function(r, ri){ return /*#__PURE__*/React.createElement("g", { key: "pt" + r.p.id },
+                    /*#__PURE__*/React.createElement("circle", { cx: X(ri), cy: Y(r.total), r: 4.5, fill: "#fff", stroke: LN, strokeWidth: 2.5 }),
+                    /*#__PURE__*/React.createElement("text", { x: X(ri), y: Y(r.total) - 10, fontSize: 11, fontWeight: 800, fill: LN, textAnchor: "middle" }, r.total)); }),
+                  rows.map(function(r, ri){
+                    var isSel = ri === rows.length - 1;
+                    return /*#__PURE__*/React.createElement("g", { key: "xl" + r.p.id },
+                      /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 18, fontSize: 10, fontWeight: 800, fill: isSel ? LN : C.text, textAnchor: "middle" }, r.p.id),
+                      /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 31, fontSize: 8, fill: "#94A3B8", textAnchor: "middle" }, fmtWeekRange(r.p.startDate, r.p.endDate).replace(/\s\d{4}$/, "")));
+                  }),
+                  /*#__PURE__*/React.createElement("text", { x: Wd - padR + 8, y: 14, fontSize: 8, fill: LN, fontWeight: 700, textAnchor: "start" }, "Total")));
+            })()
+              : /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "flex-end", gap: 10, height: 150, padding: "0 4px", overflowX: "auto" } },
               vis.map(function(r){
                 var H = 118;
                 var rUn = r.total - r.ua - r.uc - r.good;   /* aggregate uc includes untyped; recompute strict */
@@ -8199,7 +8278,45 @@ function App(_refApp) {
                     hUN > 0 && /*#__PURE__*/React.createElement("div", { style: { height: hUN, background: UN_C, borderTop: "2px solid #fff" } })),
                   /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.textMid, fontWeight: 700, whiteSpace: "nowrap" } }, periodKeyLabel(r.key, qPeriod)));
               })),
-            /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, overflowX: "auto" } },
+            (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
+              ? (function(){
+              /* Weekly 5-week comparison table with colored Diff/%/Direction */
+              var GRN = "#15803D", RED = "#B91C1C", GRY = "#64748B";
+              return /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, overflowX: "auto" } },
+                /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
+                  /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+                    ["Period","Total","Prev","Diff","% Change","Direction"].map(function(h){
+                      return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: "left", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
+                    }))),
+                  /*#__PURE__*/React.createElement("tbody", null, vis.map(function(r, vi){
+                    var pvr = vi > 0 ? vis[vi - 1] : null;
+                    var isSel = vi === vis.length - 1;
+                    var label = r._p.id + " (" + fmtWeekRange(r._p.startDate, r._p.endDate).replace(/\s\d{4}$/, "") + ")";
+                    var diffTxt = "—", pcTxt = "—", dirTxt = "—", dirCol = GRY, valCol = C.text;
+                    if(pvr){
+                      var diff = r.total - pvr.total;
+                      if(pvr.total === 0){
+                        if(r.total > 0){ diffTxt = "+" + diff; pcTxt = "—"; dirTxt = "New ↑"; dirCol = GRN; valCol = GRN; }
+                        else { diffTxt = "0"; pcTxt = "0%"; dirTxt = "No change •"; dirCol = GRY; valCol = GRY; }
+                      } else {
+                        var pc = (diff / pvr.total) * 100;
+                        diffTxt = (diff > 0 ? "+" : "") + diff;
+                        pcTxt = (pc > 0 ? "+" : "") + pc.toFixed(1) + "%";
+                        if(diff > 0){ dirTxt = "Increased ↑"; dirCol = GRN; valCol = GRN; }
+                        else if(diff < 0){ dirTxt = "Decreased ↓"; dirCol = RED; valCol = RED; }
+                        else { dirTxt = "No change •"; dirCol = GRY; valCol = GRY; }
+                      }
+                    }
+                    return /*#__PURE__*/React.createElement("tr", { key: r._p.id, style: { borderBottom: "1px solid " + C.border, background: isSel ? "#EFF6FF" : "transparent" } },
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: isSel ? "#1D4ED8" : C.text } }, label),
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, r.total),
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, pvr ? pvr.total : "—"),
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: valCol } }, diffTxt),
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: valCol } }, pcTxt),
+                      /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: dirCol } }, dirTxt));
+                  }))));
+            })()
+              : /*#__PURE__*/React.createElement("div", { style: { marginTop: 12, overflowX: "auto" } },
               /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
                 /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
                   ["Period","Total","Prev","Diff","% Change","Direction"].map(function(h){
