@@ -1376,8 +1376,10 @@ function weekRangeLabel(y, w){
    existing week ID, or overlap any other period are SKIPPED with a console
    warning — nothing existing is renamed or recalculated. */
 var CTPA_CUSTOM_WEEKS = [
-  /* example shape (do not auto-enable):
-     { id: "W40", year: 2026, startDate: "2026-07-11", endDate: "2026-07-17" } */
+  /* { id, year, startDate, endDate } — if the id matches an existing data week,
+     the configured range OVERRIDES the derived range (records keep their week
+     label; the range is display + additional date matching). */
+  { id: "W41", year: 2026, startDate: "2026-07-18", endDate: "2026-07-24" }
 ];
 function fmtWeekRange(s, e){
   var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -1401,7 +1403,14 @@ function weeklyPeriodsForYear(obsArr, yearStr){
     if(!cw || !cw.id || String(cw.year) !== String(yearStr)) return;
     if(!/^\d{4}-\d{2}-\d{2}$/.test(cw.startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(cw.endDate || "")){ console.warn("[CTPA] custom week has invalid dates — skipped:", cw.id); return; }
     if(cw.endDate < cw.startDate){ console.warn("[CTPA] custom week end before start — skipped:", cw.id); return; }
-    if(list.some(function(p){ return p.id === cw.id; })){ console.warn("[CTPA] custom week duplicates existing week ID — skipped:", cw.id); return; }
+    var existing = null;
+    for(var ei = 0; ei < list.length; ei++){ if(list[ei].id === cw.id){ existing = list[ei]; break; } }
+    if(existing){
+      /* OVERRIDE: same week ID already exists from data — replace only its displayed/
+         matched date range with the configured full range. Records keep their labels. */
+      existing.startDate = cw.startDate; existing.endDate = cw.endDate; existing.source = "custom-override";
+      return;
+    }
     if(list.some(function(p){ return !(cw.endDate < p.startDate || cw.startDate > p.endDate); })){ console.warn("[CTPA] custom week overlaps another period — skipped:", cw.id); return; }
     list.push({ id: cw.id, year: parseInt(yearStr,10), startDate: cw.startDate, endDate: cw.endDate, source: "custom" });
   });
@@ -1415,8 +1424,11 @@ function weeklyPeriodsForYear(obsArr, yearStr){
 function weekPeriodMatch(o, p){
   if(!o || !p) return false;
   var d = (o.date || "").slice(0, 10);
-  if(p.source === "custom") return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
-  return (o.week || "").trim() === p.id && d.slice(0,4) === String(p.year);
+  var inRange = /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
+  if(p.source === "custom") return inRange;
+  var byLabel = (o.week || "").trim() === p.id && d.slice(0,4) === String(p.year);
+  if(p.source === "custom-override") return byLabel || inRange;  /* label OR configured range */
+  return byLabel;
 }
 function getPeriodKey(dateStr, period){
   var s = (dateStr || "").slice(0, 10);
