@@ -6084,6 +6084,18 @@ function App(_refApp) {
     });
   }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek, __wkPeriods]);
   var obsAll = obs;  /* full unfiltered set — for period series/comparison context */
+  /* Display-only running Item Number for the Observation Log: continuous 1..N over
+     the ACTUAL records (ordered by numeric OBS id). Pure in-memory map — never
+     written back; Observation IDs themselves are untouched. */
+  var obsItemNo = useMemo(function(){
+    var ids = obs.filter(function(o){ return o && o.id; }).map(function(o){ return o.id; });
+    ids.sort(function(a, b){
+      return (parseInt(String(a).replace(/[^0-9]/g, ""), 10) || 0) - (parseInt(String(b).replace(/[^0-9]/g, ""), 10) || 0);
+    });
+    var m = {};
+    ids.forEach(function(id, i){ m[id] = i + 1; });
+    return m;
+  }, [obs]);
   var S = useMemo(function () {
     return {
       n: dsObs.length,
@@ -9158,6 +9170,9 @@ function App(_refApp) {
         gap: 8
       }
     }, /*#__PURE__*/React.createElement("span", {
+      title: "Item number (display only — continuous over actual records)",
+      style: { fontSize: 10, fontWeight: 700, color: C.slate, background: "#F1F5F9", border: "1px solid " + C.border, borderRadius: 6, padding: "1px 7px", flexShrink: 0 }
+    }, "#" + (obsItemNo[o.id] || "—")), /*#__PURE__*/React.createElement("span", {
       style: {
         fontWeight: 800,
         color: C.green,
