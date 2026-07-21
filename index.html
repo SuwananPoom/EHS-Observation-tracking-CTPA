@@ -1656,7 +1656,7 @@ var lSt = {
 };
 
 /* ── EXCEL (.xlsx) EXPORT — styled headers + colour-coded rows + embedded Before/After photos (ExcelJS) ── */
-function exportExcel(rows, onErr, onProgress) {
+function exportExcel(rows, onErr, onProgress, cutoffDate) {
   if (typeof ExcelJS === "undefined") {
     var m0 = "ExcelJS library not loaded. Check internet connection and reload the page.";
     if (onErr) onErr(m0); else alert(m0); return;
@@ -1897,7 +1897,7 @@ function exportExcel(rows, onErr, onProgress) {
     var t1=sm.getCell("A1"); t1.value="CTPA BKK22 — EHS Observation Report";
     t1.fill=fill(C.navyDk); t1.font={bold:true,color:{argb:C.white},name:"Calibri",size:14}; t1.alignment={vertical:"middle"};
     sm.getRow(1).height=28;
-    var t2=sm.getCell("A2"); t2.value="Export Date: "+dateFmt+"     |     Observations exported: "+rows.length;
+    var t2=sm.getCell("A2"); t2.value="Export Date: "+dateFmt+"     |     Observations exported: "+rows.length+(cutoffDate?"     |     Reporting Cut-off Date: "+cutoffDate:"");
     t2.fill=fill(C.sub); t2.font={italic:true,color:{argb:C.navy},name:"Calibri",size:10}; t2.alignment={vertical:"middle"};
     sm.getRow(2).height=18;
 
@@ -5763,6 +5763,8 @@ function App(_refApp) {
   var _fdti = useState(""), fDToIn = _fdti[0], setFDToIn = _fdti[1];
   var _fdf = useState(""), fDFrom = _fdf[0], setFDFrom = _fdf[1];
   var _fdt = useState(""), fDTo = _fdt[0], setFDTo = _fdt[1];
+  /* Excel export cut-off date (display/export-time filter only; never written back) */
+  var _exc = useState(""), exCut = _exc[0], setExCut = _exc[1];
   var _useState39 = useState(""),
     _useState40 = _slicedToArray(_useState39, 2),
     srch = _useState40[0],
@@ -9131,12 +9133,31 @@ function App(_refApp) {
       display: "flex",
       gap: 7
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  },
+  /* Export Cut-off Date: include only observations dated on or before this date.
+     Temporary in-memory filter at export time — nothing is saved back anywhere. */
+  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Cut-off:"),
+  /*#__PURE__*/React.createElement("input", {
+    type: "date", value: exCut, title: "Export Cut-off Date — Excel includes observations dated on or before this date only",
+    onChange: function(e){ setExCut(e.target.value); },
+    style: { fontSize: 11, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + (exCut ? "#217346" : C.border), background: exCut ? "#E6F4EA" : "#fff", color: C.text }
+  }),
+  exCut && /*#__PURE__*/React.createElement("button", {
+    onClick: function(){ setExCut(""); },
+    title: "Clear cut-off (export all filtered observations)",
+    style: { fontSize: 10, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer", fontWeight: 600 }
+  }, "✕"),
+  /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
-      setT({ msg: "⏳ Generating Excel with photos…", type: "ok" });
-      var p = exportExcel(filt,
+      /* temporary in-memory data set: Observation Date <= cut-off (inclusive);
+         records with no date are excluded when a cut-off is set */
+      var exRows = exCut ? filt.filter(function(o){ return o.date && o.date <= exCut; }) : filt;
+      if(exCut && exRows.length === 0){ setT({ msg: "❌ No observations dated on or before " + exCut, type: "err" }); setTimeout(function(){ setT(null); }, 6000); return; }
+      setT({ msg: "⏳ Generating Excel with photos…" + (exCut ? " (cut-off " + exCut + ", " + exRows.length + " records)" : ""), type: "ok" });
+      var p = exportExcel(exRows,
         function(msg){ setT({ msg: "❌ " + msg, type: "err" }); setTimeout(function(){ setT(null); }, 8000); },
-        function(done, tot){ if(tot>0) setT({ msg: "⏳ Embedding photos " + done + "/" + tot + "…", type: "ok" }); }
+        function(done, tot){ if(tot>0) setT({ msg: "⏳ Embedding photos " + done + "/" + tot + "…", type: "ok" }); },
+        exCut || null
       );
       if(p && p.then) p.then(function(){ setT({ msg: "✅ Excel downloaded", type: "ok" }); setTimeout(function(){ setT(null); }, 3000); });
     },
