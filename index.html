@@ -1375,88 +1375,49 @@ function weekRangeLabel(y, w){
    frontend-only. Custom entries that are invalid (end<start), duplicate an
    existing week ID, or overlap any other period are SKIPPED with a console
    warning — nothing existing is renamed or recalculated. */
-var CTPA_CUSTOM_WEEKS = [
-  /* { id, year, startDate, endDate } — if the id matches an existing data week,
-     the configured range OVERRIDES the derived range (records keep their week
-     label; the range is display + additional date matching).
-     Project week calendar 2026: W40 = 11-17 Jul, then 7-day blocks from Sat 18 Jul (W41) to year end. */
-  { id: "W40", year: 2026, startDate: "2026-07-11", endDate: "2026-07-17" },
-  { id: "W41", year: 2026, startDate: "2026-07-18", endDate: "2026-07-24" },
-  { id: "W42", year: 2026, startDate: "2026-07-25", endDate: "2026-07-31" },
-  { id: "W43", year: 2026, startDate: "2026-08-01", endDate: "2026-08-07" },
-  { id: "W44", year: 2026, startDate: "2026-08-08", endDate: "2026-08-14" },
-  { id: "W45", year: 2026, startDate: "2026-08-15", endDate: "2026-08-21" },
-  { id: "W46", year: 2026, startDate: "2026-08-22", endDate: "2026-08-28" },
-  { id: "W47", year: 2026, startDate: "2026-08-29", endDate: "2026-09-04" },
-  { id: "W48", year: 2026, startDate: "2026-09-05", endDate: "2026-09-11" },
-  { id: "W49", year: 2026, startDate: "2026-09-12", endDate: "2026-09-18" },
-  { id: "W50", year: 2026, startDate: "2026-09-19", endDate: "2026-09-25" },
-  { id: "W51", year: 2026, startDate: "2026-09-26", endDate: "2026-10-02" },
-  { id: "W52", year: 2026, startDate: "2026-10-03", endDate: "2026-10-09" },
-  { id: "W53", year: 2026, startDate: "2026-10-10", endDate: "2026-10-16" },
-  { id: "W54", year: 2026, startDate: "2026-10-17", endDate: "2026-10-23" },
-  { id: "W55", year: 2026, startDate: "2026-10-24", endDate: "2026-10-30" },
-  { id: "W56", year: 2026, startDate: "2026-10-31", endDate: "2026-11-06" },
-  { id: "W57", year: 2026, startDate: "2026-11-07", endDate: "2026-11-13" },
-  { id: "W58", year: 2026, startDate: "2026-11-14", endDate: "2026-11-20" },
-  { id: "W59", year: 2026, startDate: "2026-11-21", endDate: "2026-11-27" },
-  { id: "W60", year: 2026, startDate: "2026-11-28", endDate: "2026-12-04" },
-  { id: "W61", year: 2026, startDate: "2026-12-05", endDate: "2026-12-11" },
-  { id: "W62", year: 2026, startDate: "2026-12-12", endDate: "2026-12-18" },
-  { id: "W63", year: 2026, startDate: "2026-12-19", endDate: "2026-12-25" },
-  { id: "W64", year: 2026, startDate: "2026-12-26", endDate: "2026-12-31" }
-];
+/* ══ Weekly periods — CALENDAR-ANCHORED (master reference: W40 = 11–17 Jul 2026) ══
+   Every week is exactly 7 consecutive days; each week starts the day after the
+   previous one ends — no overlaps, no gaps. All week numbers are derived from the
+   anchor only (backward and forward), never from record labels or prior displays:
+     week N starts at  anchor + (N − 40) × 7 days,  anchor = 2026-07-11.
+   Membership = the observation DATE falls inside the week's range (inclusive).
+   Display/query-level only — nothing is ever written back to any record. */
+var CTPA_WEEK_ANCHOR_UTC = Date.UTC(2026, 6, 11);   /* start of W40 */
+var CTPA_WEEK_ANCHOR_NO  = 40;
+function weekNoOfDateStr(dateStr){
+  var m = (dateStr || "").slice(0,10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if(!m) return null;
+  var t = Date.UTC(+m[1], +m[2]-1, +m[3]);
+  return CTPA_WEEK_ANCHOR_NO + Math.floor((t - CTPA_WEEK_ANCHOR_UTC) / (7 * 86400000));
+}
+function weekStartUTC(n){ return CTPA_WEEK_ANCHOR_UTC + (n - CTPA_WEEK_ANCHOR_NO) * 7 * 86400000; }
+function utcToStr(t){ var d = new Date(t); return d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2,"0") + "-" + String(d.getUTCDate()).padStart(2,"0"); }
 function fmtWeekRange(s, e){
   var MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   var sm = s.match(/^(\d{4})-(\d{2})-(\d{2})/), em = e.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if(!sm || !em) return s + "–" + e;
-  var sTxt = parseInt(sm[3],10) + (sm[2] === em[2] ? "" : " " + MN[parseInt(sm[2],10)-1]);
+  var sTxt = parseInt(sm[3],10) + (sm[2] === em[2] && sm[1] === em[1] ? "" : " " + MN[parseInt(sm[2],10)-1]);
   return sTxt + "–" + parseInt(em[3],10) + " " + MN[parseInt(em[2],10)-1] + " " + em[1];
 }
 function weeklyPeriodsForYear(obsArr, yearStr){
-  var map = {};
-  (obsArr || []).forEach(function(o){
-    var wk = (o.week || "").trim();
-    var d = (o.date || "").slice(0, 10);
-    if(!wk || !/^\d{4}-\d{2}-\d{2}$/.test(d) || d.slice(0,4) !== String(yearStr)) return;
-    var m = map[wk];
-    if(!m) map[wk] = { id: wk, year: parseInt(yearStr,10), startDate: d, endDate: d, source: "data" };
-    else { if(d < m.startDate) m.startDate = d; if(d > m.endDate) m.endDate = d; }
-  });
-  var list = Object.keys(map).map(function(k){ return map[k]; });
-  (CTPA_CUSTOM_WEEKS || []).forEach(function(cw){
-    if(!cw || !cw.id || String(cw.year) !== String(yearStr)) return;
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(cw.startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(cw.endDate || "")){ console.warn("[CTPA] custom week has invalid dates — skipped:", cw.id); return; }
-    if(cw.endDate < cw.startDate){ console.warn("[CTPA] custom week end before start — skipped:", cw.id); return; }
-    var existing = null;
-    for(var ei = 0; ei < list.length; ei++){ if(list[ei].id === cw.id){ existing = list[ei]; break; } }
-    if(existing){
-      /* OVERRIDE: same week ID already exists from data — replace only its displayed/
-         matched date range with the configured full range. Records keep their labels. */
-      existing.startDate = cw.startDate; existing.endDate = cw.endDate; existing.source = "custom-override";
-      return;
-    }
-    if(list.some(function(p){ return !(cw.endDate < p.startDate || cw.startDate > p.endDate); })){ console.warn("[CTPA] custom week overlaps another period — skipped:", cw.id); return; }
-    list.push({ id: cw.id, year: parseInt(yearStr,10), startDate: cw.startDate, endDate: cw.endDate, source: "custom" });
-  });
-  list.sort(function(a,b){ return a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0; });
-  list.forEach(function(p){ p.label = p.id + ": " + fmtWeekRange(p.startDate, p.endDate); });
-  return list;
+  var y = parseInt(yearStr, 10);
+  if(!y) return [];
+  var first = weekNoOfDateStr(y + "-01-01");
+  var last  = weekNoOfDateStr(y + "-12-31");
+  var list = [];
+  for(var n = first; n <= last; n++){
+    var st = weekStartUTC(n), en = st + 6 * 86400000;
+    var sd = utcToStr(st), ed = utcToStr(en);
+    list.push({ id: "W" + n, year: y, startDate: sd, endDate: ed, source: "calendar",
+                label: "W" + n + ": " + fmtWeekRange(sd, ed) });
+  }
+  return list;   /* already chronological; exactly 7 days each; contiguous by construction */
 }
-/* True when observation o belongs to weekly period p (read-only; never mutates o).
-   data-source week → match by the record's own stored week label;
-   custom week      → inclusive date-range match on the observation date. */
+/* Membership: observation DATE inside the week's exact range (inclusive both ends). */
 function weekPeriodMatch(o, p){
   if(!o || !p) return false;
   var d = (o.date || "").slice(0, 10);
-  var inRange = /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
-  if(p.source === "custom") return inRange;
-  var byLabel = (o.week || "").trim() === p.id && d.slice(0,4) === String(p.year);
-  /* custom-override = existing data week with a CONFIGURED display range: membership
-     stays label-only so the week retrieves exactly the same records as before —
-     the configured start/end corrects only the displayed date range. */
-  if(p.source === "custom-override") return byLabel;
-  return byLabel;
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
 }
 function getPeriodKey(dateStr, period){
   var s = (dateStr || "").slice(0, 10);
