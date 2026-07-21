@@ -1379,7 +1379,8 @@ var CTPA_CUSTOM_WEEKS = [
   /* { id, year, startDate, endDate } — if the id matches an existing data week,
      the configured range OVERRIDES the derived range (records keep their week
      label; the range is display + additional date matching).
-     Project week calendar 2026: 7-day blocks from Sat 18 Jul (W41) to year end. */
+     Project week calendar 2026: W40 = 11-17 Jul, then 7-day blocks from Sat 18 Jul (W41) to year end. */
+  { id: "W40", year: 2026, startDate: "2026-07-11", endDate: "2026-07-17" },
   { id: "W41", year: 2026, startDate: "2026-07-18", endDate: "2026-07-24" },
   { id: "W42", year: 2026, startDate: "2026-07-25", endDate: "2026-07-31" },
   { id: "W43", year: 2026, startDate: "2026-08-01", endDate: "2026-08-07" },
@@ -1451,7 +1452,10 @@ function weekPeriodMatch(o, p){
   var inRange = /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= p.startDate && d <= p.endDate;
   if(p.source === "custom") return inRange;
   var byLabel = (o.week || "").trim() === p.id && d.slice(0,4) === String(p.year);
-  if(p.source === "custom-override") return byLabel || inRange;  /* label OR configured range */
+  /* custom-override = existing data week with a CONFIGURED display range: membership
+     stays label-only so the week retrieves exactly the same records as before —
+     the configured start/end corrects only the displayed date range. */
+  if(p.source === "custom-override") return byLabel;
   return byLabel;
 }
 function getPeriodKey(dateStr, period){
