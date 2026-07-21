@@ -201,7 +201,9 @@ function authUserName(){
 function canCreate(){ var r = userRole(); return r !== "viewer"; }
 function canEdit(){
   var r = userRole();
-  return r === "dayone_admin" || r === "dayone_user" || r === "ms_user" || r === "pmc_manager" || r === "pmc_user";
+  /* LM roles included so LM users can open the Edit form to enter/save
+     Closed Date and Closed By when closing an observation. */
+  return r === "dayone_admin" || r === "dayone_user" || r === "ms_user" || r === "pmc_manager" || r === "pmc_user" || r === "lm_user" || r === "lm_gc";
 }
 function canDelete(){
   var r = userRole();
