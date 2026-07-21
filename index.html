@@ -333,7 +333,9 @@ function uploadPhotoToStorage(obsId, slot, idx, photo){
       /* Cache-bust: the Storage path is reused (slot-idx) when a photo is replaced, so the
          public URL string is identical and the browser would show the OLD cached image.
          A version query param forces the browser to fetch the freshly-uploaded bytes. */
-      return storagePublicUrl(path) + "?v=" + (Date.now());
+      var __pubUrl = storagePublicUrl(path) + "?v=" + (Date.now());
+      console.log("[CTPA] Storage upload OK →", __pubUrl, "| bytes:", blob.size, "| type:", blob.type);
+      return __pubUrl;
     }
     return r.text().then(function(t){
       __lastStorageErr = explainStorageErr(r.status, t);
@@ -1553,8 +1555,38 @@ var __ctpaOriginals = {};
    NOTE: a small in-memory preview is kept only until the Storage URL is attached; the
    cloud record (ctpa_state) never stores base64 — see stripPhotos(). */
 var compressPhoto = function compressPhoto(f) {
+  /* Dual output — fixes blank previews on iPhone Safari:
+     full = ORIGINAL untouched bytes → uploaded to Supabase Storage (quality unchanged).
+     src  = small JPEG display copy (≤1600px) → preview + localStorage cache. A full-res
+     base64 (5–10MB) always exceeds the ~5MB mobile localStorage quota, so the cache
+     silently failed and previews went blank after a reload whenever the Storage upload
+     had not (yet) succeeded. The display copy also converts HEIC to JPEG for browsers
+     that cannot render HEIC. Existing photos/URLs are untouched. */
+  var MAX_DIM = 1600, QUALITY = 0.85;
   return b64f(f).then(function(dataUri) {
-    return { src: dataUri, full: dataUri };
+    return new Promise(function(resolve) {
+      var img = new Image();
+      img.onload = function() {
+        try {
+          var w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+          if (!w || !h) { resolve({ src: dataUri, full: dataUri }); return; }
+          var sc = Math.min(1, MAX_DIM / Math.max(w, h));
+          var cv = document.createElement("canvas");
+          cv.width = Math.round(w * sc); cv.height = Math.round(h * sc);
+          var cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, cv.width, cv.height);
+          cx.drawImage(img, 0, 0, cv.width, cv.height);
+          resolve({ src: cv.toDataURL("image/jpeg", QUALITY), full: dataUri });
+        } catch(e) {
+          console.warn("[CTPA] display-copy generation failed — using original for preview:", e && e.message);
+          resolve({ src: dataUri, full: dataUri });
+        }
+      };
+      img.onerror = function() {
+        console.warn("[CTPA] browser cannot decode this image format for preview (e.g. HEIC on non-Safari) — using original bytes");
+        resolve({ src: dataUri, full: dataUri });
+      };
+      img.src = dataUri;
+    });
   });
 };
 var isOD = function isOD(o) {
@@ -3333,7 +3365,7 @@ function Strip(_ref2) {
       ? /*#__PURE__*/React.createElement("img", {
           src: photoSrc(p),
           alt: "",
-          onError: function(e){ e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); },
+          onError: function(e){ console.warn("[CTPA] photo failed to load:", (e.target.src||"").slice(0,120), "…"); e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); },
           style: { width: "100%", height: 56, objectFit: "cover", display: "block" }
         })
       : null,
