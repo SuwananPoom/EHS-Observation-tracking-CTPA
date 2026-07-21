@@ -5757,6 +5757,12 @@ function App(_refApp) {
     _useState38 = _slicedToArray(_useState37, 2),
     fCo = _useState38[0],
     setFCo = _useState38[1];
+  /* Date-range filter (read-only display filter; YYYY-MM-DD).
+     *In = pending input values; fDFrom/fDTo apply only when Apply is pressed. */
+  var _fdfi = useState(""), fDFromIn = _fdfi[0], setFDFromIn = _fdfi[1];
+  var _fdti = useState(""), fDToIn = _fdti[0], setFDToIn = _fdti[1];
+  var _fdf = useState(""), fDFrom = _fdf[0], setFDFrom = _fdf[1];
+  var _fdt = useState(""), fDTo = _fdt[0], setFDTo = _fdt[1];
   var _useState39 = useState(""),
     _useState40 = _slicedToArray(_useState39, 2),
     srch = _useState40[0],
@@ -6048,13 +6054,17 @@ function App(_refApp) {
       if (fPh === "MISSING" && !(b > 0 && a === 0)) return false;
       if (fPh === "NONE" && (b > 0 || a > 0)) return false;
       if (fOT !== "ALL" && o.obsType !== fOT) return false;
+      /* Observation-date range filter (inclusive both ends; string compare on YYYY-MM-DD).
+         From-only, To-only, or both are supported; From = To searches one day. */
+      if (fDFrom && (o.date || "") < fDFrom) return false;
+      if (fDTo && ((o.date || "") > fDTo || !o.date)) return false;
       if (srch) {
         var q = srch.toLowerCase();
         if (!o.desc.toLowerCase().includes(q) && !o.id.toLowerCase().includes(q) && !(o.company || "").toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch]);
+  }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo]);
   /* ══ SINGLE SOURCE OF TRUTH for all dashboard analytics ══
      dsObs = the selected reporting-period dataset (in-memory filter of obs).
      WEEKLY (default) = full obs → dashboard behaves exactly as before.
@@ -9010,7 +9020,35 @@ function App(_refApp) {
     style: _objectSpread(_objectSpread({}, iSt), {}, {
       flex: "1 1 200px"
     })
-  }), [{
+  }),
+  /* \u2500\u2500 Date-range filter (read-only display filter) \u2500\u2500 */
+  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Date:"),
+  /*#__PURE__*/React.createElement("input", {
+    type: "date", value: fDFromIn, title: "From date (YYYY-MM-DD)",
+    onChange: function(e){ setFDFromIn(e.target.value); },
+    style: _objectSpread(_objectSpread({}, iSt), {}, { width: 132 })
+  }),
+  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.slate, alignSelf: "center" } }, "\u2192"),
+  /*#__PURE__*/React.createElement("input", {
+    type: "date", value: fDToIn, title: "To date (YYYY-MM-DD)",
+    onChange: function(e){ setFDToIn(e.target.value); },
+    style: _objectSpread(_objectSpread({}, iSt), {}, { width: 132 })
+  }),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: function(){
+      if(fDFromIn && fDToIn && fDToIn < fDFromIn){ setFDFrom(fDToIn); setFDTo(fDFromIn); }
+      else { setFDFrom(fDFromIn); setFDTo(fDToIn); }
+    },
+    style: { fontSize: 11, padding: "8px 14px", borderRadius: 9, border: "none", background: C.green, color: "#fff", fontWeight: 700, cursor: "pointer" }
+  }, "Apply"),
+  /*#__PURE__*/React.createElement("button", {
+    onClick: function(){ setFDFromIn(""); setFDToIn(""); setFDFrom(""); setFDTo(""); },
+    style: { fontSize: 11, padding: "8px 12px", borderRadius: 9, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" }
+  }, "Clear Date"),
+  (fDFrom || fDTo) && /*#__PURE__*/React.createElement("span", {
+    style: { fontSize: 10, fontWeight: 700, color: C.greenDk, background: C.greenBg, border: "1px solid " + C.green + "55", borderRadius: 7, padding: "5px 10px", alignSelf: "center" }
+  }, "\ud83d\udcc5 " + (fDFrom && fDTo ? (fDFrom === fDTo ? fDFrom : fDFrom + " \u2192 " + fDTo) : fDFrom ? ("From " + fDFrom) : ("Until " + fDTo))),
+  [{
     v: fSt,
     s: setFS,
     o: [["ALL", "All Status"]].concat(_toConsumableArray(Object.entries(STATUS).map(function (_ref20) {
