@@ -476,6 +476,7 @@ function photoSrc(p){
   if(!p) return null;
   if(p.url) return p.url;
   if(p.src && p.src.length > 32) return p.src;
+  if(p.durl) return p.durl;   /* derived permanent Storage URL (display-only, never persisted) */
   return null;
 }
 /* True when a photo can be displayed on THIS device right now (url or local src). */
@@ -484,25 +485,54 @@ function photoHas(p){ return !!photoSrc(p); }
 /* Merge individually-cached photos back into an obs array.
    Called after restorePhotos so same-device photos always display. */
 function mergeLocalPhotoCache(obsArr){
-  return obsArr.map(function(o){
+  var derived = 0;
+  var out = obsArr.map(function(o){
     var changed = false;
-    var nb = (o.pb||[]).map(function(p, i){
-      if(p && (!p.src || p.src.length < 32)){
-        var cached = getCachedPhotoSrc(o.id, "pb", i);
-        if(cached){ changed = true; return Object.assign({}, p, { src: cached }); }
+    function fix(p, i, slot){
+      if(!p) return p;
+      var np = p;
+      if(!np.src || np.src.length < 32){
+        var cached = getCachedPhotoSrc(o.id, slot, i);
+        if(cached){ changed = true; np = Object.assign({}, np, { src: cached }); }
       }
-      return p;
-    });
-    var na = (o.pa||[]).map(function(p, i){
-      if(p && (!p.src || p.src.length < 32)){
-        var cached = getCachedPhotoSrc(o.id, "pa", i);
-        if(cached){ changed = true; return Object.assign({}, p, { src: cached }); }
+      /* PERMANENT-PATH RESOLUTION: a photo with no stored url and no local src is
+         re-resolved from its deterministic Supabase Storage path on every load —
+         never from blob:/object URLs or expired links. Attached as `durl`, which
+         stripPhotos does not persist, so a wrong guess can never pollute the DB. */
+      if(!np.url && (!np.src || np.src.length < 32) && cloudOn()){
+        changed = true; derived++;
+        np = (np === p) ? Object.assign({}, np) : np;
+        np.durl = storagePublicUrl(storageObjectPath(o.id, slot, i));
       }
-      return p;
-    });
+      return np;
+    }
+    var nb = (o.pb||[]).map(function(p, i){ return fix(p, i, "pb"); });
+    var na = (o.pa||[]).map(function(p, i){ return fix(p, i, "pa"); });
     return changed ? Object.assign({}, o, { pb: nb, pa: na }) : o;
   });
+  if(derived > 0) console.log("[CTPA] photo resolution: derived permanent Storage URLs for", derived, "photo(s) lacking url/src");
+  return out;
 }
+/* Console helper: window.ctpaPhotoDebug("OBS-123") — prints each photo object's stored
+   fields and the final resolved <img> src (read-only diagnostics). */
+if(typeof window !== "undefined") window.ctpaPhotoDebug = function(obsId){
+  try {
+    var arr = JSON.parse(localStorage.getItem(SKEY) || "[]");
+    var o = arr.find(function(x){ return x && x.id === obsId; });
+    if(!o){ console.log("[CTPA] ctpaPhotoDebug: " + obsId + " not found in local state"); return; }
+    ["pb","pa"].forEach(function(slot){
+      (o[slot]||[]).forEach(function(p, i){
+        console.log("[CTPA]", obsId, slot + "[" + i + "]", {
+          fields: Object.keys(p||{}),
+          url: p && p.url, durl: p && p.durl,
+          src_len: p && p.src ? p.src.length : 0,
+          src_kind: p && p.src ? p.src.slice(0, 20) : null,
+          resolved_img_src: (photoSrc(p) || "(NONE — blank frame)").slice(0, 140)
+        });
+      });
+    });
+  } catch(e){ console.warn("[CTPA] ctpaPhotoDebug error:", e); }
+};
 
 /* Fetch all photos for a list of obs_ids from ctpa_photos */
 function fetchCloudPhotos(obsIds){
@@ -3365,7 +3395,12 @@ function Strip(_ref2) {
       ? /*#__PURE__*/React.createElement("img", {
           src: photoSrc(p),
           alt: "",
-          onError: function(e){ console.warn("[CTPA] photo failed to load:", (e.target.src||"").slice(0,120), "…"); e.target.style.display="none"; e.target.nextSibling && (e.target.nextSibling.style.display="flex"); },
+          onError: function(e){
+            console.warn("[CTPA] <img> load FAILED", { src: (e.target.src||"").slice(0,160), naturalWidth: e.target.naturalWidth, naturalHeight: e.target.naturalHeight, eventType: e.type });
+            e.target.style.display = "none";
+            var fb = e.target.nextSibling;
+            if(fb){ fb.style.display = "flex"; try { if(fb.lastChild) fb.lastChild.textContent = "⚠ image failed to load"; } catch(_){} }
+          },
           style: { width: "100%", height: 56, objectFit: "cover", display: "block" }
         })
       : null,
