@@ -868,10 +868,24 @@ function cloudMergeSave(localArr, deletedIds){
     /* Build ID set from localArr */
     var localIdSet = {};
     localArr.forEach(function(o){ if(o.id) localIdSet[o.id] = true; });
+    /* NEWEST-WINS per record: every user edit stamps o.rev = Date.now(). When the same
+       ID exists in both copies, the higher rev wins — a device holding a stale copy can
+       no longer overwrite a newer edit made elsewhere (the confirmed cause of edits
+       "reverting after a while / after sync"). Records without rev count as 0. */
+    var cloudById = {};
+    cloudArr.forEach(function(c){ if(c && c.id) cloudById[c.id] = c; });
+    var localList = localArr.map(function(l){
+      var c = l && l.id ? cloudById[l.id] : null;
+      if(c && !c.deleted && (c.rev || 0) > (l.rev || 0)){
+        console.log("[CTPA][merge] cloud copy of", l.id, "is newer (rev", c.rev, ">", l.rev || 0, ") — keeping cloud version");
+        return c;
+      }
+      return l;
+    });
     /* Keep cloud obs whose IDs are not present in localArr AND were not intentionally deleted */
     var cloudOnly = cloudArr.filter(function(o){ return o.id && !localIdSet[o.id] && !delSet[o.id] && !o.deleted; });
-    /* Merged = local (authoritative for touched obs) + cloudOnly (other devices' new obs) */
-    var merged = localArr.concat(cloudOnly);
+    /* Merged = per-record newest + cloudOnly (other devices' new obs) */
+    var merged = localList.concat(cloudOnly);
     /* Sort by OBS number descending so newest appear first */
     merged.sort(function(a,b){
       var na = parseInt((a.id||"").replace(/[^0-9]/g,""),10)||0;
@@ -881,7 +895,23 @@ function cloudMergeSave(localArr, deletedIds){
     console.log("[CTPA] cloudMergeSave | merged obs:", merged.length,
       "(local:", localArr.length, "+ cloud-only:", cloudOnly.length, ")");
     return cloudSave(merged).then(function(ok){
-      return { ok: ok, merged: merged };
+      if(!ok) return { ok: false, merged: merged };
+      /* READ-BACK VERIFICATION: re-read the row and confirm the most recently edited
+         record actually landed with its rev. Success is only reported after Supabase
+         holds the submitted values; otherwise ok:false so the UI shows a save error
+         and the user's edits stay on screen. */
+      var newest = null;
+      localArr.forEach(function(l){ if(l && l.id && (l.rev || 0) > ((newest && newest.rev) || 0)) newest = l; });
+      if(!newest) return { ok: true, merged: merged };   /* nothing rev-stamped to verify */
+      return cloudLoad().then(function(row2){
+        var arr2 = (row2 && Array.isArray(row2.data)) ? row2.data : [];
+        var got = null;
+        for(var vi = 0; vi < arr2.length; vi++){ if(arr2[vi] && arr2[vi].id === newest.id){ got = arr2[vi]; break; } }
+        var verified = !!got && (got.rev || 0) >= (newest.rev || 0);
+        console.log("[CTPA][verify] read-back", newest.id, "| submitted rev:", newest.rev, "| cloud rev:", got ? got.rev : "(missing)", "| verified:", verified);
+        if(!verified){ __lastCloudSaveErr = "Verification failed — " + newest.id + " did not persist with the submitted values. Tap ↻ Sync to retry."; }
+        return { ok: verified, merged: merged };
+      });
     });
   }).catch(function(e){
     console.error("[CTPA] cloudMergeSave ERROR:", e && e.message);
@@ -5883,7 +5913,9 @@ function App(_refApp) {
             setCloudObsCount(combined.length);
             return combined;
           });
-          console.log("[CTPA] sv() merge-save complete (current state kept authoritative)");
+          console.log("[CTPA] sv() merge-save complete + read-back verified (current state kept authoritative)");
+          setT({ msg: "✔ Saved & verified to cloud", type: "ok" });
+          setTimeout(function(){ setT(null); }, 2500);
         }
       }).catch(function (err) {
         setSyncBusy(false);
@@ -5966,8 +5998,21 @@ function App(_refApp) {
              Photos uploaded on other devices appear as metadata only until those
              devices implement Supabase Storage. */
           setObs(function(localObs){
+            /* 0. NEWEST-WINS protection: never let an older cloud copy replace a record
+               the user just edited here (rev = per-record edit timestamp). Older cache/
+               snapshot/realtime data is ignored for those records. */
+            var __locById = {};
+            (localObs || []).forEach(function(l){ if(l && l.id) __locById[l.id] = l; });
+            var __protectedCloud = cloudMigrated.map(function(cRec){
+              var lRec = cRec && cRec.id ? __locById[cRec.id] : null;
+              if(lRec && (lRec.rev || 0) > (cRec.rev || 0)){
+                console.log("[CTPA][pull] local edit of", cRec.id, "is newer (rev", lRec.rev, ">", cRec.rev || 0, ") — keeping local");
+                return lRec;
+              }
+              return cRec;
+            });
             /* 1. Restore from current React state (same-device photos in memory) */
-            var restored = restorePhotos(cloudMigrated, localObs);
+            var restored = restorePhotos(__protectedCloud, localObs);
             /* 2. Restore from per-photo localStorage cache (survives page refresh) */
             var withCache = mergeLocalPhotoCache(restored);
             /* 3. Count photos with no displayable source at all (no Storage url AND no base64) */
@@ -6095,8 +6140,15 @@ function App(_refApp) {
       if (fDFrom && (o.date || "") < fDFrom) return false;
       if (fDTo && ((o.date || "") > fDTo || !o.date)) return false;
       if (srch) {
-        var q = srch.toLowerCase();
-        if (!o.desc.toLowerCase().includes(q) && !o.id.toLowerCase().includes(q) && !(o.company || "").toLowerCase().includes(q)) return false;
+        /* Null-safe, trimmed, case-insensitive PARTIAL match over all relevant fields
+           (Thai and English both work with plain substring matching). Previously only
+           desc/id/company were searched and a null desc crashed the whole filter. */
+        var q = srch.trim().toLowerCase();
+        if (q) {
+          var hay = [o.id, o.desc, o.act, o.company, o.zone, o.by, o.closedBy, o.week, o.cat, o.fc, o.status, o.risk, o.obsType]
+            .map(function(x){ return x == null ? "" : String(x); }).join("  ").toLowerCase();
+          if (hay.indexOf(q) === -1) return false;
+        }
       }
       return true;
     });
@@ -6199,6 +6251,7 @@ function App(_refApp) {
     var nx = obs.map(function (o) {
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, {
         status: ns,
+        rev: Date.now(),
         closed:   ns === "CLOSED" ? (o.status === "CLOSED" ? o.closed : td()) : o.closed,
         closedBy: ns === "CLOSED" ? (o.status === "CLOSED" ? o.closedBy : (ctpaUser() || "Manager")) : ""
       }) : o;
@@ -6215,6 +6268,7 @@ function App(_refApp) {
     try { return new Date().toISOString().slice(0, 16).replace("T", " "); } catch (e) { return td(); }
   };
   var applyTo = function applyTo(id, patch) {
+    patch = Object.assign({}, patch, { rev: Date.now() });   /* newest-wins version stamp */
     /* Build from the FRESHEST state via the functional updater (never the stale `obs`
        closure). Using a captured `obs` snapshot here would rebuild the whole array from
        old data and sv() would write it back, reverting other recent edits/approvals. */
@@ -6329,7 +6383,7 @@ function App(_refApp) {
         if(o.id !== obsId) return o;
         var arr = (o[slot] || []).slice();
         if(arr[idx]) arr[idx] = Object.assign({}, arr[idx], { url: url });
-        return Object.assign({}, o, _defineProperty({}, slot, arr));
+        return Object.assign({}, o, _defineProperty({ rev: Date.now() }, slot, arr));
       });
       try { localStorage.setItem(SKEY, JSON.stringify(nx)); } catch(e){}
       /* push the url to cloud (stripPhotos keeps url) — debounced via microtask batch */
@@ -6436,7 +6490,7 @@ function App(_refApp) {
        `obs` closure, so saving this obs's photos never reverts other obs' recent edits. */
     setObs(function(cur){
       var nx0 = cur.map(function(o){
-        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({}, k, photos)) : o;
+        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({ rev: Date.now() }, k, photos)) : o;
       });
       sv(nx0);
       setDet(nx0.find(function(o){ return o.id === id; }));
@@ -6675,7 +6729,8 @@ function App(_refApp) {
         var ni = _objectSpread(_objectSpread({}, fclean), {}, {
           id: newId,
           pb: fBef,
-          pa: fAft
+          pa: fAft,
+          rev: Date.now()
         });
         /* cache all photos from the create form under the new ID, upload to Storage,
            and attach the returned URL so it syncs cross-device. */
@@ -6706,7 +6761,8 @@ function App(_refApp) {
         return o.id === edit.id ? _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
           id: edit.id,
           pb: fBef,
-          pa: fAft
+          pa: fAft,
+          rev: Date.now()
         }) : o;
       });
       sv(nx2);
