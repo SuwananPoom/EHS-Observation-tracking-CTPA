@@ -6268,7 +6268,9 @@ function App(_refApp) {
       apRejected: dsObs.filter(function (o) { return apOf(o) === "REJECTED"; }).length
     };
   }, [dsObs]);
-  var clR = S.n ? Math.round(S.closed / S.n * 100) : 0;
+  /* Closure rate: 1-decimal, rounded DOWN, and capped below 100 unless every record
+     is truly closed — so the donut/cards can never show 100% while Open items remain. */
+  var clR = S.n ? (S.closed === S.n ? 100 : Math.min(99.9, Math.floor(S.closed / S.n * 1000) / 10)) : 0;
   var stCh = function stCh(id, ns) {
     if (ns === "CLOSED" && APPROVAL_ENABLED) {
       var target = obs.find(function (o) {
