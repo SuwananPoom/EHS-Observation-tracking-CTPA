@@ -8952,17 +8952,13 @@ function App(_refApp) {
       }
     }, o.due));
   })),   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
-  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 10 } },
-      "Open Observations by Contractor"),
+  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14, borderRadius: 14, boxShadow: "0 2px 10px rgba(15,23,42,0.06)" }) },
     (function(){
+      var OP_C = "#EF4444", IP_C = "#F59E0B", PV_C = "#3B82F6", NO_C = "#E2E8F0";
       /* Not Closed = OPEN + IN_PROGRESS + PENDING_VERIFY (existing status values, exact) */
       var notClosed = dsObs.filter(function(o){
         return o.status === "OPEN" || o.status === "IN_PROGRESS" || o.status === "PENDING_VERIFY";
       });
-      if(!notClosed.length)
-        return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "6px 0" } },
-          "No outstanding observations for the selected period.");
       var byCo = {};
       notClosed.forEach(function(o){
         var co = (o.company || "").trim() || "Unassigned";   /* display-only normalisation */
@@ -8975,37 +8971,90 @@ function App(_refApp) {
         var r = byCo[k]; r.total = r.open + r.ip + r.pv; return r;
       }).sort(function(a,b){ return b.total - a.total || (a.co < b.co ? -1 : 1); });
       var grand = rows.reduce(function(s,r){ return s + r.total; }, 0);
-      var mx = rows[0].total || 1;
-      return /*#__PURE__*/React.createElement("div", null,
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
-          "Total outstanding observations: " + grand),
-        /* Horizontal bars — contractor (Y) vs Total Not Closed (X), highest first */
-        rows.map(function(r){
-          return /*#__PURE__*/React.createElement("div", { key: r.co,
-            title: r.co + " — Open " + r.open + ", In Progress " + r.ip + ", Pending Verify " + r.pv,
-            style: { display: "flex", alignItems: "center", gap: 8, padding: "3px 0" } },
-            /*#__PURE__*/React.createElement("div", { style: { width: 110, minWidth: 110, fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.co),
-            /*#__PURE__*/React.createElement("div", { style: { flex: 1, height: 14, borderRadius: 4, background: "#EEF2F6", overflow: "hidden" } },
-              /*#__PURE__*/React.createElement("div", { style: { width: Math.max(2, Math.round(r.total / mx * 100)) + "%", height: "100%", background: C.amber, transition: "width .3s" } })),
-            /*#__PURE__*/React.createElement("div", { style: { minWidth: 26, textAlign: "right", fontSize: 11, fontWeight: 800, color: C.text } }, r.total));
-        }),
-        /* Supporting table */
-        /*#__PURE__*/React.createElement("div", { style: { marginTop: 10, overflowX: "auto" } },
-          /*#__PURE__*/React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 10 } },
-            /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
-              ["Contractor","Open","In Progress","Pending Verify","Total Not Closed"].map(function(h, hi){
-                return /*#__PURE__*/React.createElement("th", { key: h, style: { textAlign: hi === 0 ? "left" : "right", padding: "5px 8px", background: "#F1F5F9", color: C.textMid, fontWeight: 700 } }, h);
-              }))),
-            /*#__PURE__*/React.createElement("tbody", null,
-              rows.map(function(r){
-                return /*#__PURE__*/React.createElement("tr", { key: r.co, style: { borderBottom: "1px solid " + C.border } },
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: C.text } }, r.co),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.open),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.ip),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right" } }, r.pv),
-                  /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", textAlign: "right", fontWeight: 800 } }, r.total));
-              }))))
-      );
+      var gOpen = rows.reduce(function(s,r){ return s + r.open; }, 0);
+      var gIP   = rows.reduce(function(s,r){ return s + r.ip; }, 0);
+      var gPV   = rows.reduce(function(s,r){ return s + r.pv; }, 0);
+      /* exact-only 100%: floor to 1 decimal otherwise */
+      function pctTxt(part, whole){
+        if(!whole) return "0%";
+        if(part === whole) return "100%";
+        return (Math.floor(part / whole * 1000) / 10) + "%";
+      }
+      var AV_COLORS = [["#FEE2E2","#B91C1C"],["#E0F2FE","#0369A1"],["#DCFCE7","#166534"],["#FEF3C7","#B45309"],["#EDE9FE","#6D28D9"],["#F1F5F9","#334155"]];
+      /* ── Header: title/subtitle + Total summary card ── */
+      var header = /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 } },
+        /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: C.text } }, "Open Observations by Contractor"),
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, marginTop: 2 } }, "Overview of outstanding observations by contractor and status")),
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 12, padding: "10px 16px", boxShadow: "0 1px 3px rgba(15,23,42,0.05)" } },
+          /*#__PURE__*/React.createElement("span", { style: { fontSize: 20 } }, "📋"),
+          /*#__PURE__*/React.createElement("div", null,
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, fontWeight: 700, color: C.slateMid } }, "Total Outstanding Observations"),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 22, fontWeight: 800, color: OP_C, lineHeight: 1.1 } }, grand),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate } }, pctTxt(grand, grand) + " of total open items"))));
+      if(!grand)
+        return /*#__PURE__*/React.createElement("div", null, header,
+          /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "10px 0" } }, "No outstanding observations for the selected period."));
+      /* ── Summary stat cards ── */
+      var SUMS = [["Open", gOpen, OP_C], ["In Progress", gIP, IP_C], ["Pending Verify", gPV, PV_C], ["Total Not Closed", grand, C.text], ["Contractors with Open Items", rows.length, "#0F766E"]];
+      var sumCards = /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 8, marginBottom: 12 } },
+        SUMS.map(function(sc){
+          return /*#__PURE__*/React.createElement("div", { key: sc[0], style: { background: "#fff", border: "1px solid " + C.border, borderRadius: 10, padding: "8px 12px", boxShadow: "0 1px 3px rgba(15,23,42,0.04)" } },
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, fontWeight: 700, color: C.slateMid } }, sc[0]),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 18, fontWeight: 800, color: sc[2] } }, sc[1]));
+        }));
+      /* ── Column header ── */
+      var dot = function(cl){ return /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: cl, marginRight: 5, verticalAlign: "middle" } }); };
+      var gridCols = "minmax(140px,1.4fr) repeat(3, minmax(78px,1fr)) minmax(96px,1fr) minmax(96px,1fr)";
+      var colHead = /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, alignItems: "center", padding: "7px 12px", borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 10, fontWeight: 700, color: C.textMid } },
+        /*#__PURE__*/React.createElement("span", null, "Contractor"),
+        /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, dot(OP_C), "Open"),
+        /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, dot(IP_C), "In Progress"),
+        /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, dot(PV_C), "Pending Verify"),
+        /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, "Total Not Closed"),
+        /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, "% of Total Outstanding"));
+      /* ── Contractor rows ── */
+      var rowsEl = rows.map(function(r, ri){
+        var av = AV_COLORS[ri % AV_COLORS.length];
+        var share = pctTxt(r.total, grand);
+        var ring = /*#__PURE__*/React.createElement("span", { style: {
+          display: "inline-block", width: 22, height: 22, borderRadius: "50%",
+          background: "conic-gradient(#16A34A " + (r.total / grand * 360) + "deg, #E2E8F0 0deg)",
+          verticalAlign: "middle", marginLeft: 6, position: "relative" } },
+          /*#__PURE__*/React.createElement("span", { style: { position: "absolute", inset: 4, borderRadius: "50%", background: "#fff" } }));
+        function cnt(v, cl){
+          return /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } },
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: v > 0 ? cl : "#CBD5E1" } }, v),
+            /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate } }, "(" + pctTxt(v, r.total) + ")"));
+        }
+        var segs = [[r.open, OP_C], [r.ip, IP_C], [r.pv, PV_C]];
+        return /*#__PURE__*/React.createElement("div", { key: r.co, style: { background: "#fff", border: "1px solid " + C.border, borderRadius: 12, padding: "12px 12px 10px", marginTop: 10, boxShadow: "0 1px 4px rgba(15,23,42,0.05)" } },
+          /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: gridCols, gap: 8, alignItems: "center" } },
+            /*#__PURE__*/React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 9, minWidth: 0 } },
+              /*#__PURE__*/React.createElement("span", { style: { width: 34, height: 34, borderRadius: "50%", background: av[0], color: av[1], display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 14, flexShrink: 0 } }, r.co.charAt(0).toUpperCase()),
+              /*#__PURE__*/React.createElement("span", { style: { minWidth: 0 } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 800, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.co))),
+            cnt(r.open, OP_C), cnt(r.ip, IP_C), cnt(r.pv, PV_C),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } },
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 15, fontWeight: 800, color: C.text } }, r.total),
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate } }, "(" + share + ")")),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "center", fontSize: 14, fontWeight: 800, color: "#16A34A", whiteSpace: "nowrap" } }, share, ring,
+              /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, fontWeight: 600, color: C.slate } }, "of " + grand))),
+          /* segmented status bar */
+          /*#__PURE__*/React.createElement("div", { style: { display: "flex", height: 18, borderRadius: 9, overflow: "hidden", marginTop: 9, background: NO_C } },
+            segs.map(function(sg, si){
+              if(r.total === 0) return null;
+              var w = sg[0] / r.total * 100;
+              if(w === 0) return null;
+              return /*#__PURE__*/React.createElement("span", { key: si,
+                title: ["Open","In Progress","Pending Verify"][si] + ": " + sg[0] + " (" + pctTxt(sg[0], r.total) + ")",
+                style: { width: w + "%", background: sg[1], display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 9, fontWeight: 800, minWidth: 0 } },
+                w >= 12 ? (sg[0] + " · " + pctTxt(sg[0], r.total)) : "");
+            })));
+      });
+      return /*#__PURE__*/React.createElement("div", null, header, sumCards,
+        /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
+          /*#__PURE__*/React.createElement("div", { style: { minWidth: 620 } }, colHead, rowsEl)));
     })()
   ), /*#__PURE__*/React.createElement("div", {
     style: crd
