@@ -8507,14 +8507,25 @@ function App(_refApp) {
                   var pvr = vi > 0 ? vis[vi - 1] : null;
                   var diff = pvr ? r.total - pvr.total : null;
                   var pc = (pvr && pvr.total > 0) ? (((r.total - pvr.total) / pvr.total) * 100) : null;
-                  var word = !pvr ? "—" : (r.total > pvr.total ? "increased" : r.total < pvr.total ? "decreased" : "unchanged");
+                  /* Same colour/arrow rendering as the Weekly table — values reuse the
+                     EXISTING diff/pc already computed above; nothing is recalculated. */
+                  var GRN2 = "#15803D", RED2 = "#B91C1C", GRY2 = "#64748B";
+                  var word = "—", dirCol2 = GRY2, valCol2 = C.text;
+                  if(pvr){
+                    if(pvr.total === 0){
+                      if(r.total > 0){ word = "New ↑"; dirCol2 = GRN2; valCol2 = GRN2; }
+                      else { word = "No change •"; dirCol2 = GRY2; valCol2 = GRY2; }
+                    } else if(diff > 0){ word = "Increased ↑"; dirCol2 = GRN2; valCol2 = GRN2; }
+                    else if(diff < 0){ word = "Decreased ↓"; dirCol2 = RED2; valCol2 = RED2; }
+                    else { word = "No change •"; dirCol2 = GRY2; valCol2 = GRY2; }
+                  }
                   return /*#__PURE__*/React.createElement("tr", { key: r.key, style: { borderBottom: "1px solid " + C.border } },
                     /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: C.text } }, periodKeyLabel(r.key, qPeriod)),
-                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px" } }, r.total),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, r.total),
                     /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, pvr ? pvr.total : "—"),
-                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, diff === null ? "—" : (diff > 0 ? "+" + diff : String(diff))),
-                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700 } }, pvr ? (pvr.total === 0 ? "N/A" : ((pc > 0 ? "+" : "") + pc.toFixed(1) + "%")) : "—"),
-                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", color: C.textMid } }, word));
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: valCol2 } }, diff === null ? "—" : (diff > 0 ? "+" + diff : String(diff))),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: valCol2 } }, pvr ? (pvr.total === 0 ? (r.total > 0 ? "—" : "0%") : ((pc > 0 ? "+" : "") + pc.toFixed(1) + "%")) : "—"),
+                    /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: dirCol2 } }, word));
                 })))),
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, marginTop: 6 } },
               "Note: an increase in observations is not automatically good or bad — it may reflect more reporting activity or more findings. All figures are computed in memory from existing records and are never saved back to the database.")
