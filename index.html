@@ -8533,8 +8533,9 @@ function App(_refApp) {
               "Note: an increase in observations is not automatically good or bad — it may reflect more reporting activity or more findings. All figures are computed in memory from existing records and are never saved back to the database.")
           );
         })(),
-    /* ══ Week-to-week comparison (Weekly only; UI state only — read-only on data) ══ */
-    qPeriod === "WEEKLY" && __wkPeriods.length > 0 && (function(){
+    /* ══ Week-to-week comparison — HIDDEN per request (UI removed from the dashboard;
+       code kept intact and unused so it can be re-enabled by removing `false &&`). ══ */
+    false && qPeriod === "WEEKLY" && __wkPeriods.length > 0 && (function(){
       var A_C = "#0EA5E9", B_C = "#8B5CF6";
       function findP(id){ for(var i=0;i<__wkPeriods.length;i++){ if(__wkPeriods[i].id===id) return __wkPeriods[i]; } return null; }
       var pA = cmpApplied ? findP(cmpApplied.a) : null;
