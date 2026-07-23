@@ -1254,7 +1254,14 @@ var APPROVAL_ENABLED = true;
 /* derive the workflow status of an observation, defaulting from legacy `status` */
 function apOf(o) {
   if (!APPROVAL_ENABLED) return null;
-  if (o && o.approvalStatus && APPROVAL[o.approvalStatus]) return o.approvalStatus;
+  if (o && o.approvalStatus && APPROVAL[o.approvalStatus]) {
+    /* COUNTING FIX: a record whose status is already CLOSED but still carries a stale
+       stored approvalStatus of "OPEN" (closed via the Edit form, which never synced the
+       workflow field) must not be counted as approval-Open — otherwise it appears in
+       BOTH the Closed and Open cards (Closed + Open > Total). Fall through so the
+       status-based rule below classifies it as APPROVED CLOSED. Data is not modified. */
+    if (!(o.status === "CLOSED" && o.approvalStatus === "OPEN")) return o.approvalStatus;
+  }
   if (!o) return "OPEN";
   if (o.status === "CLOSED") return "APPROVED CLOSED";
   if (o.status === "PENDING_VERIFY") return "PENDING REVIEW";
@@ -6769,12 +6776,21 @@ function App(_refApp) {
        closure — otherwise sv() would write an old snapshot back and revert the edit. */
     setObs(function (cur) {
       var nx2 = cur.map(function (o) {
-        return o.id === edit.id ? _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
+        if (o.id !== edit.id) return o;
+        var merged = _objectSpread(_objectSpread(_objectSpread({}, o), fclean), {}, {
           id: edit.id,
           pb: fBef,
           pa: fAft,
           rev: Date.now()
-        }) : o;
+        });
+        /* Keep the approval-workflow field in sync when closing via the Edit form:
+           a stale "OPEN" approvalStatus on a CLOSED record double-counts in the
+           dashboard (Open + Closed > Total). Only this transition is synced —
+           PENDING/REJECTED states from the real workflow are left untouched. */
+        if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")) {
+          merged.approvalStatus = "APPROVED CLOSED";
+        }
+        return merged;
       });
       sv(nx2);
       try { localStorage.setItem(SKEY, JSON.stringify(nx2)); } catch(e){}
