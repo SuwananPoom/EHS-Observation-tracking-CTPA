@@ -9052,7 +9052,9 @@ function App(_refApp) {
                 w >= 12 ? (sg[0] + " · " + pctTxt(sg[0], r.total)) : "");
             })));
       });
-      return /*#__PURE__*/React.createElement("div", null, header, sumCards,
+      /* KPI stat tiles (sumCards) hidden per request — variable kept unused for easy re-enable */
+      void sumCards;
+      return /*#__PURE__*/React.createElement("div", null, header,
         /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
           /*#__PURE__*/React.createElement("div", { style: { minWidth: 620 } }, colHead, rowsEl)));
     })()
