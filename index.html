@@ -6185,6 +6185,17 @@ function App(_refApp) {
   /* Display-only running Item Number for the Observation Log: continuous 1..N over
      the ACTUAL records (ordered by numeric OBS id). Pure in-memory map — never
      written back; Observation IDs themselves are untouched. */
+  /* Reporting-week options for the Observations page filter: every calendar week
+     (anchored mapping) that contains at least one record, across all data years. */
+  var obsWeekOptions = useMemo(function(){
+    var out = [];
+    __dsYears.forEach(function(y){
+      weeklyPeriodsForYear(obs, y).forEach(function(p){
+        if(obs.some(function(o){ return weekPeriodMatch(o, p); })) out.push(p);
+      });
+    });
+    return out;
+  }, [obs]);
   var obsItemNo = useMemo(function(){
     var ids = obs.filter(function(o){ return o && o.id; }).map(function(o){ return o.id; });
     ids.sort(function(a, b){
@@ -9113,6 +9124,38 @@ function App(_refApp) {
       flex: "1 1 200px"
     })
   }),
+  /* \u2500\u2500 Reporting Week quick filter: drives the same From/To dates below, so the
+     list, counter, Excel export, Print, and Cut-off all stay on one dataset.
+     Value is DERIVED from the applied dates: exact week match \u2192 that week;
+     any other dates \u2192 "Custom Date Range"; no dates \u2192 All Weeks. \u2500\u2500 */
+  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Reporting Week:"),
+  (function(){
+    var cur = "";
+    if(fDFrom || fDTo){
+      var m = null;
+      for(var wi = 0; wi < obsWeekOptions.length; wi++){
+        if(obsWeekOptions[wi].startDate === fDFrom && obsWeekOptions[wi].endDate === fDTo){ m = obsWeekOptions[wi]; break; }
+      }
+      cur = m ? (m.startDate + "|" + m.endDate) : "CUSTOM";
+    }
+    return /*#__PURE__*/React.createElement("select", {
+      value: cur,
+      onChange: function(e){
+        var v = e.target.value;
+        if(v === "CUSTOM") return;
+        if(!v){ setFDFromIn(""); setFDToIn(""); setFDFrom(""); setFDTo(""); return; }
+        var pr = v.split("|");
+        setFDFromIn(pr[0]); setFDToIn(pr[1]);   /* populate the Start/End date inputs */
+        setFDFrom(pr[0]);  setFDTo(pr[1]);      /* apply immediately */
+      },
+      style: _objectSpread(_objectSpread({}, iSt), {}, { width: 190 })
+    },
+      /*#__PURE__*/React.createElement("option", { value: "" }, "All Weeks"),
+      cur === "CUSTOM" && /*#__PURE__*/React.createElement("option", { value: "CUSTOM", disabled: true }, "Custom Date Range"),
+      obsWeekOptions.map(function(p){
+        return /*#__PURE__*/React.createElement("option", { key: p.startDate, value: p.startDate + "|" + p.endDate }, p.label);
+      }));
+  })(),
   /* \u2500\u2500 Date-range filter (read-only display filter) \u2500\u2500 */
   /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Date:"),
   /*#__PURE__*/React.createElement("input", {
