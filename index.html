@@ -5790,6 +5790,10 @@ function App(_refApp) {
   var _qmSt = useState([1,2,3,4,5,6,7,8,9,10,11,12]), qMonths = _qmSt[0], setQMonths = _qmSt[1];  /* multi-select months */
   var qMonthsKey = qMonths.join(",");
   var _qwSt = useState(""), qWeek = _qwSt[0], setQWeek = _qwSt[1];  /* "" = All Weeks (default view unchanged); else a week ID like "W29" */
+  /* Reporting cut-off (read-only filter): mode WEEK = selected week only (default);
+     mode CUM = cumulative from project start through the cut-off date (inclusive). */
+  var _qcmSt = useState("WEEK"), qCutMode = _qcmSt[0], setQCutMode = _qcmSt[1];
+  var _qcdSt = useState(""),     qCut     = _qcdSt[0], setQCut     = _qcdSt[1];
   /* Week-to-week comparison controls (UI state only — never written to records).
      Pending selections apply ONLY when the Compare Weeks button is pressed. */
   var _cASt = useState(""),  cmpA = _cASt[0], setCmpA = _cASt[1];
@@ -6169,8 +6173,19 @@ function App(_refApp) {
   var qYearEff = qYear || (__dsYears.length ? __dsYears[__dsYears.length-1] : "");
   /* Weekly periods for the selected year — existing o.week labels + validated custom weeks */
   var __wkPeriods = useMemo(function(){ return weeklyPeriodsForYear(obs, qYearEff); }, [obs, qYearEff]);
+  /* Selected week object at App scope (for cut-off default + header display) */
+  var __wkSelApp = null;
+  for(var __wi = 0; __wi < __wkPeriods.length; __wi++){ if(__wkPeriods[__wi].id === qWeek){ __wkSelApp = __wkPeriods[__wi]; break; } }
+  /* Effective cumulative cut-off: explicit date, else the selected week's end date */
+  var qCutEff = (qPeriod === "WEEKLY" && qCutMode === "CUM") ? (qCut || (__wkSelApp ? __wkSelApp.endDate : "")) : "";
   var dsObs = useMemo(function(){
     if(qPeriod === "WEEKLY"){
+      /* CUMULATIVE MODE: everything from project start through the cut-off date.
+         Dates are local (Asia/Bangkok) YYYY-MM-DD strings compared as strings —
+         inclusive of the whole cut-off day, no UTC conversion possible. */
+      if(qCutEff){
+        return obs.filter(function(o){ var d = (o.date || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= qCutEff; });
+      }
       if(!qWeek) return obs;   /* All Weeks — default dashboard view, unchanged */
       var wp = null;
       for(var wi = 0; wi < __wkPeriods.length; wi++){ if(__wkPeriods[wi].id === qWeek){ wp = __wkPeriods[wi]; break; } }
@@ -6187,7 +6202,7 @@ function App(_refApp) {
       var m = (o.date || "").match(/^(\d{4})-(\d{2})/);
       return m && m[1] === qYearEff && qMonths.indexOf(parseInt(m[2], 10)) !== -1;
     });
-  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek, __wkPeriods]);
+  }, [obs, qPeriod, qRange, qYearEff, qQuartersKey, qMonthsKey, qWeek, __wkPeriods, qCutEff]);
   var obsAll = obs;  /* full unfiltered set — for period series/comparison context */
   /* Display-only running Item Number for the Observation Log: continuous 1..N over
      the ACTUAL records (ordered by numeric OBS id). Pure in-memory map — never
@@ -8170,6 +8185,24 @@ function App(_refApp) {
         __wkPeriods.map(function(p){
           return /*#__PURE__*/React.createElement("option", { key: p.id, value: p.id }, p.label);
         })),
+      /* Cut-off controls (Weekly): Selected Week Only vs Cumulative to Cut-off Date */
+      qPeriod === "WEEKLY" && /*#__PURE__*/React.createElement("span", { style: { display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+        [["WEEK","Selected Week Only"],["CUM","Cumulative to Cut-off"]].map(function(md){
+          var on = qCutMode === md[0];
+          return /*#__PURE__*/React.createElement("button", { key: md[0],
+            onClick: function(){ setQCutMode(md[0]); },
+            style: { fontSize: 10, padding: "6px 10px", borderRadius: 8, cursor: "pointer", fontWeight: 700,
+              border: "1.5px solid " + (on ? "#1D4ED8" : C.border),
+              background: on ? "#EFF6FF" : "#fff", color: on ? "#1D4ED8" : C.textMid } }, md[1]);
+        }),
+        qCutMode === "CUM" && /*#__PURE__*/React.createElement("input", {
+          type: "date", value: qCut, title: "Cut-off Date — include everything from project start through this date (defaults to the selected week's end date)",
+          onChange: function(e){ setQCut(e.target.value); },
+          style: { fontSize: 11, padding: "5px 8px", borderRadius: 8, border: "1.5px solid #1D4ED8", background: "#EFF6FF", color: C.text }
+        }),
+        qCutMode === "CUM" && qCut && /*#__PURE__*/React.createElement("button", {
+          onClick: function(){ setQCut(""); }, title: "Use the selected week's end date",
+          style: { fontSize: 10, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer" } }, "✕")),
       /* Multi-select quarter chips */
       qPeriod === "QUARTERLY" && [1,2,3,4].map(function(qn){
         var on = qQuarters.indexOf(qn) !== -1;
@@ -8212,13 +8245,14 @@ function App(_refApp) {
           /* WEEKLY + All Weeks: the card summarises the selected YEAR (all weeks),
              while dsObs (main dashboard default view) stays all-records as before.
              Immutable filter — original array/objects untouched. */
-          if(qPeriod === "WEEKLY" && !qWeek){
+          if(qPeriod === "WEEKLY" && !qWeek && !qCutEff){
             sel = obsAll.filter(function(o){ return (o.date || "").slice(0, 4) === qYearEff; });
           }
           var __MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-          var __wkSel = null;
-          if(qPeriod === "WEEKLY"){ for(var _wi = 0; _wi < __wkPeriods.length; _wi++){ if(__wkPeriods[_wi].id === qWeek){ __wkSel = __wkPeriods[_wi]; break; } } }
-          var selLabel = qPeriod === "WEEKLY" ? (__wkSel ? (__wkSel.id + ", " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate)) : ("All Weeks " + qYearEff))
+          var __wkSel = __wkSelApp;
+          var __cum = qPeriod === "WEEKLY" && !!qCutEff;
+          var selLabel = qPeriod === "WEEKLY" ? (__cum ? ("Project Start – " + qCutEff + " (cumulative)")
+              : __wkSel ? (__wkSel.id + ", " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate)) : ("All Weeks " + qYearEff))
             : qPeriod === "YEARLY" ? ("Year " + qYearEff)
             : qPeriod === "QUARTERLY" ? (qQuarters.map(function(q){ return "Q" + q; }).join("+") + " " + qYearEff)
             : (qMonths.length === 12 ? ("All 12 months " + qYearEff)
@@ -8297,7 +8331,9 @@ function App(_refApp) {
           var maxTot = vis.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
           return /*#__PURE__*/React.createElement("div", { style: { marginTop: 12 } },
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
-              "Selected period: " + selLabel + " — " + sel.length + " observations",
+              (__cum ? "Reporting Period: Project Start – " + qCutEff : "Selected period: " + selLabel) + " — " + sel.length + " observations",
+              __cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#1D4ED8", fontSize: 10, marginTop: 2 } },
+                "Mode: Cumulative to Cut-off Date ✓" + (__wkSel ? "   ·   Selected Week: " + __wkSel.id + " — " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) : "") + "   ·   Cut-off Date: " + qCutEff),
               /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts now reflect this selection)")),
             /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
               METRICS.map(function(mt){
