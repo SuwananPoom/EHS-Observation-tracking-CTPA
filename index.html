@@ -216,8 +216,10 @@ function canDelete(){
   return r === "dayone_admin" || r === "dayone_user" || r === "ms_user" || r === "pmc_manager";
 }
 function canApproveGC(){
+  /* GC Manager approval: ONLY GC Manager roles and Admin. All other roles
+     (including dayone_user) are blocked from GC sign-off. PMC gate unchanged. */
   var r = userRole();
-  return r === "dayone_admin" || r === "dayone_user" || r === "lm_gc" || r === "ritta_gc";
+  return r === "dayone_admin" || r === "lm_gc" || r === "ritta_gc";
 }
 function canApprovePMC(){
   var r = userRole();
@@ -5676,13 +5678,15 @@ function App(_refApp) {
     var code = window.prompt("Approver access code:");
     if(code === null) return;
     var role = "";
-    if(code === GC_CODE)  role = "CLIENT";
+    /* GC approval is role-restricted (GC Manager / Admin only) — the legacy access
+       code can no longer grant it. PMC code unlock is unchanged. */
+    if(code === GC_CODE){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
     else if(code === PMC_CODE) role = "LP";
     else if(code === APPROVER_CODE){
       var pick = window.prompt("Enter your role — type GC or PMC:");
       if(pick === null) return;
       pick = (pick||"").trim().toUpperCase();
-      if(pick === "GC" || pick === "CLIENT") role = "CLIENT";
+      if(pick === "GC" || pick === "CLIENT"){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
       else if(pick === "PMC" || pick === "LP") role = "LP";
     }
     if(role){
@@ -6366,12 +6370,17 @@ function App(_refApp) {
       if (ap !== "PENDING REVIEW") {
         toast$("GC Manager can only approve at Pending Verify stage", "err"); return;
       }
+      /* Enforce at action time too (defence in depth beyond button visibility) */
+      if(!canApproveGC()){ toast$("Not authorized — GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
       patch.clientApprovedBy = who;
+      /* Record the approver's REAL authenticated role — an Admin approving in the
+         GC section is recorded as Admin, never falsely as GC Manager. */
+      patch.clientApprovedRole = userRole() === "dayone_admin" ? "Admin" : "GC Manager";
       patch.clientApprovedDate = nowStamp();
       patch.approvalStatus = "PENDING PMC APPROVAL";
       patch.status = "PENDING_VERIFY";
       applyTo(id, patch);
-      logEvent("APPROVE_CLOSURE", id, "GC Manager approved by " + who + " — now awaiting PMC Manager" + (comment ? " | Comment: " + comment : ""));
+      logEvent("APPROVE_CLOSURE", id, "GC-section approval by " + who + " (role: " + (userRole() === "dayone_admin" ? "Admin" : "GC Manager") + ")" + " — now awaiting PMC Manager" + (comment ? " | Comment: " + comment : ""));
       toast$("GC Manager approved ✔ — status: Pending PMC Approval");
 
     } else {
