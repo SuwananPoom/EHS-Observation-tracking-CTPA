@@ -83,6 +83,12 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   .navbtn{padding:5px 6px!important;font-size:9px!important;flex:1 1 calc(50% - 6px)!important}
   .topbar-actions button{font-size:9px!important;padding:5px 6px!important;flex:1 1 calc(50% - 6px)!important}
 }
+/* Open Observations by Contractor — responsive variants (mobile < 768px) */
+.obc-mobile{display:none}
+@media(max-width:767px){
+  .obc-desktop{display:none!important}
+  .obc-mobile{display:block!important}
+}
 </style>
 </head>
 <body>
@@ -9054,9 +9060,47 @@ function App(_refApp) {
       });
       /* KPI stat tiles (sumCards) hidden per request — variable kept unused for easy re-enable */
       void sumCards;
+      /* ── MOBILE layout (<768px): one contractor per vertical card; desktop untouched ── */
+      var ST_DEFS = [["Open", OP_C], ["In Progress", IP_C], ["Pending Verify", PV_C]];
+      var mobileEl = /*#__PURE__*/React.createElement("div", { className: "obc-mobile" },
+        /* legend on top, wraps naturally */
+        /*#__PURE__*/React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 10 } },
+          ST_DEFS.map(function(sd){
+            return /*#__PURE__*/React.createElement("span", { key: sd[0], style: { fontSize: 12, fontWeight: 600, color: C.textMid } }, dot(sd[1]), sd[0]);
+          })),
+        rows.map(function(r, ri){
+          var av = AV_COLORS[ri % AV_COLORS.length];
+          var share = pctTxt(r.total, grand);
+          var vals = [r.open, r.ip, r.pv];
+          function mRow(label, colr, val, boldVal){
+            return /*#__PURE__*/React.createElement("div", { key: label, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #F1F5F9" } },
+              /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: C.textMid } }, colr ? dot(colr) : null, label),
+              /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, fontWeight: 800, color: boldVal || (val > 0 && colr ? colr : val === 0 ? "#CBD5E1" : C.text) } },
+                String(val) + (colr ? "  (" + pctTxt(val, r.total) + ")" : "")));
+          }
+          return /*#__PURE__*/React.createElement("div", { key: r.co, style: { background: "#fff", border: "1px solid " + C.border, borderRadius: 14, padding: "14px 16px", marginBottom: 12, boxShadow: "0 2px 8px rgba(15,23,42,0.06)" } },
+            /*#__PURE__*/React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 6 } },
+              /*#__PURE__*/React.createElement("span", { style: { width: 40, height: 40, borderRadius: "50%", background: av[0], color: av[1], display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 16, flexShrink: 0 } }, r.co.charAt(0).toUpperCase()),
+              /*#__PURE__*/React.createElement("span", { style: { fontSize: 15, fontWeight: 800, color: C.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.co)),
+            ST_DEFS.map(function(sd, si){ return mRow(sd[0], sd[1], vals[si]); }),
+            mRow("Total Not Closed", null, r.total, C.text),
+            /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0" } },
+              /*#__PURE__*/React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: C.textMid } }, "% of Total Outstanding"),
+              /*#__PURE__*/React.createElement("span", { style: { fontSize: 16, fontWeight: 800, color: "#16A34A" } }, share)),
+            /* full-width segmented progress bar */
+            /*#__PURE__*/React.createElement("div", { style: { display: "flex", height: 22, borderRadius: 11, overflow: "hidden", marginTop: 4, background: NO_C } },
+              ST_DEFS.map(function(sd, si){
+                if(r.total === 0 || vals[si] === 0) return null;
+                var w = vals[si] / r.total * 100;
+                return /*#__PURE__*/React.createElement("span", { key: si,
+                  style: { width: w + "%", background: sd[1], display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 800 } },
+                  w >= 15 ? (vals[si] + " · " + pctTxt(vals[si], r.total)) : "");
+              })));
+        }));
       return /*#__PURE__*/React.createElement("div", null, header,
-        /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
-          /*#__PURE__*/React.createElement("div", { style: { minWidth: 620 } }, colHead, rowsEl)));
+        /*#__PURE__*/React.createElement("div", { className: "obc-desktop", style: { overflowX: "auto" } },
+          /*#__PURE__*/React.createElement("div", { style: { minWidth: 620 } }, colHead, rowsEl)),
+        mobileEl);
     })()
   ), /*#__PURE__*/React.createElement("div", {
     style: crd
