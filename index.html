@@ -9671,19 +9671,16 @@ function App(_refApp) {
         fontSize: 10,
         color: C.slate
       }
-    }, "\u2502 ", o.zone), /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10,
-        color: C.slate
-      }
-    }, "\u2502 Raised by ", o.by || "\u2014")), /*#__PURE__*/React.createElement("div", {
+    }, "\u2502 ", o.zone)), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: C.text,
         marginBottom: 7,
         lineHeight: 1.5
       }
-    }, o.desc), function () {
+    }, o.desc), /*#__PURE__*/React.createElement("div", {
+      style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
+    }, "\u2713 Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
       var ap = apOf(o);
       var info = null;
       if (ap === "PENDING REVIEW" && o.submittedForClosureBy) {
@@ -9707,7 +9704,7 @@ function App(_refApp) {
           fontWeight: 600
         }
       }, info);
-    }(), o.status === "CLOSED" && o.closedBy && /*#__PURE__*/React.createElement("div", {
+    }(), false && o.status === "CLOSED" && o.closedBy && /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "4px 9px", marginBottom: 7, fontWeight: 600 }
     }, "✔ Closed by ", o.closedBy), false && /*#__PURE__*/React.createElement("div", {
       style: {
