@@ -9694,7 +9694,15 @@ function App(_refApp) {
       } else if (ap === "PENDING PMC APPROVAL") {
         info = "\u2714 GC approved" + (o.clientApprovedBy ? " by " + o.clientApprovedBy : "") + (o.clientApprovedDate ? " \u2022 " + o.clientApprovedDate : "") + " \u2014 Awaiting PMC review";
       } else if (ap === "APPROVED CLOSED" && (o.approvedBy || o.approvedDate)) {
-        info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        /* Same data source as the Closure Workflow panel (clientApprovedBy /
+           lpApprovedBy) so both screens always show identical approvers; the
+           legacy combined approvedBy field is only a fallback when neither
+           per-role sign-off exists. Display-only. */
+        if (o.clientApprovedBy || o.lpApprovedBy) {
+          info = "\u2714 Approved by GC: " + (o.clientApprovedBy || "\u2014") + "  \u00B7  PMC: " + (o.lpApprovedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        } else {
+          info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        }
       } else if (ap === "REJECTED" && (o.rejectedBy || o.rejectedDate)) {
         info = "\u2716 Rejected by " + (o.rejectedBy || "\u2014") + (o.rejectedDate ? " \u2022 " + o.rejectedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
       }
