@@ -221,6 +221,19 @@ function canApproveGC(){
   var r = userRole();
   return r === "dayone_admin" || r === "lm_gc" || r === "ritta_gc";
 }
+/* CONTRACTOR-SCOPED GC approval: a GC Manager may approve only observations that
+   belong to their own contractor; Admin may approve any. Evaluated at approval
+   time from the observation's CURRENT company value, so a changed contractor
+   automatically uses the new contractor's GC assignment while historical approval
+   records (stored names/dates) are never touched. */
+function canApproveGCFor(o){
+  var r = userRole();
+  if(r === "dayone_admin") return true;
+  var co = ((o && o.company) || "").toLowerCase();
+  if(r === "lm_gc")    return co.indexOf("longmotive") !== -1 || co === "lm";
+  if(r === "ritta_gc") return co.indexOf("ritta") !== -1;
+  return false;
+}
 function canApprovePMC(){
   var r = userRole();
   return r === "dayone_admin" || r === "dayone_user" || r === "pmc_manager";
@@ -6467,6 +6480,9 @@ function App(_refApp) {
       }
       /* Enforce at action time too (defence in depth beyond button visibility) */
       if(!canApproveGC()){ toast$("Not authorized — GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
+      /* Contractor scope: this observation's contractor must match the GC Manager's
+         own contractor (Admin exempt). */
+      if(!canApproveGCFor(target)){ toast$("Not authorized — " + (target.company || "this contractor") + " observations can only be GC-approved by that contractor's GC Manager or an Admin.", "err"); return; }
       patch.clientApprovedBy = who;
       /* Record the approver's REAL authenticated role — an Admin approving in the
          GC section is recorded as Admin, never falsely as GC Manager. */
