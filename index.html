@@ -608,6 +608,28 @@ function containFit(natW, natH, boxW, boxH){
 /* Before generating PDF/PPTX, fill in base64 src for any photo that lacks it.
    Source order: ctpa_photos table (pass 1), then Storage url → base64 (pass 2).
    Returns the obs array (mutated in place) with src filled where possible. */
+/* EXIF-orientation normalisation for EXPORT copies only (in-memory).
+   The browser applies the EXIF Orientation flag while decoding; redrawing onto a
+   canvas therefore yields upright pixels with no EXIF, which PPT/PDF libraries
+   embed correctly. Photos without an EXIF orientation pass through as an identity
+   redraw (no rotation is ever introduced). Stored files and records are untouched. */
+function normalizePhotoOrientation(dataUri){
+  return new Promise(function(resolve){
+    if(!dataUri || dataUri.indexOf("data:image") !== 0){ resolve(dataUri); return; }
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var w = img.naturalWidth, h = img.naturalHeight;   /* EXIF-applied dimensions */
+        if(!w || !h){ resolve(dataUri); return; }
+        var cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+        var cx = cv.getContext("2d"); cx.drawImage(img, 0, 0);
+        resolve(cv.toDataURL("image/jpeg", 0.92));
+      } catch(e){ console.warn("[CTPA export] orientation normalise failed — using original bytes:", e && e.message); resolve(dataUri); }
+    };
+    img.onerror = function(){ resolve(dataUri); };
+    img.src = dataUri;
+  });
+}
 function fetchPhotosForExport(obsArr){
   if(!cloudOn()) return Promise.resolve(obsArr);
   /* obs IDs that need a photo fetch for export. We fetch when:
@@ -662,6 +684,24 @@ function fetchPhotosForExport(obsArr){
           });
         });
       });
+      /* Pass 2.5: normalise EXIF orientation on every export copy so PPT/PDF embed
+         upright pixels (report-only; storage originals untouched). */
+      var oriJobs = [];
+      obsArr.forEach(function(o, oi){
+        ["pb","pa"].forEach(function(slot){
+          (o[slot] || []).forEach(function(p, pi){
+            var cur = obsArr[oi][slot][pi];
+            if(cur && cur.src && cur.src.indexOf("data:image") === 0){
+              oriJobs.push(
+                normalizePhotoOrientation(cur.src).then(function(nd){
+                  if(nd && nd !== cur.src) obsArr[oi][slot][pi] = Object.assign({}, obsArr[oi][slot][pi], { src: nd, _nw: null, _nh: null });
+                })
+              );
+            }
+          });
+        });
+      });
+      return Promise.all(oriJobs).then(function(){
       /* Pass 3: precompute each photo's natural pixel size so PDF/PPT export can
          preserve the original aspect ratio (no stretching). Stored as _nw/_nh. */
       var sizeJobs = [];
@@ -680,6 +720,7 @@ function fetchPhotosForExport(obsArr){
         });
       });
       return Promise.all(sizeJobs).then(function(){ return obsArr; });
+      });
     });
   });
 }
