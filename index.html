@@ -1300,7 +1300,13 @@ function ctpaMigrate(arr) {
       });
     }
     var ap = apOf(o);
-    var rawApprovedBy = o.approvedBy != null ? o.approvedBy : (ap === "APPROVED CLOSED" ? (o.by || "") : "");
+    /* FALLBACK FIX: never backfill the approver with o.by (the RAISER) — a record
+       closed without an explicit approval shows the closer (who performed the close)
+       or nothing, so the raiser is never falsely displayed as the approver.
+       Real approvals (clientApprovedBy/lpApprovedBy from the Approve buttons) are
+       stored with the authenticated user's name and are untouched. Display-level
+       only; stored data is not modified. */
+    var rawApprovedBy = o.approvedBy != null ? o.approvedBy : (ap === "APPROVED CLOSED" ? (o.closedBy || "") : "");
     /* normalise legacy "MS" approver name to "GC Manager" at migration time */
     var approvedBy = (rawApprovedBy === "MS" || rawApprovedBy === "DAYONE") ? "GC Manager" : rawApprovedBy;
     var approvedDate = o.approvedDate != null ? o.approvedDate : (ap === "APPROVED CLOSED" ? (o.closed || "") : "");
