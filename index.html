@@ -2102,8 +2102,15 @@ function groupRowsByFc(rows){
 }
 function generateWeeklyReportPPT(rows, dateFrom, dateTo) {
   if (!window.PptxGenJS) { alert("PptxGenJS library not loaded. Check your internet connection."); return; }
-  /* pre-fetch photos from Supabase Storage for cross-device export */
-  fetchPhotosForExport(rows).then(function(){ _doGeneratePPT(rows, dateFrom, dateTo); });
+  /* pre-fetch photos from Supabase Storage for cross-device export.
+     HARDENED: photo prefetch failure no longer silently aborts the export —
+     we generate anyway, and any generation error is surfaced via alert. */
+  fetchPhotosForExport(rows)
+    .catch(function(e){ console.warn("[CTPA] PPT photo prefetch failed — generating without refreshed photos:", e && e.message); })
+    .then(function(){
+      try { _doGeneratePPT(rows, dateFrom, dateTo); }
+      catch(e){ console.error("[CTPA] PPT generation error:", e); alert("PowerPoint generation failed: " + (e && e.message)); }
+    });
 }
 function _doGeneratePPT(rows, dateFrom, dateTo) {
   var pptx  = new PptxGenJS();
@@ -2382,8 +2389,13 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
 /* ── PDF (.pdf) ── */
 function generateWeeklyReportPDF(rows, dateFrom, dateTo) {
   if (typeof window.jspdf === "undefined") { alert("jsPDF library not loaded. Check your internet connection."); return; }
-  /* pre-fetch photos from Supabase Storage for cross-device export */
-  fetchPhotosForExport(rows).then(function(){ _doGeneratePDF(rows, dateFrom, dateTo); });
+  /* pre-fetch photos from Supabase Storage for cross-device export (hardened, see PPT) */
+  fetchPhotosForExport(rows)
+    .catch(function(e){ console.warn("[CTPA] PDF photo prefetch failed — generating without refreshed photos:", e && e.message); })
+    .then(function(){
+      try { _doGeneratePDF(rows, dateFrom, dateTo); }
+      catch(e){ console.error("[CTPA] PDF generation error:", e); alert("PDF generation failed: " + (e && e.message)); }
+    });
 }
 function _doGeneratePDF(rows, dateFrom, dateTo) {
   if (typeof window.jspdf === "undefined") { return; }
