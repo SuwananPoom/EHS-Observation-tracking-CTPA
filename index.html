@@ -9671,7 +9671,12 @@ function App(_refApp) {
         fontSize: 10,
         color: C.slate
       }
-    }, "\u2502 ", o.zone)), /*#__PURE__*/React.createElement("div", {
+    }, "\u2502 ", o.zone), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: C.slate
+      }
+    }, "\u2502 Raised by ", o.by || "\u2014")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: C.text,
@@ -10437,7 +10442,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     l: "Finding Type",
     v: det.fc || "—"
   }, {
-    l: "Assigned To",
+    l: "Raised by",
     v: det.by
   }, {
     l: "Due Date",
