@@ -7385,6 +7385,7 @@ function App(_refApp) {
     }
   }, [{
     l: "Total OBS",
+    nav: { st: "ALL", ot: "ALL" },
     v: S.n,
     c: C.text,
     bg: "#fff",
@@ -7403,48 +7404,56 @@ function App(_refApp) {
     s: "Critical risk"
   }, {
     l: "Good OBS",
+    nav: { ot: "GOOD_OBS" },
     v: S.good,
     c: C.green,
     bg: C.greenBg,
     s: "Positive findings"
   }, {
     l: "Unsafe Act",
+    nav: { ot: "UNSAFE_ACT" },
     v: S.uact,
     c: C.red,
     bg: C.redBg,
     s: "Behaviour hazard"
   }, {
     l: "Unsafe Cond",
+    nav: { ot: "UNSAFE_CON" },
     v: S.ucon,
     c: C.amber,
     bg: C.amberBg,
     s: "Physical hazard"
   }, {
     l: "Closed",
+    nav: { st: "CLOSED" },
     v: S.closed,
     c: C.green,
     bg: "#fff",
     s: clR + "% rate"
   }, {
     l: "Open",
+    nav: { st: "OPEN" },
     v: S.apOpen,
     c: S.apOpen > 0 ? C.red : C.green,
     bg: S.apOpen > 0 ? C.redBg : "#fff",
     s: "Not closed"
   }, {
     l: "Pending Verify",
+    nav: { st: "PENDING_VERIFY" },
     v: S.apPendingGC,
     c: S.apPendingGC > 0 ? C.amber : C.green,
     bg: S.apPendingGC > 0 ? C.amberBg : "#fff",
     s: "Awaiting GC review"
   }, {
     l: "Pending PMC",
+    nav: { st: "PENDING_VERIFY" },
     v: S.apPendingPMC,
     c: S.apPendingPMC > 0 ? C.blue : C.green,
     bg: S.apPendingPMC > 0 ? C.blueBg : "#fff",
     s: "Awaiting PMC review"
   }, {
     l: "Approved Closed",
+    nav: { st: "CLOSED" },
     v: S.apApproved,
     c: C.green,
     bg: C.greenBg,
@@ -7465,12 +7474,22 @@ function App(_refApp) {
   }].map(function (k) {
     return /*#__PURE__*/React.createElement("div", {
       key: k.l,
+      /* READ-ONLY navigation: set the matching Observation-List filter state and
+         switch views. No save, no fetch, no write of any kind. Cards without an
+         exact existing filter equivalent stay non-clickable. */
+      onClick: k.nav ? function(){
+        setFS(k.nav.st || "ALL");
+        setFOT(k.nav.ot || "ALL");
+        setView("list");
+      } : undefined,
+      title: k.nav ? "View these observations in the list" : undefined,
       style: {
         background: k.bg,
         borderRadius: 13,
         padding: "14px 14px",
         border: "1.5px solid " + (k.v > 0 && (k.l === "Overdue" || k.l === "Serious Open") ? C.red : C.border),
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04)"
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+        cursor: k.nav ? "pointer" : "default"
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
