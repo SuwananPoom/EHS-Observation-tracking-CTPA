@@ -9756,7 +9756,7 @@ function App(_refApp) {
            legacy combined approvedBy field is only a fallback when neither
            per-role sign-off exists. Display-only. */
         if (o.clientApprovedBy || o.lpApprovedBy) {
-          info = "\u2714 Approved by GC: " + (o.clientApprovedBy || "\u2014") + "  \u00B7  PMC: " + (o.lpApprovedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+          info = "\u2714 Approved by GC: " + (o.clientApprovedBy ? (o.clientApprovedBy + (o.clientApprovedRole ? "" : " (legacy)")) : "\u2014") + "  \u00B7  PMC: " + (o.lpApprovedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
         } else {
           info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
         }
@@ -10695,7 +10695,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
       return /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 11, padding: "6px 10px", borderRadius: 8, background: by ? C.greenBg : "#fff", border: "1px solid " + (by ? C.green : C.border), marginBottom: 6 } }, /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: by ? C.greenDk : C.slate } }, (by ? "\u2714 " : "\u25CB ") + label), /*#__PURE__*/React.createElement("span", { style: { color: by ? C.greenDk : C.slate, textAlign: "right" } }, by ? byLabel + (date ? " \u2022 " + date : "") : "Awaiting sign-off"));
     };
     var showSlots = APPROVAL_ENABLED && (ap === "PENDING REVIEW" || ap === "PENDING PMC APPROVAL" || ap === "APPROVED CLOSED");
-    var slots = showSlots ? /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } }, signRow("GC Manager", det.clientApprovedBy, det.clientApprovedDate), signRow("PMC Manager", det.lpApprovedBy, det.lpApprovedDate)) : null;
+    var slots = showSlots ? /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } }, signRow("GC Manager", det.clientApprovedBy ? (det.clientApprovedBy + (det.clientApprovedRole ? "" : "  · legacy client-era approval")) : det.clientApprovedBy, det.clientApprovedDate), signRow("PMC Manager", det.lpApprovedBy, det.lpApprovedDate)) : null;
     var badge = /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 10
