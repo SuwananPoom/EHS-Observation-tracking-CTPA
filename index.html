@@ -6515,7 +6515,11 @@ function App(_refApp) {
     }
     applyTo(id, {
       approvalStatus: "PENDING REVIEW",
-      status: "PENDING_VERIFY",
+      /* WORKFLOW REVISION: submitting the After photo keeps the observation
+         IN PROGRESS (waiting for GC Manager review). Status becomes
+         PENDING_VERIFY only after GC approval, and CLOSED (+ Closed Date/By)
+         only after PMC approval — uploads and GC approval can never close. */
+      status: "IN_PROGRESS",
       submittedForClosureBy: ctpaUser() || "Anonymous",
       submittedForClosureDate: nowStamp(),
       clientApprovedBy: "", clientApprovedDate: "",
