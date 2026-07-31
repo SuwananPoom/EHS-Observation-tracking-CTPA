@@ -260,8 +260,9 @@ function canApproveGCFor(o){
   return false;
 }
 function canApprovePMC(){
+  /* PMC approval: ONLY the PMC Manager role and Admin (per approval-sequence spec). */
   var r = userRole();
-  return r === "dayone_admin" || r === "dayone_user" || r === "pmc_manager";
+  return r === "dayone_admin" || r === "pmc_manager";
 }
 function isAdmin(){ return userRole() === "dayone_admin"; }
 /* Role-based UI visibility (frontend-only; role from the authenticated profile).
@@ -1360,6 +1361,29 @@ function apOf(o) {
 function isUnapprovedClosed(o){
   return apOf(o) === "APPROVED CLOSED" && !(o && (o.clientApprovedBy || o.lpApprovedBy));
 }
+/* ══ CENTRALIZED EFFECTIVE STATUS — single source of truth for every count,
+   card, chart, filter, and export. Derived from the ACTUAL workflow data:
+     REJECTED            → stored status (workflow reset it to OPEN)
+     stored CLOSED:
+       GC + PMC sign-offs        → CLOSED (fully approved)
+       legacy client-era sign-off → CLOSED (historical regime, kept per audit
+                                    decision; identified by a GC name recorded
+                                    before role recording existed)
+       GC only                    → PENDING_VERIFY (waiting for PMC)
+       no sign-offs (form-closed) → IN_PROGRESS   (waiting for GC)
+     otherwise → stored status (OPEN / IN_PROGRESS / PENDING_VERIFY).
+   Read-only derivation — never written back; stored records stay untouched. */
+function effStatus(o){
+  if(!o) return "OPEN";
+  if(o.status === "CLOSED"){
+    var hasGC = !!o.clientApprovedBy, hasPMC = !!o.lpApprovedBy;
+    if(hasGC && hasPMC) return "CLOSED";
+    if(hasGC && !o.clientApprovedRole) return "CLOSED";   /* legacy client-era */
+    if(hasGC) return "PENDING_VERIFY";
+    return "IN_PROGRESS";
+  }
+  return o.status;
+}
 /* one-time, non-destructive migration: ensures every record carries the new
    approval fields without altering existing data. Existing CLOSED -> APPROVED
    CLOSED; existing OPEN stays OPEN. Run on every load (idempotent). */
@@ -1627,8 +1651,8 @@ function aggregateObservationsByQuarter(obsArr, period){
     if(o.obsType === "UNSAFE_ACT") b.ua++;
     else if(o.obsType === "GOOD_OBS") b.good++;
     else b.uc++;
-    if(o.status === "CLOSED") b.closed++;
-    else if(o.status === "PENDING_VERIFY") b.pending++;
+    if(effStatus(o) === "CLOSED") b.closed++;
+    else if(effStatus(o) === "PENDING_VERIFY") b.pending++;
     else b.open++;
     if(o.risk === "SERIOUS") b.serious++;
     else if(o.risk === "MAJOR") b.major++;
@@ -1756,7 +1780,7 @@ var compressPhoto = function compressPhoto(f) {
   });
 };
 var isOD = function isOD(o) {
-  return o.status !== "CLOSED" && o.due && o.due < td();
+  return effStatus(o) !== "CLOSED" && o.due && o.due < td();
 };
 var pStat = function pStat(o) {
   var b = o.pb ? o.pb.length : 0,
@@ -2088,8 +2112,8 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
 
     /* ═══ Data sheets ═══ */
     buildSheet("Observation Log", rows);
-    buildSheet("Open Items", rows.filter(function(o){ return o.status !== "CLOSED"; }));
-    buildSheet("Closed Items", rows.filter(function(o){ return o.status === "CLOSED"; }));
+    buildSheet("Open Items", rows.filter(function(o){ return effStatus(o) !== "CLOSED"; }));
+    buildSheet("Closed Items", rows.filter(function(o){ return effStatus(o) === "CLOSED"; }));
 
     /* ── download ── */
     var fileName = "CTPA_Observation_Report_" + dateStr + ".xlsx";
@@ -2117,13 +2141,13 @@ function printRegister(rows) {
     year: "numeric"
   });
   var sr = rows.filter(function (o) {
-    return o.risk === "SERIOUS" && o.status !== "CLOSED";
+    return o.risk === "SERIOUS" && effStatus(o) !== "CLOSED";
   }).length;
   var mj = rows.filter(function (o) {
-    return o.risk === "MAJOR" && o.status !== "CLOSED";
+    return o.risk === "MAJOR" && effStatus(o) !== "CLOSED";
   }).length;
   var cl = rows.filter(function (o) {
-    return o.status === "CLOSED";
+    return effStatus(o) === "CLOSED";
   }).length;
   var clR = rows.length ? Math.round(cl / rows.length * 100) : 0;
   var tr = rows.map(function (o, i) {
@@ -2185,8 +2209,8 @@ function groupRowsByFc(rows){
   if(n !== rows.length) console.warn("[CTPA] groupRowsByFc count mismatch", n, rows.length);
   function stat(list){ return {
     total: list.length,
-    open: list.filter(function(o){ return o.status !== "CLOSED"; }).length,
-    closed: list.filter(function(o){ return o.status === "CLOSED"; }).length,
+    open: list.filter(function(o){ return effStatus(o) !== "CLOSED"; }).length,
+    closed: list.filter(function(o){ return effStatus(o) === "CLOSED"; }).length,
     overdue: list.filter(function(o){ return isOD(o); }).length,
     serious: list.filter(function(o){ return o.risk === "SERIOUS"; }).length }; }
   return { order: order, groups: groups, stat: stat };
@@ -2242,11 +2266,11 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
   s2.addText(periodLabel,           { x:0.3, y:0.78, w:9, h:0.25, fontSize:9,            color:G,         fontFace:"Arial" });
 
   var total    = rows.length;
-  var openC    = rows.filter(function(o){ return o.status === "OPEN"; }).length;
-  var inprog   = rows.filter(function(o){ return o.status === "IN_PROGRESS"; }).length;
-  var closed   = rows.filter(function(o){ return o.status === "CLOSED"; }).length;
+  var openC    = rows.filter(function(o){ return effStatus(o) === "OPEN"; }).length;
+  var inprog   = rows.filter(function(o){ return effStatus(o) === "IN_PROGRESS"; }).length;
+  var closed   = rows.filter(function(o){ return effStatus(o) === "CLOSED"; }).length;
   var overdue  = rows.filter(function(o){ return isOD(o); }).length;
-  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && o.status !== "CLOSED"; }).length;
+  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && effStatus(o) !== "CLOSED"; }).length;
   var goodObs  = rows.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
   var unsafeA  = rows.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
   var unsafeC  = rows.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
@@ -2430,7 +2454,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     var co = o.company || "Unknown";
     if (!contMap[co]) contMap[co] = { total:0, open:0, closed:0, overdue:0 };
     contMap[co].total++;
-    if (o.status === "CLOSED") contMap[co].closed++; else contMap[co].open++;
+    if (effStatus(o) === "CLOSED") contMap[co].closed++; else contMap[co].open++;
     if (isOD(o)) contMap[co].overdue++;
   });
   var ctKeys = Object.keys(contMap).sort();
@@ -2536,11 +2560,11 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
   txt(periodLabel,           8, 22, { size:9,              color:"#00CC79" });
 
   var total    = rows.length;
-  var openC    = rows.filter(function(o){ return o.status === "OPEN"; }).length;
-  var inprog   = rows.filter(function(o){ return o.status === "IN_PROGRESS"; }).length;
-  var closed   = rows.filter(function(o){ return o.status === "CLOSED"; }).length;
+  var openC    = rows.filter(function(o){ return effStatus(o) === "OPEN"; }).length;
+  var inprog   = rows.filter(function(o){ return effStatus(o) === "IN_PROGRESS"; }).length;
+  var closed   = rows.filter(function(o){ return effStatus(o) === "CLOSED"; }).length;
   var overdue  = rows.filter(function(o){ return isOD(o); }).length;
-  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && o.status !== "CLOSED"; }).length;
+  var serious  = rows.filter(function(o){ return o.risk === "SERIOUS" && effStatus(o) !== "CLOSED"; }).length;
   var goodObs  = rows.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
   var unsafeA  = rows.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
   var unsafeC  = rows.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
@@ -6328,7 +6352,7 @@ function App(_refApp) {
   };
   var filt = useMemo(function () {
     return obs.filter(function (o) {
-      if (fSt !== "ALL" && o.status !== fSt) return false;
+      if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       if (fRi !== "ALL" && o.risk !== fRi) return false;
       if (fFl !== "ALL") { var _pz = parseZone(o.zone); if (_pz.floor !== fFl) return false; }
       if (fAr !== "ALL") { var _pz2 = parseZone(o.zone); if (_pz2.area !== fAr && _pz2.other !== fAr) return false; }
@@ -6425,25 +6449,25 @@ function App(_refApp) {
     return {
       n: dsObs.length,
       open: dsObs.filter(function (o) {
-        return o.status === "OPEN";
+        return effStatus(o) === "OPEN";
       }).length,
       ip: dsObs.filter(function (o) {
-        return o.status === "IN_PROGRESS";
+        return effStatus(o) === "IN_PROGRESS";
       }).length,
       pv: dsObs.filter(function (o) {
-        return o.status === "PENDING_VERIFY";
+        return effStatus(o) === "PENDING_VERIFY";
       }).length,
       closed: dsObs.filter(function (o) {
-        return o.status === "CLOSED";
+        return effStatus(o) === "CLOSED";
       }).length,
       od: dsObs.filter(function (o) {
         return isOD(o);
       }).length,
       sr: dsObs.filter(function (o) {
-        return o.risk === "SERIOUS" && o.status !== "CLOSED";
+        return o.risk === "SERIOUS" && effStatus(o) !== "CLOSED";
       }).length,
       mj: dsObs.filter(function (o) {
-        return o.risk === "MAJOR" && o.status !== "CLOSED";
+        return o.risk === "MAJOR" && effStatus(o) !== "CLOSED";
       }).length,
       good: dsObs.filter(function (o) {
         return o.obsType === "GOOD_OBS";
@@ -6580,6 +6604,7 @@ function App(_refApp) {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
       patch.lpApprovedBy = who;
+      patch.lpApprovedRole = userRole() === "dayone_admin" ? "Admin" : "PMC Manager";
       patch.lpApprovedDate = nowStamp();
       patch.approvalStatus = "APPROVED CLOSED";
       patch.status = "CLOSED";
@@ -7660,7 +7685,7 @@ function App(_refApp) {
       k = _ref9[0],
       v = _ref9[1];
     var open = dsObs.filter(function (o) {
-      return o.risk === k && o.status !== "CLOSED";
+      return o.risk === k && effStatus(o) !== "CLOSED";
     }).length;
     var tot = dsObs.filter(function (o) {
       return o.risk === k;
@@ -7864,7 +7889,7 @@ function App(_refApp) {
       var pct = Math.round(n / total * 100);
       var barW = Math.round(n / maxN * 100);
       var openN = dsObs.filter(function (o) {
-        return o.cat === cat && o.status !== "CLOSED";
+        return o.cat === cat && effStatus(o) !== "CLOSED";
       }).length;
       var icon = ICONS[cat] || "📌";
       return /*#__PURE__*/React.createElement("div", {
@@ -8488,10 +8513,10 @@ function App(_refApp) {
               uc = cnt(function(o){ return o.obsType === "UNSAFE_CON"; }),
               gd = cnt(function(o){ return o.obsType === "GOOD_OBS"; }),
               unTy = sel.length - ua - uc - gd;
-          var op = cnt(function(o){ return o.status === "OPEN"; }),
-              ipg = cnt(function(o){ return o.status === "IN_PROGRESS"; }),
-              pv = cnt(function(o){ return o.status === "PENDING_VERIFY"; }),
-              cl = cnt(function(o){ return o.status === "CLOSED"; }),
+          var op = cnt(function(o){ return effStatus(o) === "OPEN"; }),
+              ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
+              pv = cnt(function(o){ return effStatus(o) === "PENDING_VERIFY"; }),
+              cl = cnt(function(o){ return effStatus(o) === "CLOSED"; }),
               unSt = sel.length - op - ipg - pv - cl;
           var sr = cnt(function(o){ return o.risk === "SERIOUS"; }),
               mj = cnt(function(o){ return o.risk === "MAJOR"; }),
@@ -8765,16 +8790,16 @@ function App(_refApp) {
       function statsOf(p){
         var s = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
         var c = function(f){ return s.filter(f).length; };
-        var closed = c(function(o){ return o.status === "CLOSED"; });
+        var closed = c(function(o){ return effStatus(o) === "CLOSED"; });
         return {
           n: s.length,
           "Total OBS": s.length,
           "Unsafe Act": c(function(o){ return o.obsType === "UNSAFE_ACT"; }),
           "Unsafe Condition": c(function(o){ return o.obsType === "UNSAFE_CON"; }),
           "Good Observation": c(function(o){ return o.obsType === "GOOD_OBS"; }),
-          "Open": c(function(o){ return o.status === "OPEN"; }),
-          "In Progress": c(function(o){ return o.status === "IN_PROGRESS"; }),
-          "Pending Verify": c(function(o){ return o.status === "PENDING_VERIFY"; }),
+          "Open": c(function(o){ return effStatus(o) === "OPEN"; }),
+          "In Progress": c(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
+          "Pending Verify": c(function(o){ return effStatus(o) === "PENDING_VERIFY"; }),
           "Closed": closed,
           "Serious": c(function(o){ return o.risk === "SERIOUS"; }),
           "Major": c(function(o){ return o.risk === "MAJOR"; }),
@@ -8951,7 +8976,7 @@ function App(_refApp) {
     });
     var barData = units.map(function(u){
       var tot  = dsObs.filter(function(o){ return u.zones.indexOf(o.zone) !== -1; }).length;
-      var open = dsObs.filter(function(o){ return u.zones.indexOf(o.zone) !== -1 && o.status !== "CLOSED"; }).length;
+      var open = dsObs.filter(function(o){ return u.zones.indexOf(o.zone) !== -1 && effStatus(o) !== "CLOSED"; }).length;
       return { floor: u.floor, meta: u.meta, label: u.label, sub: u.sub, tot: tot, open: open, closed: tot - open };
     }).filter(function(d){ return d.tot > 0; })
       .sort(function(a, b){ return a.floor === b.floor ? (b.tot - a.tot) : 0; });   /* keep floor grouping, sort within floor */
@@ -9047,7 +9072,7 @@ function App(_refApp) {
     });
     var tot = fcO.length,
       open = fcO.filter(function (o) {
-        return o.status !== "CLOSED";
+        return effStatus(o) !== "CLOSED";
       }).length;
     var good = fcO.filter(function (o) {
       return o.obsType === "GOOD_OBS";
@@ -9179,14 +9204,14 @@ function App(_refApp) {
       var OP_C = "#EF4444", IP_C = "#F59E0B", PV_C = "#3B82F6", NO_C = "#E2E8F0";
       /* Not Closed = OPEN + IN_PROGRESS + PENDING_VERIFY (existing status values, exact) */
       var notClosed = dsObs.filter(function(o){
-        return o.status === "OPEN" || o.status === "IN_PROGRESS" || o.status === "PENDING_VERIFY";
+        return effStatus(o) === "OPEN" || effStatus(o) === "IN_PROGRESS" || effStatus(o) === "PENDING_VERIFY";
       });
       var byCo = {};
       notClosed.forEach(function(o){
         var co = (o.company || "").trim() || "Unassigned";   /* display-only normalisation */
         var r = byCo[co] = byCo[co] || { co: co, open: 0, ip: 0, pv: 0 };
-        if(o.status === "OPEN") r.open++;
-        else if(o.status === "IN_PROGRESS") r.ip++;
+        if(effStatus(o) === "OPEN") r.open++;
+        else if(effStatus(o) === "IN_PROGRESS") r.ip++;
         else r.pv++;
       });
       var rows = Object.keys(byCo).map(function(k){
@@ -9379,7 +9404,7 @@ function App(_refApp) {
       bg: C.border,
       text: C.slate
     };
-    var st = STATUS[o.status];
+    var st = STATUS[effStatus(o)];
     return /*#__PURE__*/React.createElement("tr", {
       key: o.id,
       onClick: function onClick() {
@@ -9781,7 +9806,7 @@ function App(_refApp) {
     }, ot.label), /*#__PURE__*/React.createElement("span", {
       style: pill(rk.bg, rk.text, 9)
     }, rk.label), /*#__PURE__*/React.createElement("span", {
-      style: pill((STATUS[o.status]||STATUS["OPEN"]).bg, (STATUS[o.status]||STATUS["OPEN"]).text, 9)
+      style: pill((STATUS[effStatus(o)]||STATUS["OPEN"]).bg, (STATUS[effStatus(o)]||STATUS["OPEN"]).text, 9)
     }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
       style: isUnapprovedClosed(o) ? { display: "none" } : pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
@@ -10893,6 +10918,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
             var who = ctpaUser();
             applyTo(det.id, {
               lpApprovedBy: who,
+              lpApprovedRole: "Admin",
               lpApprovedDate: nowStamp(),
               approvalComment: c || det.approvalComment || ""
             });
