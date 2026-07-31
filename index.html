@@ -6370,6 +6370,10 @@ function App(_refApp) {
   var filt = useMemo(function () {
     return obs.filter(function (o) {
       if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
+      /* Keep the OPEN filter aligned with the Dashboard Open bucket:
+         rejected records (status OPEN, approvalStatus REJECTED) are
+         excluded there too (Issue #2). */
+      if (fSt === "OPEN" && effAp(o) === "REJECTED") return false;
       if (fRi !== "ALL" && o.risk !== fRi) return false;
       if (fFl !== "ALL") { var _pz = parseZone(o.zone); if (_pz.floor !== fFl) return false; }
       if (fAr !== "ALL") { var _pz2 = parseZone(o.zone); if (_pz2.area !== fAr && _pz2.other !== fAr) return false; }
@@ -6466,7 +6470,9 @@ function App(_refApp) {
     return {
       n: dsObs.length,
       open: dsObs.filter(function (o) {
-        return effStatus(o) === "OPEN";
+        /* Rejected records carry status OPEN; exclude them here so the
+           Open and Rejected buckets stay mutually exclusive (Issue #2). */
+        return effStatus(o) === "OPEN" && effAp(o) !== "REJECTED";
       }).length,
       ip: dsObs.filter(function (o) {
         return effStatus(o) === "IN_PROGRESS";
