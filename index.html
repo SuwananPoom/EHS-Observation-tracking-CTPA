@@ -1380,7 +1380,7 @@ function effStatus(o){
     if(hasGC && hasPMC) return "CLOSED";
     if(hasGC && !o.clientApprovedRole) return "CLOSED";   /* legacy client-era */
     if(hasGC) return "PENDING_VERIFY";
-    return "IN_PROGRESS";
+    return "PENDING_VERIFY";   /* closed via form with no sign-offs → awaiting GC review */
   }
   return o.status;
 }
@@ -6545,11 +6545,10 @@ function App(_refApp) {
     }
     applyTo(id, {
       approvalStatus: "PENDING REVIEW",
-      /* WORKFLOW REVISION: submitting the After photo keeps the observation
-         IN PROGRESS (waiting for GC Manager review). Status becomes
-         PENDING_VERIFY only after GC approval, and CLOSED (+ Closed Date/By)
-         only after PMC approval — uploads and GC approval can never close. */
-      status: "IN_PROGRESS",
+      /* WORKFLOW (per latest spec): once the required After photo is submitted the
+         observation moves to PENDING VERIFY — Awaiting GC Manager Review. GC
+         approval keeps PENDING_VERIFY (awaiting PMC); only PMC approval closes. */
+      status: "PENDING_VERIFY",
       submittedForClosureBy: ctpaUser() || "Anonymous",
       submittedForClosureDate: nowStamp(),
       clientApprovedBy: "", clientApprovedDate: "",
@@ -6622,16 +6621,23 @@ function App(_refApp) {
   /* either approver rejects the closure (observation returns to OPEN; sign-offs cleared) */
   var rejectClosure = function rejectClosure(id, comment) {
     if (!approver) { toast$("Approver code required", "err"); return; }
+    /* Rejection reason is REQUIRED */
+    if (!comment || !String(comment).trim()) { toast$("Rejection reason is required.", "err"); return; }
     var who = ctpaUser() || roleLabel(approverRole);
     var target2 = obs.find(function(o){ return o.id === id; });
     var ap2 = target2 ? apOf(target2) : "";
-    var rejectLabel = approverRole === "BOTH"
-      ? (ap2 === "PENDING PMC APPROVAL" ? "PMC Manager" : "GC Manager")
-      : roleLabel(approverRole);
+    /* Stage-scoped authorization — GC stage: contractor's GC Manager/Admin;
+       PMC stage: PMC Manager/Admin. */
+    if (ap2 === "PENDING REVIEW" && !(canApproveGC() && canApproveGCFor(target2))) { toast$("Not authorized — GC-stage rejection requires the contractor's GC Manager or an Admin.", "err"); return; }
+    if (ap2 === "PENDING PMC APPROVAL" && !canApprovePMC()) { toast$("Not authorized — PMC-stage rejection requires the PMC Manager or an Admin.", "err"); return; }
+    var rejectLabel = ap2 === "PENDING PMC APPROVAL" ? "PMC Manager" : "GC Manager";
     applyTo(id, {
       approvalStatus: "REJECTED",
       status: "OPEN",
       rejectedBy: who + " (" + rejectLabel + ")",
+      rejectedById: (_authProfile() && _authProfile().id) || "",
+      rejectedRole: userRole() === "dayone_admin" ? "Admin" : rejectLabel,
+      rejectedStage: ap2 === "PENDING PMC APPROVAL" ? "PMC Approval" : "GC Approval",
       rejectedDate: nowStamp(),
       approvalComment: comment || "",
       closed: "",
@@ -6778,6 +6784,20 @@ function App(_refApp) {
       uploadPromises.push(uploadP);
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
     });
+    /* AUTO-TRANSITION: the first After photo moves an OPEN / IN_PROGRESS / REJECTED
+       observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed). */
+    if(k === "pa" && prev.length === 0 && photos.length > 0){
+      var curObs = obs.find(function(oo){ return oo.id === id; });
+      if(curObs && curObs.status !== "CLOSED" && apOf(curObs) !== "PENDING PMC APPROVAL" && apOf(curObs) !== "APPROVED CLOSED"){
+        applyTo(id, {
+          approvalStatus: "PENDING REVIEW",
+          status: "PENDING_VERIFY",
+          submittedForClosureBy: ctpaUser() || "Anonymous",
+          submittedForClosureDate: nowStamp()
+        });
+        toast$("After photo received — Pending Verify (awaiting GC Manager review)");
+      }
+    }
     /* Track in-flight uploads for this slot so cache clear can safely defer */
     if(uploadPromises.length) {
       _uphInFlight.current[slotKey] = Promise.all(uploadPromises).then(function(){
@@ -10870,9 +10890,8 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.green, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2714 Approve as GC Manager") : null,
-        /* Reject is NOT an approval \u2014 any approver (GC side or PMC side) may send the
-           observation back for rework, so the Reject button is not GC-gated. */
-        approver && !gcAlreadyDone ? /*#__PURE__*/React.createElement("button", {
+        /* Reject at the GC stage: GC Manager / Admin only (per latest workflow spec). */
+        isGC && !gcAlreadyDone ? /*#__PURE__*/React.createElement("button", {
           onClick: function onClick() {
             var c = window.prompt("Rejection reason:") || "";
             rejectClosure(det.id, c);
