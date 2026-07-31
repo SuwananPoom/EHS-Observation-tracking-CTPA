@@ -6654,6 +6654,26 @@ function App(_refApp) {
     if (ap2 === "PENDING REVIEW" && !(canApproveGC() && canApproveGCFor(target2))) { toast$("Not authorized — GC-stage rejection requires the contractor's GC Manager or an Admin.", "err"); return; }
     if (ap2 === "PENDING PMC APPROVAL" && !canApprovePMC()) { toast$("Not authorized — PMC-stage rejection requires the PMC Manager or an Admin.", "err"); return; }
     var rejectLabel = ap2 === "PENDING PMC APPROVAL" ? "PMC Manager" : "GC Manager";
+    /* Issue #4 — approvals are immutable audit data. Instead of erasing prior
+       sign-offs, archive them into approvalHistory and start a new review
+       cycle. Legacy client-era GC approvals (clientApprovedBy with no
+       clientApprovedRole) are never cleared or archived. */
+    var isLegacyGC2 = !!(target2 && target2.clientApprovedBy && !target2.clientApprovedRole);
+    var hist2 = (target2 && target2.approvalHistory ? target2.approvalHistory : []).slice();
+    if (target2 && ((target2.clientApprovedBy && !isLegacyGC2) || target2.lpApprovedBy)) {
+      hist2.push({
+        archivedAt: nowStamp(),
+        archivedReason: "New review cycle after rejection at " + (ap2 === "PENDING PMC APPROVAL" ? "PMC Approval" : "GC Approval") + " stage",
+        clientApprovedBy: (!isLegacyGC2 && target2.clientApprovedBy) || "",
+        clientApprovedById: (!isLegacyGC2 && target2.clientApprovedById) || "",
+        clientApprovedRole: (!isLegacyGC2 && target2.clientApprovedRole) || "",
+        clientApprovedDate: (!isLegacyGC2 && target2.clientApprovedDate) || "",
+        lpApprovedBy: target2.lpApprovedBy || "",
+        lpApprovedById: target2.lpApprovedById || "",
+        lpApprovedRole: target2.lpApprovedRole || "",
+        lpApprovedDate: target2.lpApprovedDate || ""
+      });
+    }
     applyTo(id, {
       approvalStatus: "REJECTED",
       status: "OPEN",
@@ -6665,8 +6685,12 @@ function App(_refApp) {
       approvalComment: comment || "",
       closed: "",
       closedBy: "",
-      clientApprovedBy: "", clientApprovedDate: "",
-      lpApprovedBy: "", lpApprovedDate: ""
+      approvalHistory: hist2,
+      clientApprovedBy: isLegacyGC2 ? target2.clientApprovedBy : "",
+      clientApprovedById: isLegacyGC2 ? (target2.clientApprovedById || "") : "",
+      clientApprovedRole: isLegacyGC2 ? (target2.clientApprovedRole || "") : "",
+      clientApprovedDate: isLegacyGC2 ? (target2.clientApprovedDate || "") : "",
+      lpApprovedBy: "", lpApprovedById: "", lpApprovedRole: "", lpApprovedDate: ""
     });
     logEvent("REJECT_CLOSURE", id, "Rejected by " + who + " (" + rejectLabel + ")" + (comment ? " | Reason: " + comment : ""));
     toast$("Closure rejected");
