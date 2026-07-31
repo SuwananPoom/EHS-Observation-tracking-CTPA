@@ -1354,6 +1354,12 @@ function apOf(o) {
   if (o.status === "PENDING_VERIFY") return "PENDING REVIEW";
   return "OPEN"; // OPEN and IN_PROGRESS are both treated as not-closed / open
 }
+/* True when a record is CLOSED/"approved closed" by classification but carries NO
+   approval sign-off at all (neither GC nor PMC) — e.g. closed directly via the Edit
+   form. Display-only: badges/texts must not claim managers approved. */
+function isUnapprovedClosed(o){
+  return apOf(o) === "APPROVED CLOSED" && !(o && (o.clientApprovedBy || o.lpApprovedBy));
+}
 /* one-time, non-destructive migration: ensures every record carries the new
    approval fields without altering existing data. Existing CLOSED -> APPROVED
    CLOSED; existing OPEN stays OPEN. Run on every load (idempotent). */
@@ -9452,7 +9458,7 @@ function App(_refApp) {
         whiteSpace: "nowrap"
       }
     }, /*#__PURE__*/React.createElement("span", {
-      style: pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
+      style: isUnapprovedClosed(o) ? { display: "none" } : pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label)), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "7px 10px",
@@ -9777,7 +9783,7 @@ function App(_refApp) {
     }, rk.label), /*#__PURE__*/React.createElement("span", {
       style: pill((STATUS[o.status]||STATUS["OPEN"]).bg, (STATUS[o.status]||STATUS["OPEN"]).text, 9)
     }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
-      style: pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
+      style: isUnapprovedClosed(o) ? { display: "none" } : pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 4,
@@ -9950,8 +9956,8 @@ function App(_refApp) {
       }
     }, "Edit"), apOf(o) === "PENDING REVIEW" || apOf(o) === "PENDING PMC APPROVAL" || apOf(o) === "APPROVED CLOSED" || apOf(o) === "REJECTED"
       ? /*#__PURE__*/React.createElement("span", {
-          style: { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + (APPROVAL[apOf(o)] || STATUS[o.status]).color, background: (APPROVAL[apOf(o)] || STATUS[o.status]).bg, color: (APPROVAL[apOf(o)] || STATUS[o.status]).text, fontWeight: 700 }
-        }, (APPROVAL[apOf(o)] || STATUS[o.status]).label)
+          style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[apOf(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
+        }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[apOf(o)] || STATUS[o.status])) || STATUS.OPEN).label)
       : /*#__PURE__*/React.createElement("select", {
           value: o.status,
           onClick: function onClick(e) { return e.stopPropagation(); },
@@ -10558,7 +10564,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     style: pill((_STATUS$det$status = STATUS[det.status]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[det.status]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
   }, (_STATUS$det$status3 = STATUS[det.status]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
     style: pill(C.redBg, C.redDk, 10)
-  }, "OVERDUE"), APPROVAL[apOf(det)] && /*#__PURE__*/React.createElement("span", {
+  }, "OVERDUE"), APPROVAL[apOf(det)] && !isUnapprovedClosed(det) && /*#__PURE__*/React.createElement("span", {
     style: pill((APPROVAL[apOf(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[apOf(det)]||APPROVAL["OPEN"]).text, 10)
   }, APPROVAL[apOf(det)].label))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -10776,7 +10782,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
         color: A.text,
         border: "1px solid " + A.color
       }
-    }, A.label));
+    }, isUnapprovedClosed(det) && A.label === "APPROVED CLOSED" ? "CLOSED (NO APPROVALS)" : A.label));
     var meta = null;
     if (ap === "PENDING REVIEW" && det.submittedForClosureBy) {
       meta = /*#__PURE__*/React.createElement("div", {
@@ -10787,9 +10793,13 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: C.blue, marginBottom: 10 }
       }, "\u2714 GC Manager approved" + (det.clientApprovedBy ? " by " + det.clientApprovedBy : "") + (det.clientApprovedDate ? " \u2022 " + det.clientApprovedDate : "") + " \u2014 Awaiting PMC Manager review");
     } else if (ap === "APPROVED CLOSED") {
-      meta = /*#__PURE__*/React.createElement("div", {
-        style: { fontSize: 11, color: C.greenDk, marginBottom: 10 }
-      }, "\u2714 Approved Closed \u2014 GC Manager & PMC Manager approved" + (det.approvedDate ? " \u2022 " + det.approvedDate : "") + (det.approvalComment ? " \u2014 \u201C" + det.approvalComment + "\u201D" : ""));
+      meta = isUnapprovedClosed(det)
+        ? /*#__PURE__*/React.createElement("div", {
+            style: { fontSize: 11, color: C.amberDk, marginBottom: 10 }
+          }, "\u26A0 Closed without approval sign-offs \u2014 closed via the Edit form" + (det.closedBy ? " by " + det.closedBy : "") + (det.closed ? " \u2022 " + det.closed : "") + ". GC Manager and PMC Manager have NOT approved this observation.")
+        : /*#__PURE__*/React.createElement("div", {
+            style: { fontSize: 11, color: C.greenDk, marginBottom: 10 }
+          }, "\u2714 Approved Closed \u2014 GC Manager & PMC Manager approved" + (det.approvedDate ? " \u2022 " + det.approvedDate : "") + (det.approvalComment ? " \u2014 \u201C" + det.approvalComment + "\u201D" : ""));
     } else if (ap === "REJECTED") {
       meta = /*#__PURE__*/React.createElement("div", {
         style: { fontSize: 11, color: C.redDk, marginBottom: 10 }
@@ -10874,7 +10884,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
       /* APPROVED CLOSED \u2014 show Admin Override button if PMC sign-off is missing */
       var pmcMissing = !det.lpApprovedBy;
       controls = /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" } },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid } }, "Approved Closed \u2014 GC Manager & PMC Manager have approved."),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid } }, isUnapprovedClosed(det) ? "Closed without approvals \u2014 use the sign-off buttons above (or Admin override) to complete the workflow." : "Approved Closed \u2014 GC Manager & PMC Manager have approved."),
         isAdmin() && pmcMissing ? /*#__PURE__*/React.createElement("button", {
           onClick: function onClick() {
             var c = window.prompt("PMC sign-off comment (optional):") || "";
