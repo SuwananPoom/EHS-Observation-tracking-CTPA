@@ -10843,7 +10843,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.green, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2714 Approve as GC Manager") : null,
-        isGC && !gcAlreadyDone ? /*#__PURE__*/React.createElement("button", {
+        /* Reject is NOT an approval \u2014 any approver (GC side or PMC side) may send the
+           observation back for rework, so the Reject button is not GC-gated. */
+        approver && !gcAlreadyDone ? /*#__PURE__*/React.createElement("button", {
           onClick: function onClick() {
             var c = window.prompt("Rejection reason:") || "";
             rejectClosure(det.id, c);
