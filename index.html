@@ -6588,6 +6588,7 @@ function App(_refApp) {
          own contractor (Admin exempt). */
       if(!canApproveGCFor(target)){ toast$("Not authorized — " + (target.company || "this contractor") + " observations can only be GC-approved by that contractor's GC Manager or an Admin.", "err"); return; }
       patch.clientApprovedBy = who;
+      patch.clientApprovedById = (_authProfile() && _authProfile().id) || "";
       /* Record the approver's REAL authenticated role — an Admin approving in the
          GC section is recorded as Admin, never falsely as GC Manager. */
       patch.clientApprovedRole = userRole() === "dayone_admin" ? "Admin" : "GC Manager";
@@ -6604,6 +6605,7 @@ function App(_refApp) {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
       patch.lpApprovedBy = who;
+      patch.lpApprovedById = (_authProfile() && _authProfile().id) || "";
       patch.lpApprovedRole = userRole() === "dayone_admin" ? "Admin" : "PMC Manager";
       patch.lpApprovedDate = nowStamp();
       patch.approvalStatus = "APPROVED CLOSED";
@@ -6613,7 +6615,7 @@ function App(_refApp) {
       patch.closed = td();
       patch.closedBy = who + " (PMC via approval)";
       applyTo(id, patch);
-      logEvent("APPROVE_CLOSURE", id, "PMC Manager approved by " + who + " — Closure complete (GC + PMC approved)" + (comment ? " | Comment: " + comment : ""));
+      logEvent("APPROVE_CLOSURE", id, "PMC-stage approval by " + who + " (role: " + (userRole() === "dayone_admin" ? "Admin" : "PMC Manager") + ")" + " — Closure complete (GC + PMC approved)" + (comment ? " | Comment: " + comment : ""));
       toast$("PMC Manager approved ✔ — Approved Closed");
     }
   };
@@ -10918,6 +10920,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
             var who = ctpaUser();
             applyTo(det.id, {
               lpApprovedBy: who,
+              lpApprovedById: (_authProfile() && _authProfile().id) || "",
               lpApprovedRole: "Admin",
               lpApprovedDate: nowStamp(),
               approvalComment: c || det.approvalComment || ""
