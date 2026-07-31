@@ -1361,6 +1361,23 @@ function apOf(o) {
 function isUnapprovedClosed(o){
   return apOf(o) === "APPROVED CLOSED" && !(o && (o.clientApprovedBy || o.lpApprovedBy));
 }
+/* ══ EFFECTIVE WORKFLOW STAGE — the single stage resolver for display, buttons,
+   and stage-scoped actions. A stored "APPROVED CLOSED" is honoured ONLY when the
+   sign-off records support it: both sign-offs (or a legacy client-era GC sign-off)
+   → APPROVED CLOSED; GC only → PENDING PMC APPROVAL; none → PENDING REVIEW
+   (awaiting GC). Raw apOf/stored values are never modified. */
+function effAp(o){
+  if(!APPROVAL_ENABLED) return null;
+  var ap = apOf(o);
+  if(ap === "APPROVED CLOSED"){
+    var hasGC = !!(o && o.clientApprovedBy), hasPMC = !!(o && o.lpApprovedBy);
+    if(hasGC && hasPMC) return "APPROVED CLOSED";
+    if(hasGC && !o.clientApprovedRole) return "APPROVED CLOSED";   /* legacy client-era */
+    if(hasGC) return "PENDING PMC APPROVAL";
+    return "PENDING REVIEW";
+  }
+  return ap;
+}
 /* ══ CENTRALIZED EFFECTIVE STATUS — single source of truth for every count,
    card, chart, filter, and export. Derived from the ACTUAL workflow data:
      REJECTED            → stored status (workflow reset it to OPEN)
@@ -6478,12 +6495,12 @@ function App(_refApp) {
       ucon: dsObs.filter(function (o) {
         return o.obsType === "UNSAFE_CON";
       }).length,
-      apOpen: dsObs.filter(function (o) { return apOf(o) === "OPEN"; }).length,
-      apPending: dsObs.filter(function (o) { return apOf(o) === "PENDING REVIEW" || apOf(o) === "PENDING PMC APPROVAL"; }).length,
-      apPendingGC: dsObs.filter(function (o) { return apOf(o) === "PENDING REVIEW"; }).length,
-      apPendingPMC: dsObs.filter(function (o) { return apOf(o) === "PENDING PMC APPROVAL"; }).length,
-      apApproved: dsObs.filter(function (o) { return apOf(o) === "APPROVED CLOSED"; }).length,
-      apRejected: dsObs.filter(function (o) { return apOf(o) === "REJECTED"; }).length
+      apOpen: dsObs.filter(function (o) { return effAp(o) === "OPEN"; }).length,
+      apPending: dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW" || effAp(o) === "PENDING PMC APPROVAL"; }).length,
+      apPendingGC: dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }).length,
+      apPendingPMC: dsObs.filter(function (o) { return effAp(o) === "PENDING PMC APPROVAL"; }).length,
+      apApproved: dsObs.filter(function (o) { return effAp(o) === "APPROVED CLOSED"; }).length,
+      apRejected: dsObs.filter(function (o) { return effAp(o) === "REJECTED"; }).length
     };
   }, [dsObs]);
   /* Closure rate: 1-decimal, rounded DOWN, and capped below 100 unless every record
@@ -6566,7 +6583,7 @@ function App(_refApp) {
     if (!approver) { toast$("Approver code required", "err"); return; }
     var target = obs.find(function (o) { return o.id === id; });
     if (!target) return;
-    var ap = apOf(target);
+    var ap = effAp(target);   /* effective stage — a mis-stored APPROVED CLOSED with missing sign-offs resolves to its true pending stage */
     var who = ctpaUser() || roleLabel(approverRole);
     var patch = { approvalComment: comment || target.approvalComment || "" };
 
@@ -6625,7 +6642,7 @@ function App(_refApp) {
     if (!comment || !String(comment).trim()) { toast$("Rejection reason is required.", "err"); return; }
     var who = ctpaUser() || roleLabel(approverRole);
     var target2 = obs.find(function(o){ return o.id === id; });
-    var ap2 = target2 ? apOf(target2) : "";
+    var ap2 = target2 ? effAp(target2) : "";
     /* Stage-scoped authorization — GC stage: contractor's GC Manager/Admin;
        PMC stage: PMC Manager/Admin. */
     if (ap2 === "PENDING REVIEW" && !(canApproveGC() && canApproveGCFor(target2))) { toast$("Not authorized — GC-stage rejection requires the contractor's GC Manager or an Admin.", "err"); return; }
@@ -6788,7 +6805,7 @@ function App(_refApp) {
        observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed). */
     if(k === "pa" && prev.length === 0 && photos.length > 0){
       var curObs = obs.find(function(oo){ return oo.id === id; });
-      if(curObs && curObs.status !== "CLOSED" && apOf(curObs) !== "PENDING PMC APPROVAL" && apOf(curObs) !== "APPROVED CLOSED"){
+      if(curObs && curObs.status !== "CLOSED" && effAp(curObs) !== "PENDING PMC APPROVAL" && effAp(curObs) !== "APPROVED CLOSED"){
         applyTo(id, {
           approvalStatus: "PENDING REVIEW",
           status: "PENDING_VERIFY",
@@ -7558,20 +7575,28 @@ function App(_refApp) {
     }
   }, [{
     l: "Closed",
-    v: S.closed,
+    v: S.apApproved,
     c: C.green
-  }, {
-    l: "In Progress",
-    v: S.ip,
-    c: C.amber
   }, {
     l: "Open",
     v: S.open,
     c: C.red
   }, {
-    l: "Pending",
-    v: S.pv,
+    l: "In Progress",
+    v: S.ip,
+    c: C.amber
+  }, {
+    l: "Pending GC",
+    v: S.apPendingGC,
+    c: "#0EA5E9"
+  }, {
+    l: "Pending PMC",
+    v: S.apPendingPMC,
     c: C.blue
+  }, {
+    l: "Rejected",
+    v: S.apRejected,
+    c: "#7C3AED"
   }].map(function (r) {
     return /*#__PURE__*/React.createElement("div", {
       key: r.l,
@@ -9505,8 +9530,8 @@ function App(_refApp) {
         whiteSpace: "nowrap"
       }
     }, /*#__PURE__*/React.createElement("span", {
-      style: isUnapprovedClosed(o) ? { display: "none" } : pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
-    }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label)), /*#__PURE__*/React.createElement("td", {
+      style: pill((APPROVAL[effAp(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).text, 9)
+    }, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).label)), /*#__PURE__*/React.createElement("td", {
       style: {
         padding: "7px 10px",
         color: isOD(o) ? C.red : C.slate,
@@ -9525,7 +9550,7 @@ function App(_refApp) {
         style: pill(ps$2.l === "B+A" ? C.greenBg : ps$2.l === "None" ? C.redBg : C.amberBg, ps$2.l === "B+A" ? C.greenDk : ps$2.l === "None" ? C.redDk : C.amberDk, 9)
       }, ps$2.l);
     }()));
-  })))))), view === "dashboard" && APPROVAL_ENABLED && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return apOf(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
+  })))))), view === "dashboard" && APPROVAL_ENABLED && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
     className: "fade-in" + (mobFilt ? " filters-open" : "")
   }, /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, crd), {}, {
@@ -9830,8 +9855,8 @@ function App(_refApp) {
     }, rk.label), /*#__PURE__*/React.createElement("span", {
       style: pill((STATUS[effStatus(o)]||STATUS["OPEN"]).bg, (STATUS[effStatus(o)]||STATUS["OPEN"]).text, 9)
     }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
-      style: isUnapprovedClosed(o) ? { display: "none" } : pill((APPROVAL[apOf(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).text, 9)
-    }, (APPROVAL[apOf(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
+      style: pill((APPROVAL[effAp(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).text, 9)
+    }, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 4,
         display: "flex",
@@ -9862,7 +9887,7 @@ function App(_refApp) {
     }, o.desc), /*#__PURE__*/React.createElement("div", {
       style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
     }, "\u2714 Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
-      var ap = apOf(o);
+      var ap = effAp(o);
       var info = null;
       if (ap === "PENDING REVIEW" && o.submittedForClosureBy) {
         info = "\uD83D\uDCE4 Submitted by " + o.submittedForClosureBy + (o.submittedForClosureDate ? " \u2022 " + o.submittedForClosureDate : "") + " \u2014 Awaiting GC review";
@@ -10001,9 +10026,9 @@ function App(_refApp) {
         fontWeight: 600,
         color: C.textMid
       }
-    }, "Edit"), apOf(o) === "PENDING REVIEW" || apOf(o) === "PENDING PMC APPROVAL" || apOf(o) === "APPROVED CLOSED" || apOf(o) === "REJECTED"
+    }, "Edit"), effAp(o) === "PENDING REVIEW" || effAp(o) === "PENDING PMC APPROVAL" || effAp(o) === "APPROVED CLOSED" || effAp(o) === "REJECTED"
       ? /*#__PURE__*/React.createElement("span", {
-          style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[apOf(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
+          style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
         }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[apOf(o)] || STATUS[o.status])) || STATUS.OPEN).label)
       : /*#__PURE__*/React.createElement("select", {
           value: o.status,
@@ -10611,9 +10636,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     style: pill((_STATUS$det$status = STATUS[det.status]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[det.status]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
   }, (_STATUS$det$status3 = STATUS[det.status]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
     style: pill(C.redBg, C.redDk, 10)
-  }, "OVERDUE"), APPROVAL[apOf(det)] && !isUnapprovedClosed(det) && /*#__PURE__*/React.createElement("span", {
-    style: pill((APPROVAL[apOf(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[apOf(det)]||APPROVAL["OPEN"]).text, 10)
-  }, APPROVAL[apOf(det)].label))), /*#__PURE__*/React.createElement("div", {
+  }, "OVERDUE"), APPROVAL[effAp(det)] && /*#__PURE__*/React.createElement("span", {
+    style: pill((APPROVAL[effAp(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[effAp(det)]||APPROVAL["OPEN"]).text, 10)
+  }, APPROVAL[effAp(det)].label))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
@@ -10806,14 +10831,14 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     }
   }, "Closure Workflow"), function () {
     if (!APPROVAL_ENABLED) return null;
-    var ap = apOf(det);
+    var ap = effAp(det);
     var A = APPROVAL[ap] || APPROVAL["OPEN"];
     var signRow = function signRow(label, by, date) {
       var byLabel = fmtApprover(by);
       return /*#__PURE__*/React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: 11, padding: "6px 10px", borderRadius: 8, background: by ? C.greenBg : "#fff", border: "1px solid " + (by ? C.green : C.border), marginBottom: 6 } }, /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: by ? C.greenDk : C.slate } }, (by ? "\u2714 " : "\u25CB ") + label), /*#__PURE__*/React.createElement("span", { style: { color: by ? C.greenDk : C.slate, textAlign: "right" } }, by ? byLabel + (date ? " \u2022 " + date : "") : "Awaiting sign-off"));
     };
     var showSlots = APPROVAL_ENABLED && (ap === "PENDING REVIEW" || ap === "PENDING PMC APPROVAL" || ap === "APPROVED CLOSED");
-    var slots = showSlots ? /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } }, signRow("GC Manager", det.clientApprovedBy ? (det.clientApprovedBy + (det.clientApprovedRole ? "" : "  · legacy client-era approval")) : det.clientApprovedBy, det.clientApprovedDate), signRow("PMC Manager", det.lpApprovedBy, det.lpApprovedDate)) : null;
+    var slots = showSlots ? /*#__PURE__*/React.createElement("div", { style: { marginBottom: 10 } }, signRow("GC Manager", det.clientApprovedBy ? (det.clientApprovedBy + (det.clientApprovedRole === "Admin" ? "  · Admin Override" : det.clientApprovedRole ? "" : "  · legacy client-era approval")) : det.clientApprovedBy, det.clientApprovedDate), signRow("PMC Manager", det.lpApprovedBy ? (det.lpApprovedBy + (det.lpApprovedRole === "Admin" ? "  · Admin Override" : "")) : det.lpApprovedBy, det.lpApprovedDate)) : null;
     var badge = /*#__PURE__*/React.createElement("div", {
       style: {
         marginBottom: 10
