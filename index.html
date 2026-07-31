@@ -10054,7 +10054,7 @@ function App(_refApp) {
     }, "Edit"), effAp(o) === "PENDING REVIEW" || effAp(o) === "PENDING PMC APPROVAL" || effAp(o) === "APPROVED CLOSED" || effAp(o) === "REJECTED"
       ? /*#__PURE__*/React.createElement("span", {
           style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
-        }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[apOf(o)] || STATUS[o.status])) || STATUS.OPEN).label)
+        }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN).label)
       : /*#__PURE__*/React.createElement("select", {
           value: o.status,
           onClick: function onClick(e) { return e.stopPropagation(); },
