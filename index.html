@@ -83,6 +83,31 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   .navbtn{padding:5px 6px!important;font-size:9px!important;flex:1 1 calc(50% - 6px)!important}
   .topbar-actions button{font-size:9px!important;padding:5px 6px!important;flex:1 1 calc(50% - 6px)!important}
 }
+/* ── Mobile-only redesign (header/nav/status/filters) — desktop uses display:contents so DOM flow is IDENTICAL ≥768px ── */
+.mob-more-btn,.mob-filters-btn,.mob-status-sum{display:none}
+@media(min-width:768px){
+  .mob-secondary{display:contents}
+}
+@media(max-width:767px){
+  .app-header{height:auto!important;padding:6px 10px!important;flex-wrap:wrap}
+  .app-logo{height:22px!important}
+  .app-title{font-size:11px!important}
+  .topbar-brand{gap:7px!important}
+  .topbar-actions{gap:4px!important;flex-wrap:wrap;justify-content:flex-end}
+  .navbtn{padding:6px 10px!important;font-size:10px!important}
+  .mob-more-btn{display:inline-flex}
+  .mob-secondary{display:none}
+  .mob-secondary.open{display:flex;gap:6px;flex-wrap:wrap;width:100%;justify-content:flex-end;padding-top:5px}
+  .statusbar{padding:4px 10px!important;gap:8px!important}
+  .mob-status-sum{display:inline-flex;align-items:center;gap:5px;font-weight:700;cursor:pointer}
+  .sb-detail{display:none}
+  .statusbar.open .sb-detail{display:inline}
+  .mob-filters-btn{display:inline-flex}
+  .mob-secf{display:none!important}
+  .filters-open .mob-secf{display:inline-flex!important}
+  input.fdate{width:42vw!important;max-width:170px}
+  .fdate-arrow{display:none!important}
+}
 /* Open Observations by Contractor — responsive variants (mobile < 768px) */
 .obc-mobile{display:none}
 @media(max-width:767px){
@@ -5948,7 +5973,11 @@ function App(_refApp) {
   var qQuartersKey = qQuarters.join(",");
   var _qmSt = useState([1,2,3,4,5,6,7,8,9,10,11,12]), qMonths = _qmSt[0], setQMonths = _qmSt[1];  /* multi-select months */
   var qMonthsKey = qMonths.join(",");
-  var _qwSt = useState(""), qWeek = _qwSt[0], setQWeek = _qwSt[1];  /* "" = All Weeks (default view unchanged); else a week ID like "W29" */
+  var _qwSt = useState(""), qWeek = _qwSt[0], setQWeek = _qwSt[1];
+  /* Mobile-only UI toggles (no effect on desktop rendering) */
+  var _mmSt = useState(false), mobMore = _mmSt[0], setMobMore = _mmSt[1];
+  var _msSt = useState(false), mobSb = _msSt[0], setMobSb = _msSt[1];
+  var _mfSt = useState(false), mobFilt = _mfSt[0], setMobFilt = _mfSt[1];  /* "" = All Weeks (default view unchanged); else a week ID like "W29" */
   /* Reporting cut-off (read-only filter): mode WEEK = selected week only (default);
      mode CUM = cumulative from project start through the cut-off date (inclusive). */
   var _qcmSt = useState("WEEK"), qCutMode = _qcmSt[0], setQCutMode = _qcmSt[1];
@@ -7027,6 +7056,7 @@ function App(_refApp) {
     }
   }, toast.type === "err" ? "⚠ " : "✓ ", toast.msg), /*#__PURE__*/React.createElement("div", {
     className: "topbar",
+    className: "app-header",
     style: {
       background: "#fff",
       height: 58,
@@ -7050,6 +7080,7 @@ function App(_refApp) {
   }, /*#__PURE__*/React.createElement("img", {
     src: LOGO,
     alt: "",
+    className: "app-logo",
     style: {
       height: 30,
       objectFit: "contain"
@@ -7060,6 +7091,7 @@ function App(_refApp) {
       paddingLeft: 10
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "app-title",
     style: {
       fontSize: 12,
       fontWeight: 700,
@@ -7126,7 +7158,14 @@ function App(_refApp) {
       opacity: syncBusy ? 0.7 : 1,
       whiteSpace: "nowrap"
     }
-  }, syncBusy ? "\u21BB Saving\u2026" : syncErr ? "\u274C Sync Error" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")), /*#__PURE__*/React.createElement("button", {
+  }, syncBusy ? "\u21BB Saving\u2026" : syncErr ? "\u274C Sync Error" : (lastSynced ? ("\u2713 " + lastSynced.toLocaleTimeString()) : "\u21BB Sync")),
+  /*#__PURE__*/React.createElement("button", {
+    className: "mob-more-btn",
+    onClick: function(){ setMobMore(!mobMore); },
+    style: { fontSize: 11, padding: "7px 12px", borderRadius: 9, border: "1.5px solid " + C.border, background: mobMore ? C.green : "#fff", color: mobMore ? "#fff" : C.textMid, fontWeight: 700, cursor: "pointer" }
+  }, mobMore ? "\u2715 Close" : "\u22EF More"),
+  /*#__PURE__*/React.createElement("span", { className: "mob-secondary" + (mobMore ? " open" : "") },
+  /*#__PURE__*/React.createElement("button", {
     onClick: syncPhotos,
     disabled: photoSyncBusy,
     title: "Upload all local photos to Supabase Storage so they appear on every device",
@@ -7160,7 +7199,7 @@ function App(_refApp) {
       title: "Sign out",
       style: { fontSize: 11, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #EF4444", background: "#FEF2F2", color: "#B91C1C", fontWeight: 700, cursor: "pointer" }
     }, "Sign Out")
-  ))),
+  )))),
   /* ── Sync error banner ── */
   syncErr ? /*#__PURE__*/React.createElement("div", {
     style: { background: "#FEF2F2", borderBottom: "2px solid #EF4444", padding: "10px 20px", fontSize: 12, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }
@@ -7173,15 +7212,21 @@ function App(_refApp) {
   ) : null,
   /* \u2500\u2500 Cloud Sync Status bar \u2014 visible to admin (dayone_admin) only \u2500\u2500 */
   canSeeSupaStatus() && /*#__PURE__*/React.createElement("div", {
+    className: "statusbar" + (mobSb ? " open" : ""),
     style: { background: lastSynced && !syncErr ? "#F0FDF4" : "#FFFBEB", borderBottom: "1px solid " + (lastSynced && !syncErr ? "#BBF7D0" : "#FDE68A"), padding: "5px 20px", fontSize: 11, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", color: "#374151" }
   },
-    /*#__PURE__*/React.createElement("span", { style: { fontWeight: 700, color: lastSynced && !syncErr ? "#15803D" : "#92400E" } },
+    /*#__PURE__*/React.createElement("span", {
+      className: "mob-status-sum",
+      onClick: function(){ setMobSb(!mobSb); },
+      style: { color: lastSynced && !syncErr ? "#15803D" : "#92400E" }
+    }, "\u25CF " + (lastSynced && !syncErr ? "Connected" : "Not confirmed") + " \u00B7 " + (cloudObsCount !== null ? cloudObsCount : "\u2014") + " Records " + (mobSb ? "\u25B2" : "\u25BC")),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail", style: { fontWeight: 700, color: lastSynced && !syncErr ? "#15803D" : "#92400E" } },
       lastSynced && !syncErr ? "\u2601\uFE0F Supabase Connected" : "\u26A0\uFE0F Supabase Not Confirmed"
     ),
-    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCE5 Last Read: ", lastSynced ? lastSynced.toLocaleTimeString() : "Never"),
-    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCE4 Last Write: ", lastWriteTime ? lastWriteTime.toLocaleTimeString() : "None this session"),
-    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCCA Cloud Records: ", cloudObsCount !== null ? cloudObsCount : "\u2014"),
-    /*#__PURE__*/React.createElement("span", null, "\uD83D\uDCF1 Device: ", (function(){ try { return localStorage.getItem("ctpa_user") || "Unknown"; } catch(e){ return "Unknown"; } })())
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCE5 Last Read: ", lastSynced ? lastSynced.toLocaleTimeString() : "Never"),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCE4 Last Write: ", lastWriteTime ? lastWriteTime.toLocaleTimeString() : "None this session"),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCCA Cloud Records: ", cloudObsCount !== null ? cloudObsCount : "\u2014"),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCF1 Device: ", (function(){ try { return localStorage.getItem("ctpa_user") || "Unknown"; } catch(e){ return "Unknown"; } })())
   ),
   /*#__PURE__*/React.createElement("div", {
     style: {
@@ -9424,7 +9469,7 @@ function App(_refApp) {
       }, ps$2.l);
     }()));
   })))))), view === "dashboard" && APPROVAL_ENABLED && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return apOf(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
-    className: "fade-in"
+    className: "fade-in" + (mobFilt ? " filters-open" : "")
   }, /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, crd), {}, {
       marginBottom: 12
@@ -9446,6 +9491,11 @@ function App(_refApp) {
       flex: "1 1 200px"
     })
   }),
+  /*#__PURE__*/React.createElement("button", {
+    className: "mob-filters-btn",
+    onClick: function(){ setMobFilt(!mobFilt); },
+    style: { fontSize: 11, padding: "8px 12px", borderRadius: 9, border: "1.5px solid " + (mobFilt ? C.green : C.border), background: mobFilt ? C.greenBg : "#fff", color: mobFilt ? C.greenDk : C.textMid, fontWeight: 700, cursor: "pointer" }
+  }, mobFilt ? "\u2715 Close Filters" : "\u2630 Filters"),
   /* \u2500\u2500 Reporting Week quick filter: drives the same From/To dates below, so the
      list, counter, Excel export, Print, and Cut-off all stay on one dataset.
      Value is DERIVED from the applied dates: exact week match \u2192 that week;
@@ -9479,15 +9529,17 @@ function App(_refApp) {
       }));
   })(),
   /* \u2500\u2500 Date-range filter (read-only display filter) \u2500\u2500 */
-  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Date:"),
+  /*#__PURE__*/React.createElement("span", { className: "mob-secf", style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Date:"),
   /*#__PURE__*/React.createElement("input", {
     type: "date", value: fDFromIn, title: "From date (YYYY-MM-DD)",
+    className: "mob-secf fdate",
     onChange: function(e){ setFDFromIn(e.target.value); },
     style: _objectSpread(_objectSpread({}, iSt), {}, { width: 132 })
   }),
-  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, color: C.slate, alignSelf: "center" } }, "\u2192"),
+  /*#__PURE__*/React.createElement("span", { className: "mob-secf fdate-arrow", style: { fontSize: 10, color: C.slate, alignSelf: "center" } }, "\u2192"),
   /*#__PURE__*/React.createElement("input", {
     type: "date", value: fDToIn, title: "To date (YYYY-MM-DD)",
+    className: "mob-secf fdate",
     onChange: function(e){ setFDToIn(e.target.value); },
     style: _objectSpread(_objectSpread({}, iSt), {}, { width: 132 })
   }),
@@ -9496,10 +9548,12 @@ function App(_refApp) {
       if(fDFromIn && fDToIn && fDToIn < fDFromIn){ setFDFrom(fDToIn); setFDTo(fDFromIn); }
       else { setFDFrom(fDFromIn); setFDTo(fDToIn); }
     },
+    className: "mob-secf",
     style: { fontSize: 11, padding: "8px 14px", borderRadius: 9, border: "none", background: C.green, color: "#fff", fontWeight: 700, cursor: "pointer" }
   }, "Apply"),
   /*#__PURE__*/React.createElement("button", {
     onClick: function(){ setFDFromIn(""); setFDToIn(""); setFDFrom(""); setFDTo(""); },
+    className: "mob-secf",
     style: { fontSize: 11, padding: "8px 12px", borderRadius: 9, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" }
   }, "Clear Date"),
   (fDFrom || fDTo) && /*#__PURE__*/React.createElement("span", {
@@ -9525,6 +9579,7 @@ function App(_refApp) {
     })))
   }, {
     v: fOT,
+    sec: true,
     s: setFOT,
     o: [["ALL", "OBS Type"], ["GOOD_OBS", "Good OBS"], ["UNSAFE_ACT", "Unsafe Act"], ["UNSAFE_CON", "Unsafe Cond"]]
   }, {
@@ -9535,25 +9590,30 @@ function App(_refApp) {
     })))
   }, {
     v: fFl,
+    sec: true,
     s: function(v) { setFl(v); setFAr("ALL"); },
     o: [["ALL", "All Floors"]].concat(_toConsumableArray(FLOORS.map(function(f) { return [f, f]; })))
   }, {
     v: fAr,
+    sec: true,
     s: setFAr,
     o: [["ALL", "All Areas"]].concat(_toConsumableArray((fFl !== "ALL" ? (FLOOR_AREAS[fFl] || []) : FLOORS.reduce(function(acc,f){ return acc.concat(FLOOR_AREAS[f]||[]); },[])).filter(function(a,i,arr){ return arr.indexOf(a)===i; }).map(function(a){ return [a, a]; })))
   }, {
     v: fFc,
+    sec: true,
     s: setFF,
     o: [["ALL", "All Types"]].concat(_toConsumableArray(FCATS.map(function (f) {
       return [f, f];
     })))
   }, {
     v: fPh,
+    sec: true,
     s: setFPh,
     o: [["ALL", "All Photos"], ["COMPLETE", "B+A Done"], ["MISSING", "Missing After"], ["NONE", "No Photos"]]
   }].map(function (f, i) {
     return /*#__PURE__*/React.createElement("select", {
       key: i,
+      className: f.sec ? "mob-secf" : undefined,
       value: f.v,
       onChange: function onChange(e) {
         return f.s(e.target.value);
@@ -9591,14 +9651,15 @@ function App(_refApp) {
   },
   /* Export Cut-off Date: include only observations dated on or before this date.
      Temporary in-memory filter at export time — nothing is saved back anywhere. */
-  /*#__PURE__*/React.createElement("span", { style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Cut-off:"),
+  /*#__PURE__*/React.createElement("span", { className: "mob-secf", style: { fontSize: 10, fontWeight: 700, color: C.slate, alignSelf: "center" } }, "Cut-off:"),
   /*#__PURE__*/React.createElement("input", {
-    type: "date", value: exCut, title: "Export Cut-off Date — Excel includes observations dated on or before this date only",
+    type: "date", value: exCut, className: "mob-secf fdate", title: "Export Cut-off Date — Excel includes observations dated on or before this date only",
     onChange: function(e){ setExCut(e.target.value); },
     style: { fontSize: 11, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + (exCut ? "#217346" : C.border), background: exCut ? "#E6F4EA" : "#fff", color: C.text }
   }),
   exCut && /*#__PURE__*/React.createElement("button", {
     onClick: function(){ setExCut(""); },
+    className: "mob-secf",
     title: "Clear cut-off (export all filtered observations)",
     style: { fontSize: 10, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer", fontWeight: 600 }
   }, "✕"),
