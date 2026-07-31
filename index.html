@@ -10912,8 +10912,27 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     } else {
       /* APPROVED CLOSED \u2014 show Admin Override button if PMC sign-off is missing */
       var pmcMissing = !det.lpApprovedBy;
+      var gcMissing = !det.clientApprovedBy;
       controls = /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" } },
-        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid } }, isUnapprovedClosed(det) ? "Closed without approvals \u2014 use the sign-off buttons above (or Admin override) to complete the workflow." : "Approved Closed \u2014 GC Manager & PMC Manager have approved."),
+        /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid } }, isUnapprovedClosed(det) ? "Closed without approvals \u2014 use the Admin override buttons to complete BOTH sign-offs." : "Approved Closed \u2014 GC Manager & PMC Manager have approved."),
+        /* Admin may complete the missing GC stage too — a record only becomes truly
+           CLOSED when BOTH sign-offs exist, so PMC override alone is not enough. */
+        isAdmin() && gcMissing ? /*#__PURE__*/React.createElement("button", {
+          onClick: function onClick() {
+            var c2 = window.prompt("GC sign-off comment (optional):") || "";
+            var who2 = ctpaUser();
+            applyTo(det.id, {
+              clientApprovedBy: who2,
+              clientApprovedById: (_authProfile() && _authProfile().id) || "",
+              clientApprovedRole: "Admin",
+              clientApprovedDate: nowStamp(),
+              approvalComment: c2 || det.approvalComment || ""
+            });
+            logEvent("APPROVE_CLOSURE", det.id, "GC sign-off (Admin Override) by " + who2 + " (role: Admin)" + (c2 ? " | Comment: " + c2 : ""));
+            toast$("GC sign-off recorded (Admin Override)");
+          },
+          style: { background: "#0A3D2B", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer" }
+        }, "\u2014 GC Sign-off (Admin Override)") : null,
         isAdmin() && pmcMissing ? /*#__PURE__*/React.createElement("button", {
           onClick: function onClick() {
             var c = window.prompt("PMC sign-off comment (optional):") || "";
