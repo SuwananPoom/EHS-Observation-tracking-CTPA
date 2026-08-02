@@ -6369,7 +6369,11 @@ function App(_refApp) {
   };
   var filt = useMemo(function () {
     return obs.filter(function (o) {
-      if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
+      /* REJECTED is an approval-workflow state (approvalStatus), not a stored
+         status value — match it via effAp(), same source as the Rejected card. */
+      if (fSt === "REJECTED") {
+        if (effAp(o) !== "REJECTED") return false;
+      } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
          excluded there too (Issue #2). */
@@ -7490,6 +7494,7 @@ function App(_refApp) {
     s: "Closure approved"
   }, {
     l: "Rejected",
+    nav: { st: "REJECTED" },
     v: S.apRejected,
     c: S.apRejected > 0 ? C.red : C.green,
     bg: S.apRejected > 0 ? C.redBg : "#fff",
@@ -9698,7 +9703,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })))
+    })).concat([["REJECTED", "Rejected"]]))
   }, {
     v: fRi,
     s: setFR,
