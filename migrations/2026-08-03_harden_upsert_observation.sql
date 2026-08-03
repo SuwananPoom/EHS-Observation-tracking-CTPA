@@ -1,35 +1,35 @@
 -- ============================================================================
 -- HARDENING: upsert_observation() — GC/PMC approval must be EXPLICIT
 -- ============================================================================
--- STATUS: REVIEW-ONLY. This file is NOT auto-applied by the workflow fix.
---         Apply it manually (Supabase SQL editor / CLI) only AFTER review,
---         and only if/when the app migrates from ctpa_state to the
---         `observations` table.
+-- APPLIED as a FUNCTION-BODY REDEFINITION ONLY (CREATE OR REPLACE FUNCTION),
+-- executed as raw SQL — NOT through the migration system, so NO migration is
+-- recorded. It performs:
+--   * NO ALTER TABLE / NO column added, removed, or changed
+--   * NO schema change to any table
+--   * NO read, write, update, delete, or move of any row / photo / id
+-- The `observations` table is empty (0 rows) AND is NOT used by the running
+-- app (the app persists to `ctpa_state`; it never calls upsert_observation),
+-- so this change has zero effect on production data or behaviour. It only
+-- makes the latent RPC safe for the day the app migrates to this table.
 --
--- Why this is safe to apply:
---   * The `observations` table is currently UNUSED (0 rows). The ~1,147
---     historical observations live in `ctpa_state` (a JSON blob) and are NOT
---     referenced, touched, migrated, backfilled, or modified here.
---   * The two ALTER TABLE statements only ADD nullable columns to that empty
---     table, so no existing row can be affected.
+-- Root cause fixed: the previous body derived approval from the mere PRESENCE
+-- of an approver NAME:
+--     gc_manager_approved =
+--       COALESCE((payload->>'clientApprovedBy') IS NOT NULL
+--                AND (payload->>'clientApprovedBy') != '', FALSE)
+-- so a backfilled/legacy closer name flipped gc_manager_approved to TRUE.
 --
--- What it fixes (root cause of "auto Approved by GC"):
---   The previous RPC derived approval from the mere PRESENCE of an approver
---   NAME:
---       gc_manager_approved =
---         COALESCE((payload->>'clientApprovedBy') IS NOT NULL
---                  AND (payload->>'clientApprovedBy') != '', FALSE)
---   A backfilled/legacy closer name therefore flipped gc_manager_approved to
---   TRUE. This version NEVER derives approval from a name. Approval is TRUE
---   only when the manual approval action's full fingerprint is present:
---     - an explicit approval flag (gcApproved/pmcApproved = true) OR the
---       approval ROLE that only the Approve button sets, AND
---     - approver name, AND approver user id, AND approval timestamp.
+-- New logic == EXACTLY the current app workflow's "real approval" test:
+--   a GC/PMC approval is recognised ONLY when the approval ROLE is present —
+--   the role (clientApprovedRole / lpApprovedRole) is written ONLY by the
+--   authorized GC/PMC "Approve" action, together with the approver name, user
+--   id and timestamp. A NAME ALONE (no role) NEVER sets approval true.
+--
+-- NOTE ON USER ID: the approver's user id is part of the approval fingerprint
+-- (clientApprovedById / lpApprovedById) and is retained in the app record. It
+-- is intentionally NOT persisted to a new column here, to honour the
+-- "no schema change" requirement. Existing columns only are written.
 -- ============================================================================
-
--- Record the approver's USER ID (additive, nullable; empty table → no row touched)
-alter table public.observations add column if not exists gc_manager_approved_by_id  text;
-alter table public.observations add column if not exists pmc_manager_approved_by_id text;
 
 create or replace function public.upsert_observation(payload jsonb)
 returns observations
@@ -38,23 +38,13 @@ security definer
 as $function$
 declare
   result observations;
-  -- The approval ACTION's fingerprint: an explicit approval value set true by
-  -- the action (gcApproved), or the approval ROLE that only the Approve button
-  -- writes. A name alone provides neither, so it can never approve.
-  v_gc_explicit  boolean := coalesce((payload->>'gcApproved')::boolean, false)
-                            or nullif(payload->>'clientApprovedRole','') is not null;
-  v_pmc_explicit boolean := coalesce((payload->>'pmcApproved')::boolean, false)
-                            or nullif(payload->>'lpApprovedRole','') is not null;
-  -- Approval is recorded ONLY when the explicit action + user id + name +
-  -- timestamp are all present.
-  v_gc  boolean := v_gc_explicit
-                   and nullif(payload->>'clientApprovedBy','')   is not null
-                   and nullif(payload->>'clientApprovedById','') is not null
-                   and nullif(payload->>'clientApprovedDate','') is not null;
-  v_pmc boolean := v_pmc_explicit
-                   and nullif(payload->>'lpApprovedBy','')   is not null
-                   and nullif(payload->>'lpApprovedById','') is not null
-                   and nullif(payload->>'lpApprovedDate','') is not null;
+  -- Same test the app uses for a real sign-off (see isUnapprovedClosed /
+  -- effAp in index.html): the approval ROLE is present AND the approver name is
+  -- present. The role is set only by the authorized Approve action.
+  v_gc  boolean := nullif(payload->>'clientApprovedRole','') is not null
+                   and nullif(payload->>'clientApprovedBy','') is not null;
+  v_pmc boolean := nullif(payload->>'lpApprovedRole','') is not null
+                   and nullif(payload->>'lpApprovedBy','') is not null;
 begin
   insert into observations (
     id, obs_date, week, obs_type,
@@ -64,8 +54,8 @@ begin
     hazard_description, corrective_action,
     before_photos, after_photos,
     closed_date, closed_by,
-    gc_manager_approved,  gc_manager_approved_by,  gc_manager_approved_by_id,  gc_manager_approved_date,
-    pmc_manager_approved, pmc_manager_approved_by, pmc_manager_approved_by_id, pmc_manager_approved_date,
+    gc_manager_approved,  gc_manager_approved_by,  gc_manager_approved_date,
+    pmc_manager_approved, pmc_manager_approved_by, pmc_manager_approved_date,
     approval_status, approved_by, approved_date, approval_comment,
     rejected_by, rejected_date,
     submitted_for_closure_by, submitted_for_closure_date,
@@ -91,15 +81,13 @@ begin
     coalesce(payload->'pa', '[]'::jsonb),
     nullif(payload->>'closed','')::date,
     payload->>'closedBy',
-    -- GC approval — EXPLICIT ONLY. Approver name/id/date recorded only if approved.
+    -- GC approval — role-gated. name/date recorded ONLY when actually approved.
     coalesce(v_gc, false),
-    case when v_gc then payload->>'clientApprovedBy'   else null end,
-    case when v_gc then payload->>'clientApprovedById' else null end,
+    case when v_gc then payload->>'clientApprovedBy' else null end,
     case when v_gc then nullif(payload->>'clientApprovedDate','')::timestamptz else null end,
-    -- PMC approval — EXPLICIT ONLY.
+    -- PMC approval — role-gated.
     coalesce(v_pmc, false),
-    case when v_pmc then payload->>'lpApprovedBy'   else null end,
-    case when v_pmc then payload->>'lpApprovedById' else null end,
+    case when v_pmc then payload->>'lpApprovedBy' else null end,
     case when v_pmc then nullif(payload->>'lpApprovedDate','')::timestamptz else null end,
     coalesce((payload->>'approvalStatus')::obs_approval_status, 'NONE'),
     payload->>'approvedBy',
@@ -122,11 +110,9 @@ begin
     closed_date=excluded.closed_date, closed_by=excluded.closed_by,
     gc_manager_approved=excluded.gc_manager_approved,
     gc_manager_approved_by=excluded.gc_manager_approved_by,
-    gc_manager_approved_by_id=excluded.gc_manager_approved_by_id,
     gc_manager_approved_date=excluded.gc_manager_approved_date,
     pmc_manager_approved=excluded.pmc_manager_approved,
     pmc_manager_approved_by=excluded.pmc_manager_approved_by,
-    pmc_manager_approved_by_id=excluded.pmc_manager_approved_by_id,
     pmc_manager_approved_date=excluded.pmc_manager_approved_date,
     approval_status=excluded.approval_status, approved_by=excluded.approved_by,
     approved_date=excluded.approved_date, approval_comment=excluded.approval_comment,

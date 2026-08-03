@@ -2009,8 +2009,12 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
       v((RISK[o.risk]||{}).label),
       v((STATUS[o.status]||{}).label),
       v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
-      v(fmtApprover(o.clientApprovedBy)),
-      v(fmtApprover(o.lpApprovedBy)),
+      /* Export shows an approver ONLY when a real sign-off ROLE is on record
+         (set solely by the GC/PMC Approve buttons). A backfilled/legacy closer
+         name with no role is never exported as "GC/PMC Approved By". Column
+         structure is unchanged; the cell is simply blank for such records. */
+      v(o.clientApprovedRole ? fmtApprover(o.clientApprovedBy) : ""),
+      v(o.lpApprovedRole ? fmtApprover(o.lpApprovedBy) : ""),
       v(o.desc), v(o.rect),
       "", ""  /* photo cells filled with images */
     ];
