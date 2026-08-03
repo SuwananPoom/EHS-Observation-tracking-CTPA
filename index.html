@@ -220,6 +220,78 @@ var supabaseClient = (function(){
 
 window.CTPA_AUTH = { session: null, profile: null };
 
+/* ══ CONCURRENT DEVICE / SESSION CONTROL ════════════════════════════════════
+   Limits enforced by the BACKEND (ctpa_claim_session, SECURITY DEFINER +
+   per-user advisory lock — atomic): max 1 Desktop + 1 Mobile = 2 devices.
+   The browser only reports a stable per-installation device id; a new
+   browser profile / incognito window gets a NEW device id and therefore
+   counts against the server-side limit — it cannot bypass it.
+   Backward compatible: until the migration is applied (functions missing),
+   claims resolve ok:true/degraded and the app behaves exactly as before. */
+var SESS_MSG_LIMIT   = "This account is currently active on the maximum number of devices. Please log out from another device before continuing.";
+var SESS_MSG_REVOKED = "Your session has been ended by an administrator. Please log in again.";
+var SESS_MSG_EXPIRED = "Your session has expired. Please log in again.";
+window.CTPA_SESS_MSG = "";           /* shown on the login page after a forced logout */
+function ctpaDeviceId(){
+  try {
+    var d = localStorage.getItem("ctpa_device_id");
+    if (!d) {
+      d = "dev-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
+      localStorage.setItem("ctpa_device_id", d);
+    }
+    return d;
+  } catch (e) { return "dev-volatile-" + Math.random().toString(36).slice(2, 10); }
+}
+function ctpaDeviceType(){
+  var ua = navigator.userAgent || "";
+  var touchMac = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;  /* iPadOS */
+  return (/Android|iPhone|iPad|iPod|Mobile|Tablet/i.test(ua) || touchMac) ? "MOBILE" : "DESKTOP";
+}
+function ctpaBrowserOS(){
+  var ua = navigator.userAgent || "";
+  var br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Chrome\//.test(ua) ? "Chrome"
+         : /Safari\//.test(ua) ? "Safari" : /Firefox\//.test(ua) ? "Firefox" : "Other";
+  var os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android"
+         : /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Macintosh/.test(ua) ? "macOS"
+         : /Linux/.test(ua) ? "Linux" : "Other";
+  return { browser: br, os: os };
+}
+function _sessFnMissing(err){
+  var m = (err && (err.message || "")) + " " + ((err && err.code) || "");
+  return /PGRST202|does not exist|Could not find the function|404/i.test(m);
+}
+function ctpaClaimSession(client){
+  if (!client) return Promise.resolve({ ok: true, degraded: true });
+  var bo = ctpaBrowserOS();
+  return client.rpc("ctpa_claim_session", {
+    p_device_id: ctpaDeviceId(), p_device_type: ctpaDeviceType(),
+    p_browser: bo.browser, p_os: bo.os
+  }).then(function(res){
+    if (res.error) {
+      if (_sessFnMissing(res.error)) return { ok: true, degraded: true };
+      console.warn("[CTPA Session] claim failed:", res.error.message);
+      return { ok: true, degraded: true };   /* infra error must never lock users out */
+    }
+    var d = res.data || {};
+    if (d.ok && d.session_id) { try { localStorage.setItem("ctpa_session_id", d.session_id); } catch(_){} }
+    return d;
+  }).catch(function(){ return { ok: true, degraded: true }; });
+}
+function ctpaTouchSession(client){
+  var sid = null; try { sid = localStorage.getItem("ctpa_session_id"); } catch(_){}
+  if (!client || !sid) return Promise.resolve("DEGRADED");
+  return client.rpc("ctpa_touch_session", { p_session_id: sid }).then(function(res){
+    if (res.error) return _sessFnMissing(res.error) ? "DEGRADED" : "ERROR";
+    return res.data || "MISSING";
+  }).catch(function(){ return "ERROR"; });
+}
+function ctpaEndSession(client){
+  var sid = null; try { sid = localStorage.getItem("ctpa_session_id"); } catch(_){}
+  try { localStorage.removeItem("ctpa_session_id"); } catch(_){}
+  if (!client || !sid) return Promise.resolve();
+  return client.rpc("ctpa_logout_session", { p_session_id: sid }).then(function(){}, function(){});
+}
+
 /* ── Role helpers (read from window.CTPA_AUTH set by AuthWrapper) ── */
 function _authProfile(){ return window.CTPA_AUTH && window.CTPA_AUTH.profile; }
 function userRole(){ var p = _authProfile(); return (p && p.role) || "viewer"; }
@@ -4267,6 +4339,66 @@ function ReportAuthGate(_ref_rgate) {
 }
 
 /* ── DiagnosticsView component ── */
+/* ══ ADMIN — ACTIVE DEVICES / SESSION CONTROL ══════════════════════════════
+   Admin-only (dayone_admin). Lists ACTIVE sessions per user with device type,
+   browser/OS, login time, last active and IP; Revoke ends one session,
+   "Log out all" revokes every session of that account. Revocation takes
+   effect on the target device via its heartbeat (≤60s or next tab focus). */
+function AdminSessionsPanel() {
+  var _st = React.useState(null), rows = _st[0], setRows = _st[1];
+  var _pf = React.useState({}), profMap = _pf[0], setProfMap = _pf[1];
+  var _er = React.useState(""), loadErr = _er[0], setLoadErr = _er[1];
+  var _bz = React.useState(false), busy = _bz[0], setBusy = _bz[1];
+  var load = function(){
+    if (!supabaseClient) { setLoadErr("Supabase not configured"); return; }
+    setBusy(true); setLoadErr("");
+    supabaseClient.from("ctpa_sessions").select("*").eq("status", "ACTIVE")
+      .order("last_active_at", { ascending: false })
+      .then(function(res){
+        setBusy(false);
+        if (res.error) { setLoadErr(/does not exist|PGRST/i.test(res.error.message || "") ? "Session control migration not applied yet — run migrations/ctpa_sessions_migration.sql in the Supabase SQL Editor." : res.error.message); setRows([]); return; }
+        setRows(res.data || []);
+        supabaseClient.from("ctpa_user_profiles").select("id,name,email").then(function(r2){
+          var m = {}; (r2.data || []).forEach(function(p){ m[p.id] = p; }); setProfMap(m);
+        });
+      });
+  };
+  React.useEffect(function(){ load(); }, []);
+  var revoke = function(sid){
+    if (!window.confirm("Revoke this session? The device will be logged out.")) return;
+    supabaseClient.rpc("ctpa_admin_revoke_session", { p_session_id: sid }).then(function(){ load(); });
+  };
+  var revokeAll = function(uid, label){
+    if (!window.confirm("Log out ALL devices for " + label + "?")) return;
+    supabaseClient.rpc("ctpa_admin_revoke_user", { p_user_id: uid }).then(function(){ load(); });
+  };
+  var fmt = function(ts){ return ts ? String(ts).replace("T", " ").slice(0, 16) : "—"; };
+  var th = function(t){ return React.createElement("th", { key: t, style: { textAlign: "left", fontSize: 10, color: C.slateMid, padding: "6px 8px", borderBottom: "2px solid #E2E8F0", textTransform: "uppercase" } }, t); };
+  var td = function(v, mono){ return React.createElement("td", { style: { fontSize: 11, padding: "7px 8px", borderBottom: "1px solid #EEF2F7", fontFamily: mono ? "monospace" : "inherit", whiteSpace: "nowrap" } }, v); };
+  return React.createElement("div", { style: { background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 10, padding: "14px 16px", marginBottom: 14 } },
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+      React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Active Devices / Session Control"),
+      React.createElement("button", { onClick: load, disabled: busy, style: { fontSize: 11, padding: "5px 12px", borderRadius: 7, border: "1px solid " + C.border, background: "#fff", cursor: "pointer", fontWeight: 700, color: C.textMid } }, busy ? "⏳" : "↻ Refresh")),
+    React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 10 } }, "Limit: 1 Desktop + 1 Mobile per account (enforced server-side). Revoked devices are logged out within ≈60s."),
+    loadErr ? React.createElement("div", { style: { fontSize: 11, color: C.redDk, background: C.redBg, borderRadius: 7, padding: "8px 10px" } }, loadErr) : null,
+    rows && rows.length === 0 && !loadErr ? React.createElement("div", { style: { fontSize: 11, color: C.slateMid } }, "No active sessions.") : null,
+    rows && rows.length > 0 ? React.createElement("div", { style: { overflowX: "auto" } },
+      React.createElement("table", { style: { borderCollapse: "collapse", width: "100%" } },
+        React.createElement("thead", null, React.createElement("tr", null, [th("User"), th("Device"), th("Browser / OS"), th("Login"), th("Last Active"), th("IP"), th("Actions")])),
+        React.createElement("tbody", null, rows.map(function(s){
+          var p = profMap[s.user_id] || {};
+          var label = p.name || p.email || s.user_id.slice(0, 8);
+          return React.createElement("tr", { key: s.id },
+            td(label), td(s.device_type === "MOBILE" ? "📱 Mobile" : "💻 Desktop"),
+            td((s.browser || "?") + " / " + (s.os || "?")),
+            td(fmt(s.login_at), true), td(fmt(s.last_active_at), true), td(s.ip || "—", true),
+            td(React.createElement("span", null,
+              React.createElement("button", { onClick: function(){ revoke(s.id); }, style: { fontSize: 10, padding: "4px 10px", borderRadius: 6, border: "1px solid #FCA5A5", background: C.redBg, color: C.redDk, cursor: "pointer", fontWeight: 700, marginRight: 6 } }, "Revoke"),
+              React.createElement("button", { onClick: function(){ revokeAll(s.user_id, label); }, style: { fontSize: 10, padding: "4px 10px", borderRadius: 6, border: "1px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer", fontWeight: 700 } }, "Log out all"))));
+        }))))
+      : null);
+}
+
 function DiagnosticsView(_ref_diag) {
   var obs = _ref_diag.obs, lastSynced = _ref_diag.lastSynced, syncErr = _ref_diag.syncErr, setView = _ref_diag.setView;
 
@@ -4384,6 +4516,9 @@ function DiagnosticsView(_ref_diag) {
         infoRow("Photo storage", "Supabase Storage bucket 'ctpa-photos' (public URL in record); ctpa_photos base64 table as fallback. Use 📷 Sync Photos to migrate old local photos.")
       )
     ),
+
+    /* Admin session / device control (dayone_admin only) */
+    userRole() === "dayone_admin" ? React.createElement(AdminSessionsPanel, null) : null,
 
     /* Workflow test */
     React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 } },
@@ -5663,7 +5798,8 @@ function LoginPage(_ref) {
   var _useState_pw       = React.useState(""), pw       = _useState_pw[0],       setPw       = _useState_pw[1];
   var _useState_remember = React.useState(true), remember = _useState_remember[0], setRemember = _useState_remember[1];
   var _useState_busy     = React.useState(false), busy   = _useState_busy[0],    setBusy     = _useState_busy[1];
-  var _useState_err      = React.useState(""),  err      = _useState_err[0],     setErr      = _useState_err[1];
+  var _useState_err      = React.useState(window.CTPA_SESS_MSG || ""),  err      = _useState_err[0],     setErr      = _useState_err[1];
+  React.useEffect(function(){ window.CTPA_SESS_MSG = ""; }, []);   /* show forced-logout reason once */
 
   function handleLogin(e) {
     if (e && e.preventDefault) e.preventDefault();
@@ -5685,11 +5821,19 @@ function LoginPage(_ref) {
               setErr("บัญชีนี้ถูกระงับ กรุณาติดต่อ Admin");
               return;
             }
-            window.CTPA_AUTH = { session: session, profile: profile };
-            /* Write name to localStorage so ctpaUser() works for activity logs */
-            try { localStorage.setItem("ctpa_user", profile.name || user.email); } catch(_){}
-            logLogin(user.id, user.email);
-            onLogin(session, profile);
+            /* Device-limit gate — enforced server-side by ctpa_claim_session */
+            ctpaClaimSession(supabaseClient).then(function(claim){
+              if (!claim.ok) {
+                supabaseClient.auth.signOut();
+                setErr(claim.reason === "DEVICE_LIMIT" ? SESS_MSG_LIMIT : (claim.reason || "Login blocked"));
+                return;
+              }
+              window.CTPA_AUTH = { session: session, profile: profile };
+              /* Write name to localStorage so ctpaUser() works for activity logs */
+              try { localStorage.setItem("ctpa_user", profile.name || user.email); } catch(_){}
+              logLogin(user.id, user.email);
+              onLogin(session, profile);
+            });
           });
       })
       .catch(function(e) { setBusy(false); setErr(e.message || "Network error"); });
@@ -5819,9 +5963,19 @@ function AuthWrapper() {
           .then(function(res2) {
             var profile = res2.data || { id: session.user.id, email: session.user.email, name: session.user.email, role: "viewer", company: "DayOne", status: "active" };
             if (profile.status === "disabled") { supabaseClient.auth.signOut(); setAuthLoading(false); return; }
-            window.CTPA_AUTH = { session: session, profile: profile };
-            try { localStorage.setItem("ctpa_user", profile.name || session.user.email); } catch(_){}
-            setAuthSession(session); setAuthProfile(profile); setAuthLoading(false);
+            /* Re-claim on restore: the same device reuses its ACTIVE session
+               (no duplicate on refresh/reopen); a blocked device is signed out. */
+            ctpaClaimSession(supabaseClient).then(function(claim){
+              if (!claim.ok) {
+                window.CTPA_SESS_MSG = claim.reason === "DEVICE_LIMIT" ? SESS_MSG_LIMIT : SESS_MSG_EXPIRED;
+                supabaseClient.auth.signOut();
+                setAuthLoading(false);
+                return;
+              }
+              window.CTPA_AUTH = { session: session, profile: profile };
+              try { localStorage.setItem("ctpa_user", profile.name || session.user.email); } catch(_){}
+              setAuthSession(session); setAuthProfile(profile); setAuthLoading(false);
+            });
           });
       } else { setAuthLoading(false); }
     });
@@ -5839,11 +5993,40 @@ function AuthWrapper() {
     setAuthSession(session); setAuthProfile(profile);
   }
   function handleLogout() {
+    ctpaEndSession(supabaseClient);   /* mark the server session LOGGED_OUT */
     if (supabaseClient) supabaseClient.auth.signOut();
     window.CTPA_AUTH = { session: null, profile: null };
     try { localStorage.removeItem("ctpa_user"); } catch(_){}
     setAuthSession(null); setAuthProfile(null);
   }
+  /* ── Session heartbeat: refresh last_active_at every 60s while logged in and
+     on tab re-focus; force logout the moment the session is REVOKED (admin) or
+     EXPIRED. The device is redirected to the login page with the message. ── */
+  React.useEffect(function(){
+    if (!authSession || !supabaseClient) return;
+    var stopped = false;
+    function forceOut(msg){
+      if (stopped) return;
+      window.CTPA_SESS_MSG = msg;
+      try { localStorage.removeItem("ctpa_session_id"); } catch(_){}
+      supabaseClient.auth.signOut();
+      window.CTPA_AUTH = { session: null, profile: null };
+      try { localStorage.removeItem("ctpa_user"); } catch(_){}
+      setAuthSession(null); setAuthProfile(null);
+    }
+    function beat(){
+      ctpaTouchSession(supabaseClient).then(function(st){
+        if (st === "REVOKED") forceOut(SESS_MSG_REVOKED);
+        else if (st === "EXPIRED" || st === "LOGGED_OUT" || st === "MISSING") forceOut(SESS_MSG_EXPIRED);
+        /* ACTIVE / DEGRADED / ERROR → keep working (never punish infra hiccups) */
+      });
+    }
+    var iv = setInterval(beat, 60000);
+    var onVis = function(){ if (!document.hidden) beat(); };
+    document.addEventListener("visibilitychange", onVis);
+    beat();
+    return function(){ stopped = true; clearInterval(iv); document.removeEventListener("visibilitychange", onVis); };
+  }, [authSession]);
 
   if (authLoading) {
     return React.createElement("div", {
