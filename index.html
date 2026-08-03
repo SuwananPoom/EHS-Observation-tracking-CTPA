@@ -6373,6 +6373,10 @@ function App(_refApp) {
          status value — match it via effAp(), same source as the Rejected card. */
       if (fSt === "REJECTED") {
         if (effAp(o) !== "REJECTED") return false;
+      } else if (fSt === "OUTSTANDING") {
+        /* Umbrella bucket, same resolver as the Open KPI card: everything not
+           fully approved-closed (Open + In Progress + Pending Verify + Rejected). */
+        if (effAp(o) === "APPROVED CLOSED") return false;
       } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
@@ -6510,7 +6514,13 @@ function App(_refApp) {
       apPendingGC: dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }).length,
       apPendingPMC: dsObs.filter(function (o) { return effAp(o) === "PENDING PMC APPROVAL"; }).length,
       apApproved: dsObs.filter(function (o) { return effAp(o) === "APPROVED CLOSED"; }).length,
-      apRejected: dsObs.filter(function (o) { return effAp(o) === "REJECTED"; }).length
+      apRejected: dsObs.filter(function (o) { return effAp(o) === "REJECTED"; }).length,
+      /* Outstanding umbrella: everything not fully approved-closed —
+         Open + In Progress + Pending Verify + Pending PMC + Rejected.
+         A rejected record is the SAME observation returned for correction:
+         counted once in Total, still outstanding, and also shown in its
+         own Rejected bucket. */
+      outstanding: dsObs.filter(function (o) { return effAp(o) !== "APPROVED CLOSED"; }).length
     };
   }, [dsObs]);
   /* Closure rate: 1-decimal, rounded DOWN, and capped below 100 unless every record
@@ -7466,11 +7476,11 @@ function App(_refApp) {
     s: clR + "% rate"
   }, {
     l: "Open",
-    nav: { st: "OPEN" },
-    v: S.apOpen,
-    c: S.apOpen > 0 ? C.red : C.green,
-    bg: S.apOpen > 0 ? C.redBg : "#fff",
-    s: "Not closed"
+    nav: { st: "OUTSTANDING" },
+    v: S.outstanding,
+    c: S.outstanding > 0 ? C.red : C.green,
+    bg: S.outstanding > 0 ? C.redBg : "#fff",
+    s: "Not closed (incl. Rejected)"
   }, {
     l: "Pending Verify",
     nav: { st: "PENDING_VERIFY" },
@@ -9703,7 +9713,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["REJECTED", "Rejected"]]))
+    })).concat([["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"]]))
   }, {
     v: fRi,
     s: setFR,
