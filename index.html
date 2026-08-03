@@ -1431,7 +1431,16 @@ function apOf(o) {
    approval sign-off at all (neither GC nor PMC) — e.g. closed directly via the Edit
    form. Display-only: badges/texts must not claim managers approved. */
 function isUnapprovedClosed(o){
-  return apOf(o) === "APPROVED CLOSED" && !(o && (o.clientApprovedBy || o.lpApprovedBy));
+  /* "Approved" requires a REAL manager sign-off, identified by the approval ROLE
+     (clientApprovedRole / lpApprovedRole) — set ONLY by the GC/PMC Approve
+     buttons. A backfilled/legacy approver NAME with no role does NOT count as an
+     approval, so historical / on-the-spot form-closed records are shown honestly
+     as closed-without-sign-off and never as "Approved by GC". This is display
+     classification only — apOf/effAp/effStatus (counts, filters, exports) are
+     intentionally left unchanged, so these records stay counted as Closed. */
+  var realGC  = !!(o && o.clientApprovedBy && o.clientApprovedRole);
+  var realPMC = !!(o && o.lpApprovedBy && o.lpApprovedRole);
+  return apOf(o) === "APPROVED CLOSED" && !(realGC || realPMC);
 }
 /* ══ EFFECTIVE WORKFLOW STAGE — the single stage resolver for display, buttons,
    and stage-scoped actions. A stored "APPROVED CLOSED" is honoured ONLY when the
@@ -7262,7 +7271,21 @@ function App(_refApp) {
           id: newId,
           pb: fBef,
           pa: fAft,
-          rev: Date.now()
+          rev: Date.now(),
+          /* WORKFLOW FIX (approval): a newly submitted observation ALWAYS starts
+             OPEN and carries NO approval/closure sign-offs. It can only advance
+             through the funnel — After photo → GC Manager → PMC Manager. This
+             stops new / on-the-spot "Daily Site" observations from appearing as
+             Pending Verify or being auto "Approved by GC". Existing records and
+             the Excel-import path are unaffected. */
+          status: "OPEN",
+          approvalStatus: "OPEN",
+          closed: "",
+          closedBy: "",
+          clientApprovedBy: "", clientApprovedById: "", clientApprovedRole: "", clientApprovedDate: "",
+          lpApprovedBy: "", lpApprovedById: "", lpApprovedRole: "", lpApprovedDate: "",
+          approvedBy: "", approvedDate: "", approvalComment: "",
+          submittedForClosureBy: "", submittedForClosureDate: ""
         });
         /* cache all photos from the create form under the new ID, upload to Storage,
            and attach the returned URL so it syncs cross-device. */
@@ -10141,14 +10164,16 @@ function App(_refApp) {
       } else if (ap === "PENDING PMC APPROVAL") {
         info = "\u2714 GC approved" + (o.clientApprovedBy ? " by " + o.clientApprovedBy : "") + (o.clientApprovedDate ? " \u2022 " + o.clientApprovedDate : "") + " \u2014 Awaiting PMC review";
       } else if (ap === "APPROVED CLOSED" && (o.approvedBy || o.approvedDate)) {
-        /* Same data source as the Closure Workflow panel (clientApprovedBy /
-           lpApprovedBy) so both screens always show identical approvers; the
-           legacy combined approvedBy field is only a fallback when neither
-           per-role sign-off exists. Display-only. */
-        if (o.clientApprovedBy || o.lpApprovedBy) {
-          info = "\u2714 Approved by GC: " + (o.clientApprovedBy ? (o.clientApprovedBy + (o.clientApprovedRole ? "" : " (legacy)")) : "\u2014") + "  \u00B7  PMC: " + (o.lpApprovedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        /* Only assert a manager APPROVED the closure when a real sign-off ROLE is
+           on record (set solely by the GC/PMC Approve buttons). A backfilled or
+           legacy approver name with no role is shown as a plain historical
+           closure \u2014 never "Approved by GC". Display-only; counts are unchanged. */
+        var realGCd  = o.clientApprovedBy && o.clientApprovedRole;
+        var realPMCd = o.lpApprovedBy && o.lpApprovedRole;
+        if (realGCd || realPMCd) {
+          info = "\u2714 Approved by GC: " + (realGCd ? o.clientApprovedBy : "\u2014") + "  \u00B7  PMC: " + (realPMCd ? o.lpApprovedBy : "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
         } else {
-          info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+          info = "\u2714 Closed" + (o.closed ? " \u2022 " + o.closed : "") + " \u2014 historical closure (no GC/PMC Manager sign-off)";
         }
       } else if (ap === "REJECTED" && (o.rejectedBy || o.rejectedDate)) {
         info = "\u2716 Rejected by " + (o.rejectedBy || "\u2014") + (o.rejectedDate ? " \u2022 " + o.rejectedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
