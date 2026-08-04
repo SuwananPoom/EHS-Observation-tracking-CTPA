@@ -130,7 +130,7 @@ console.log("\n5) Role permissions — only GC Manager / Admin can GC-approve");
 
 console.log("\n6) Existing ~1,147 legacy closed — counted Closed, shown honestly");
 {
-  const legacy = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "Ritta", lpApprovedBy: "" };
+  const legacy = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "Ritta", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
   ok("counts as Closed (effStatus)", effStatus(legacy) === "CLOSED");
   ok("counts in Approved-Closed bucket (effAp) — unchanged", effAp(legacy) === "APPROVED CLOSED");
   ok("flagged unapproved for honest display", isUnapprovedClosed(legacy) === true);
@@ -139,13 +139,48 @@ console.log("\n6) Existing ~1,147 legacy closed — counted Closed, shown honest
 
 console.log("\n7) Real GC+PMC approval and mid-funnel still work");
 {
-  const gcOnly = { status: "PENDING_VERIFY", approvalStatus: "PENDING PMC APPROVAL", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", clientApprovedById: "u1", clientApprovedDate: "2026-01-01", lpApprovedBy: "" };
+  const gcOnly = { status: "PENDING_VERIFY", approvalStatus: "PENDING PMC APPROVAL", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", clientApprovedById: "u1", clientApprovedDate: "2026-01-01", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
   ok("GC approved, awaiting PMC (effAp)", effAp(gcOnly) === "PENDING PMC APPROVAL");
   ok("GC approved, awaiting PMC (effStatus)", effStatus(gcOnly) === "PENDING_VERIFY");
-  const both = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", clientApprovedById: "u1", clientApprovedDate: "2026-01-01", lpApprovedBy: "PMC", lpApprovedRole: "PMC Manager", lpApprovedById: "u2", lpApprovedDate: "2026-01-02" };
+  const both = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", clientApprovedById: "u1", clientApprovedDate: "2026-01-01", lpApprovedBy: "PMC", lpApprovedRole: "PMC Manager", lpApprovedById: "u2", lpApprovedDate: "2026-01-02", pa: [{ _hasPhoto: true }] };
   ok("both approved → Closed", effStatus(both) === "CLOSED" && effAp(both) === "APPROVED CLOSED");
   ok("both approved → not flagged unapproved", isUnapprovedClosed(both) === false);
   ok("both approved → RPC records approval", rpcGcApproved(both) === true && rpcPmcApproved(both) === true);
+}
+
+console.log("\n9) EVIDENCE RULE — no After photo → cannot be/stay closed (UAT OBS-1036)");
+{
+  // exact shape pulled from production on 2026-08-04 (photo deleted during UAT)
+  const obs1036 = {
+    id: "OBS-1036", date: "2026-07-24", status: "OPEN", approvalStatus: "APPROVED CLOSED",
+    closed: "2026-08-02", closedBy: "", pa: [], pb: [{ _hasPhoto: true }],
+    approvedBy: "GC Manager + PMC Manager", approvedDate: "2026-08-02 02:59",
+    clientApprovedBy: "Suwanan Poomchaveng ", clientApprovedById: "c2fc18b6", clientApprovedRole: "Admin", clientApprovedDate: "2026-08-02 02:59",
+    lpApprovedBy: "Suwanan Poomchaveng ", lpApprovedById: "c2fc18b6", lpApprovedRole: "Admin", lpApprovedDate: "2026-08-02 02:59",
+  };
+  ok("OBS-1036 no longer resolves Approved Closed", effAp(obs1036) === "OPEN");
+  ok("OBS-1036 shows as IN_PROGRESS", effStatus(obs1036) === "IN_PROGRESS");
+
+  const legacyNoPhoto = { id: "OBS-768", status: "CLOSED", pa: [], clientApprovedBy: "Someone" };
+  ok("legacy closed WITHOUT photo → IN_PROGRESS", effStatus(legacyNoPhoto) === "IN_PROGRESS");
+  ok("legacy closed WITHOUT photo → effAp OPEN (restart workflow)", effAp(legacyNoPhoto) === "OPEN");
+
+  const legacyWithPhoto = { status: "CLOSED", pa: [{ _hasPhoto: true }], clientApprovedBy: "Someone" };
+  ok("legacy closed WITH photo → still CLOSED (counts unchanged)", effStatus(legacyWithPhoto) === "CLOSED");
+  ok("legacy closed WITH photo → still APPROVED CLOSED bucket", effAp(legacyWithPhoto) === "APPROVED CLOSED");
+
+  const realClosedWithPhoto = { status: "CLOSED", pa: [{}], clientApprovedBy: "GC", clientApprovedRole: "GC Manager", lpApprovedBy: "PMC", lpApprovedRole: "PMC Manager" };
+  ok("properly approved closed WITH photo → unchanged", effStatus(realClosedWithPhoto) === "CLOSED" && effAp(realClosedWithPhoto) === "APPROVED CLOSED");
+
+  const pendingNoPhoto = { status: "PENDING_VERIFY", approvalStatus: "PENDING REVIEW", pa: [] };
+  ok("pending WITHOUT photo → IN_PROGRESS / OPEN", effStatus(pendingNoPhoto) === "IN_PROGRESS" && effAp(pendingNoPhoto) === "OPEN");
+  const pendingWithPhoto = { status: "PENDING_VERIFY", approvalStatus: "PENDING REVIEW", pa: [{}] };
+  ok("pending WITH photo → unchanged", effStatus(pendingWithPhoto) === "PENDING_VERIFY" && effAp(pendingWithPhoto) === "PENDING REVIEW");
+
+  // the fix's supporting code exists in the shipped file
+  ok("delete-handler confirmation message present", html.includes("Deleting the last After photo will cancel the existing approvals and reopen this observation. Do you want to continue?"));
+  ok("delete-handler resets to IN_PROGRESS", /APPROVAL_RESET/.test(html) && /reset to IN_PROGRESS/.test(html));
+  ok("RPC blocks Closed with zero After photos", /zero After photos/.test(sqlCode) && /jsonb_array_length\(coalesce\(payload->'pa'/.test(sqlCode));
 }
 
 console.log("\n8) Counts invariant + export blanking (static)");

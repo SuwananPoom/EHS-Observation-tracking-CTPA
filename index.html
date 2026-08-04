@@ -1430,6 +1430,10 @@ function apOf(o) {
 /* True when a record is CLOSED/"approved closed" by classification but carries NO
    approval sign-off at all (neither GC nor PMC) — e.g. closed directly via the Edit
    form. Display-only: badges/texts must not claim managers approved. */
+/* EVIDENCE RULE (UAT OBS-1036): closure requires proof. An observation with no
+   After photo can never be — or remain — Pending Verify / Closed / Approved
+   Closed, regardless of stored status or sign-off fields. */
+function hasAfterPhoto(o){ return !!(o && o.pa && o.pa.length > 0); }
 function isUnapprovedClosed(o){
   /* "Approved" requires a REAL manager sign-off, identified by the approval ROLE
      (clientApprovedRole / lpApprovedRole) — set ONLY by the GC/PMC Approve
@@ -1450,6 +1454,10 @@ function isUnapprovedClosed(o){
 function effAp(o){
   if(!APPROVAL_ENABLED) return null;
   var ap = apOf(o);
+  /* EVIDENCE RULE: without an After photo a record cannot hold any closure-
+     workflow stage — it resolves to OPEN (After photo required, workflow
+     restarts from the beginning). Display-only; stored data untouched. */
+  if(!hasAfterPhoto(o) && (ap === "APPROVED CLOSED" || ap === "PENDING REVIEW" || ap === "PENDING PMC APPROVAL")) return "OPEN";
   if(ap === "APPROVED CLOSED"){
     var hasGC = !!(o && o.clientApprovedBy), hasPMC = !!(o && o.lpApprovedBy);
     if(hasGC && hasPMC) return "APPROVED CLOSED";
@@ -1473,6 +1481,10 @@ function effAp(o){
    Read-only derivation — never written back; stored records stay untouched. */
 function effStatus(o){
   if(!o) return "OPEN";
+  /* EVIDENCE RULE: no After photo → cannot be (or stay) Closed / Pending Verify.
+     Such records show as IN_PROGRESS until a new After photo restarts the
+     workflow (photo → Pending Verify → GC → PMC → Approved Closed). */
+  if(!hasAfterPhoto(o) && (o.status === "CLOSED" || o.status === "PENDING_VERIFY" || apOf(o) === "APPROVED CLOSED")) return "IN_PROGRESS";
   if(o.status === "CLOSED"){
     var hasGC = !!o.clientApprovedBy, hasPMC = !!o.lpApprovedBy;
     if(hasGC && hasPMC) return "CLOSED";
@@ -6819,6 +6831,8 @@ function App(_refApp) {
       /* Contractor scope: this observation's contractor must match the GC Manager's
          own contractor (Admin exempt). */
       if(!canApproveGCFor(target)){ toast$("Not authorized — " + (target.company || "this contractor") + " observations can only be GC-approved by that contractor's GC Manager or an Admin.", "err"); return; }
+      /* EVIDENCE RULE: approval requires the After photo to still exist */
+      if(!hasAfterPhoto(target)){ toast$("Cannot approve — no After photo on record. A new After photo is required.", "err"); return; }
       patch.clientApprovedBy = who;
       patch.clientApprovedById = (_authProfile() && _authProfile().id) || "";
       /* Record the approver's REAL authenticated role — an Admin approving in the
@@ -6836,6 +6850,8 @@ function App(_refApp) {
       if (ap !== "PENDING PMC APPROVAL") {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
+      /* EVIDENCE RULE: final closure requires the After photo to still exist */
+      if(!hasAfterPhoto(target)){ toast$("Cannot approve closure — no After photo on record. A new After photo is required.", "err"); return; }
       patch.lpApprovedBy = who;
       patch.lpApprovedById = (_authProfile() && _authProfile().id) || "";
       patch.lpApprovedRole = userRole() === "dayone_admin" ? "Admin" : "PMC Manager";
@@ -6990,6 +7006,66 @@ function App(_refApp) {
     var added = photos.slice(prev.length);
     var slotKey = id + "|" + k;
 
+    /* ══ EVIDENCE RULE — deleting the LAST After photo (UAT OBS-1036) ══
+       A record in the closure workflow (Pending Verify / Approved Closed /
+       Closed) loses its proof when its last After photo is removed, so the
+       deletion must confirm first, then cancel BOTH manager sign-offs
+       (archived to approvalHistory — never destroyed), clear the closure
+       fields, and reset the record to IN_PROGRESS for a full restart:
+       new After photo → Pending Verify (GC) → GC approved → PMC → Closed. */
+    var __uphReset = null;
+    if (k === "pa" && photos.length === 0 && prev.length > 0) {
+      var curFR = obs.find(function(o){ return o.id === id; }) || {};
+      var apNow = apOf(curFR) || "OPEN";
+      var stNow = curFR.status || "OPEN";
+      var wasClosed = apNow === "APPROVED CLOSED" || stNow === "CLOSED";
+      var wasPending = apNow === "PENDING REVIEW" || apNow === "PENDING PMC APPROVAL" || stNow === "PENDING_VERIFY";
+      if (wasClosed || wasPending) {
+        var msg = wasClosed
+          ? "Deleting the last After photo will cancel the existing approvals and reopen this observation. Do you want to continue?"
+          : "Deleting the last After photo will remove this observation from the verification queue and reset it to In Progress. Do you want to continue?";
+        if (!window.confirm(msg)) return;   /* user cancelled — photo kept, nothing changes */
+        /* archive ALL existing sign-offs (incl. legacy names) before clearing —
+           approval history is preserved, per the Issue #4 audit convention */
+        var hist3 = (curFR.approvalHistory || []).slice();
+        if (curFR.clientApprovedBy || curFR.lpApprovedBy) {
+          hist3.push({
+            archivedAt: nowStamp(),
+            archivedReason: "After photo deleted — approvals cancelled, workflow restarted",
+            clientApprovedBy: curFR.clientApprovedBy || "",
+            clientApprovedById: curFR.clientApprovedById || "",
+            clientApprovedRole: curFR.clientApprovedRole || "",
+            clientApprovedDate: curFR.clientApprovedDate || "",
+            lpApprovedBy: curFR.lpApprovedBy || "",
+            lpApprovedById: curFR.lpApprovedById || "",
+            lpApprovedRole: curFR.lpApprovedRole || "",
+            lpApprovedDate: curFR.lpApprovedDate || ""
+          });
+        }
+        __uphReset = {
+          status: "IN_PROGRESS",
+          approvalStatus: "OPEN",
+          closed: "", closedBy: "",
+          approvedBy: "", approvedDate: "", approvalComment: "",
+          submittedForClosureBy: "", submittedForClosureDate: "",
+          approvalHistory: hist3,
+          clientApprovedBy: "", clientApprovedById: "", clientApprovedRole: "", clientApprovedDate: "",
+          lpApprovedBy: "", lpApprovedById: "", lpApprovedRole: "", lpApprovedDate: ""
+        };
+        logEvent("APPROVAL_RESET", id,
+          "After photo deleted by " + (ctpaUser() || "Anonymous") +
+          " — previous status: " + stNow + " / approval: " + apNow +
+          (curFR.clientApprovedBy ? " | GC sign-off cancelled: " + curFR.clientApprovedBy + (curFR.clientApprovedDate ? " @ " + curFR.clientApprovedDate : "") : "") +
+          (curFR.lpApprovedBy ? " | PMC sign-off cancelled: " + curFR.lpApprovedBy + (curFR.lpApprovedDate ? " @ " + curFR.lpApprovedDate : "") : "") +
+          " | reset to IN_PROGRESS — new After photo required before verification");
+        toast$("Approvals cancelled — observation reopened (In Progress). Upload a new After photo to restart verification.", "err");
+      }
+    }
+    if (photos.length < prev.length) {
+      logEvent("DELETE_PHOTO", id, "Deleted " + (prev.length - photos.length) + " " + (k === "pb" ? "Before" : "After") +
+        " photo(s) (" + prev.length + " → " + photos.length + ") by " + (ctpaUser() || "Anonymous"));
+    }
+
     /* When photos are deleted, clear stale cache keys so old base64 can't bleed back.
        Guard: only clear when no uploads are in-flight for this slot to avoid race. */
     if (photos.length < prev.length) {
@@ -7018,10 +7094,15 @@ function App(_refApp) {
     }
 
     /* update local state immediately (optimistic) — build from FRESH state, not the stale
-       `obs` closure, so saving this obs's photos never reverts other obs' recent edits. */
+       `obs` closure, so saving this obs's photos never reverts other obs' recent edits.
+       When the last After photo was deleted, __uphReset (approval cancellation +
+       IN_PROGRESS) is applied in the SAME update so no intermediate state exists. */
     setObs(function(cur){
       var nx0 = cur.map(function(o){
-        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({ rev: Date.now() }, k, photos)) : o;
+        if (o.id !== id) return o;
+        var upd = _objectSpread(_objectSpread({}, o), {}, _defineProperty({ rev: Date.now() }, k, photos));
+        if (__uphReset) upd = _objectSpread(_objectSpread({}, upd), __uphReset);
+        return upd;
       });
       sv(nx0);
       setDet(nx0.find(function(o){ return o.id === id; }));
@@ -7042,16 +7123,37 @@ function App(_refApp) {
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
     });
     /* AUTO-TRANSITION: the first After photo moves an OPEN / IN_PROGRESS / REJECTED
-       observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed). */
+       observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed).
+       Guards use the EFFECTIVE state (evidence rule), so a record whose closure was
+       invalidated by After-photo deletion (e.g. OBS-1036) restarts the workflow here;
+       any stale sign-offs are archived + cleared so the new review cycle starts clean. */
     if(k === "pa" && prev.length === 0 && photos.length > 0){
       var curObs = obs.find(function(oo){ return oo.id === id; });
-      if(curObs && curObs.status !== "CLOSED" && effAp(curObs) !== "PENDING PMC APPROVAL" && effAp(curObs) !== "APPROVED CLOSED"){
-        applyTo(id, {
+      var evAp0 = curObs ? effAp(curObs) : null;
+      if(curObs && effStatus(curObs) !== "CLOSED" && evAp0 !== "PENDING PMC APPROVAL" && evAp0 !== "APPROVED CLOSED"){
+        var trPatch = {
           approvalStatus: "PENDING REVIEW",
           status: "PENDING_VERIFY",
           submittedForClosureBy: ctpaUser() || "Anonymous",
           submittedForClosureDate: nowStamp()
-        });
+        };
+        if (curObs.clientApprovedBy || curObs.lpApprovedBy) {
+          var histT = (curObs.approvalHistory || []).slice();
+          histT.push({
+            archivedAt: nowStamp(),
+            archivedReason: "Stale sign-offs cleared — new After photo restarted the review cycle",
+            clientApprovedBy: curObs.clientApprovedBy || "", clientApprovedById: curObs.clientApprovedById || "",
+            clientApprovedRole: curObs.clientApprovedRole || "", clientApprovedDate: curObs.clientApprovedDate || "",
+            lpApprovedBy: curObs.lpApprovedBy || "", lpApprovedById: curObs.lpApprovedById || "",
+            lpApprovedRole: curObs.lpApprovedRole || "", lpApprovedDate: curObs.lpApprovedDate || ""
+          });
+          trPatch.approvalHistory = histT;
+          trPatch.clientApprovedBy = ""; trPatch.clientApprovedById = ""; trPatch.clientApprovedRole = ""; trPatch.clientApprovedDate = "";
+          trPatch.lpApprovedBy = ""; trPatch.lpApprovedById = ""; trPatch.lpApprovedRole = ""; trPatch.lpApprovedDate = "";
+          trPatch.approvedBy = ""; trPatch.approvedDate = ""; trPatch.closed = ""; trPatch.closedBy = "";
+          logEvent("APPROVAL_RESET", id, "Stale sign-offs archived on workflow restart (new After photo) by " + (ctpaUser() || "Anonymous"));
+        }
+        applyTo(id, trPatch);
         toast$("After photo received — Pending Verify (awaiting GC Manager review)");
       }
     }
@@ -7221,6 +7323,11 @@ function App(_refApp) {
     }
     if (form.status === "CLOSED" && !(form.closedBy || "").trim()) {
       toast$("Closed By is required when status is Closed", "err");
+      return;
+    }
+    /* EVIDENCE RULE: a record can never be saved as Closed without an After photo */
+    if (form.status === "CLOSED" && (!fAft || fAft.length === 0)) {
+      toast$("Cannot set status Closed — After photo required / ต้องแนบรูปหลังแก้ไขก่อนปิดรายการ", "err");
       return;
     }
     if (form.area === "Other" && !(form.zoneOther || "").trim()) {

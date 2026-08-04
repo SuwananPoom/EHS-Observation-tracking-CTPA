@@ -46,6 +46,14 @@ declare
   v_pmc boolean := nullif(payload->>'lpApprovedRole','') is not null
                    and nullif(payload->>'lpApprovedBy','') is not null;
 begin
+  -- EVIDENCE RULE (UAT OBS-1036): an observation can never be persisted as
+  -- Closed / Approved Closed with zero After photos.
+  if (coalesce(payload->>'status','') = 'CLOSED'
+      or coalesce(payload->>'approvalStatus','') = 'APPROVED CLOSED')
+     and jsonb_array_length(coalesce(payload->'pa','[]'::jsonb)) = 0 then
+    raise exception 'CTPA validation: observation % cannot be saved as Closed/Approved Closed with zero After photos',
+      coalesce(payload->>'id','(new)');
+  end if;
   insert into observations (
     id, obs_date, week, obs_type,
     zone, floor, area,
