@@ -8860,9 +8860,13 @@ function App(_refApp) {
             .concat([["Serious", sr, UA_C], ["Major", mj, "#B45309"], ["Minor", mn, C.textMid]])
             .concat(unRk > 0 ? [["No Risk Set", unRk, UN_C]] : [])
             .concat([["Closure Rate", closure + "%", GD_C]]);
-          /* Trend series from the FULL data (obsAll) so previous-period comparison has context */
+          /* SAME-DATASET RULE (UAT fix): every chart/table bucket below derives from
+             `sel` — the exact dataset the tiles above use — so cards, charts and
+             summary widgets can never disagree. Sole labeled exception: YEARLY keeps
+             its documented all-years context chart (caption states tiles = selected
+             year only). */
           var __serPeriod = qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : qPeriod === "WEEKLY" ? "WEEKLY" : "MONTHLY";
-          var series = aggregateObservationsByQuarter(obsAll, __serPeriod);
+          var series = aggregateObservationsByQuarter(qPeriod === "YEARLY" ? obsAll : sel, __serPeriod);
           var allKeys = series.map(function(r){ return r.key; });
           var vis;
           if(qPeriod === "WEEKLY"){
@@ -8871,17 +8875,17 @@ function App(_refApp) {
                the main table compares against the true previous configured week. */
             var selIdx = -1;
             for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
-            /* All Weeks → one row per configured week of the year.
-               Selected week → exactly 5 consecutive weeks: the 4 week definitions
-               immediately BEFORE it in the ordered period list + the selected week
-               (position-based, so it works across year boundaries; fewer are shown
-               only when fewer earlier weeks exist). Zero-observation weeks still
-               render with 0 — rows come from the period definitions, not the data. */
-            var wkRows = !qWeek
-              ? __wkPeriods.filter(function(p){ return obsAll.some(function(o){ return weekPeriodMatch(o, p); }); })  /* All Weeks: hide weeks with no records */
-              : selIdx >= 0 ? __wkPeriods.slice(Math.max(0, selIdx - 4), selIdx + 1) : [];
+            /* Week rows follow the SAME-DATASET RULE — buckets from `sel`, never obsAll:
+               - Selected Week Only  → exactly ONE row: the selected week (sel IS that
+                 week's records, so chart total === tile total).
+               - Cumulative to Cut-off → one row per week that has records inside the
+                 cumulative range, so the weekly bars sum to the cumulative tiles.
+               - All Weeks → one row per week with records in the tile dataset. */
+            var wkRows = !qWeek || __cum
+              ? __wkPeriods.filter(function(p){ return sel.some(function(o){ return weekPeriodMatch(o, p); }); })
+              : (selIdx >= 0 ? [__wkPeriods[selIdx]] : []);
             vis = wkRows.map(function(p){
-              var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
+              var b = sel.filter(function(o){ return weekPeriodMatch(o, p); });
               return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
             });
           } else if(qPeriod === "MONTHLY"){
@@ -8903,8 +8907,10 @@ function App(_refApp) {
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
               (__cum ? "Reporting Period: Project Start – " + qCutEff : "Selected period: " + selLabel) + " — " + sel.length + " observations",
               __cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#1D4ED8", fontSize: 10, marginTop: 2 } },
-                "Mode: Cumulative to Cut-off Date ✓" + (__wkSel ? "   ·   Selected Week: " + __wkSel.id + " — " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) : "") + "   ·   Cut-off Date: " + qCutEff),
-              /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts now reflect this selection)")),
+                "Mode: Cumulative to Cut-off Date ✓   ·   Cut-off Date: " + qCutEff + (__wkSel && !qCut ? " (end of " + __wkSel.id + ")" : "") + "   —   NOT week-only; use “Selected Week Only” for a single-week view"),
+              qPeriod === "WEEKLY" && qWeek && !__cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#15803D", fontSize: 10, marginTop: 2 } },
+                "Mode: Selected Week Only ✓   ·   every card, chart and table below counts ONLY " + (__wkSel ? __wkSel.id + " (" + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) + ")" : "the selected week")),
+              /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts reflect exactly this dataset)")),
             /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
               METRICS.map(function(mt){
                 return /*#__PURE__*/React.createElement("div", { key: mt[0], style: { background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 8, padding: "7px 9px" } },
@@ -8927,10 +8933,12 @@ function App(_refApp) {
               qPeriod === "YEARLY" && /*#__PURE__*/React.createElement("span", { style: { color: C.slate } }, "(chart shows all years; tiles above = selected year only)")),
             (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
               ? (function(){
-              /* Weekly 5-week combo chart: stacked bars + monotone-spline Total curve (read-only) */
+              /* Weekly combo chart: stacked bars + Total curve (read-only).
+                 Buckets from `sel` (same-dataset rule) — one bar in Selected Week
+                 Only mode; per-week breakdown of the cumulative set in Cut-off mode. */
               var LN = "#2563EB";
               var rows = vis.map(function(r){
-                var b = obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); });
+                var b = sel.filter(function(o){ return weekPeriodMatch(o, r._p); });
                 var ua = 0, uc = 0, gd = 0;
                 b.forEach(function(o){ if(o.obsType === "UNSAFE_ACT") ua++; else if(o.obsType === "GOOD_OBS") gd++; else if(o.obsType === "UNSAFE_CON") uc++; });
                 return { p: r._p, ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
@@ -9005,9 +9013,11 @@ function App(_refApp) {
                 var H = 118;
                 var rUn = r.total - r.ua - r.uc - r.good;   /* aggregate uc includes untyped; recompute strict */
                 var strictUC = r.uc; /* aggregateObservationsByQuarter folds untyped into uc — split it out visually */
-                /* recompute strict per bucket from obsAll for exactness */
-                var bucket = r._p ? obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); })
-                  : obsAll.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
+                /* recompute strict per bucket from `sel` (same-dataset rule) —
+                   YEARLY keeps its labeled all-years context from obsAll */
+                var __bSrc = qPeriod === "YEARLY" ? obsAll : sel;
+                var bucket = r._p ? __bSrc.filter(function(o){ return weekPeriodMatch(o, r._p); })
+                  : __bSrc.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
                 var bUA = bucket.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
                 var bUC = bucket.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
                 var bGD = bucket.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
