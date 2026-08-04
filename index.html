@@ -10136,12 +10136,38 @@ function App(_refApp) {
     title: "Clear cut-off (export all filtered observations)",
     style: { fontSize: 10, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer", fontWeight: 600 }
   }, "✕"),
+  /* Live cut-off preview (UAT fix): show the effect BEFORE exporting.
+     "in list" = cut-off applied ON TOP of the active Week/Date/Status/Company/
+     Floor/Area/search filters; "in all records" = cut-off alone over the whole
+     dataset. A red 0 with a non-zero total means the OTHER filters exclude the
+     matching records — not the cut-off itself. Date compare is inclusive (<=),
+     normalized to YYYY-MM-DD, pure string compare — no timezone conversion. */
+  exCut && (function(){
+    var __cutLe = function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; };
+    var nList = filt.filter(__cutLe).length;
+    var nAll = obs.filter(__cutLe).length;
+    var zero = nList === 0;
+    return /*#__PURE__*/React.createElement("span", {
+      className: "mob-secf",
+      title: zero && nAll > 0 ? "The active Week/Date/Status filters exclude all records dated on or before the cut-off — clear those filters or adjust the cut-off." : "Records dated on or before the cut-off (inclusive)",
+      style: { fontSize: 10, fontWeight: 700, alignSelf: "center", padding: "4px 8px", borderRadius: 8,
+        background: zero ? "#FEF2F2" : "#E6F4EA", color: zero ? "#B91C1C" : "#217346",
+        border: "1.5px solid " + (zero ? "#FECACA" : "#217346") }
+    }, "≤ " + exCut + ": " + nList + " in list · " + nAll + " in all records");
+  })(),
   /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       /* temporary in-memory data set: Observation Date <= cut-off (inclusive);
-         records with no date are excluded when a cut-off is set */
-      var exRows = exCut ? filt.filter(function(o){ return o.date && o.date <= exCut; }) : filt;
-      if(exCut && exRows.length === 0){ setT({ msg: "❌ No observations dated on or before " + exCut, type: "err" }); setTimeout(function(){ setT(null); }, 6000); return; }
+         normalized to YYYY-MM-DD so a timestamped date can never be excluded on
+         its own day; records with no date are excluded when a cut-off is set */
+      var exRows = exCut ? filt.filter(function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; }) : filt;
+      if(exCut && exRows.length === 0){
+        var exAll = obs.filter(function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; }).length;
+        setT({ msg: exAll > 0
+          ? "❌ 0 of the " + filt.length + " filtered observations are dated on or before " + exCut + " — but " + exAll + " exist in ALL records. The active Week/Date/Status/Company filters exclude them: clear those filters or adjust the cut-off."
+          : "❌ No observations dated on or before " + exCut + " exist in the data.", type: "err" });
+        setTimeout(function(){ setT(null); }, 9000); return;
+      }
       setT({ msg: "⏳ Generating Excel with photos…" + (exCut ? " (cut-off " + exCut + ", " + exRows.length + " records)" : ""), type: "ok" });
       var p = exportExcel(exRows,
         function(msg){ setT({ msg: "❌ " + msg, type: "err" }); setTimeout(function(){ setT(null); }, 8000); },
@@ -10180,7 +10206,13 @@ function App(_refApp) {
       padding: 48,
       color: C.slate
     }
-  }, "No observations found"), filt.map(function (o) {
+  }, "No observations found",
+    /* UAT fix: a zero list with records in the data is ALWAYS caused by the
+       active filters (the export Cut-off never hides list rows) \u2014 say so and
+       say how to recover, instead of a dead-end message. */
+    obs.length > 0 && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: "#B45309" } },
+      "All " + obs.length + " records are excluded by the active filters (Reporting Week / Date range / Status / Company / Floor / Area / search). Clear or adjust those filters to see records \u2014 the export Cut-off date does not hide rows from this list.")
+  ), filt.map(function (o) {
     var ps$ = pStat(o);
     var rk = RISK[o.risk || "MINOR"];
     var ot = OBS_TYPE[o.obsType] || {
