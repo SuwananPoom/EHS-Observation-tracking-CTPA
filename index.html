@@ -8936,21 +8936,32 @@ function App(_refApp) {
                : qMonths.map(function(m){ return __MN[m-1]; }).join("+") + " " + qYearEff);
           if(!sel.length) return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, marginTop: 10 } }, "No observations in " + selLabel + ".");
           var UA_C = "#EF4444", UC_C = C.amber, GD_C = C.green, UN_C = "#94A3B8";
-          function cnt(f){ return sel.filter(f).length; }
+          /* ══ CARDS-ONLY dataset (UAT rule) ══
+             When Reporting Period = Weekly and a specific week is selected, the
+             summary number cards below ALWAYS show that week only — even while
+             "Cumulative to Cut-off" is selected. Deliberately a SEPARATE local
+             variable: the shared dataset (dsObs/sel), header, Top lists, weekly
+             chart and comparison table keep their existing behavior untouched.
+             Counts raised-in-week (date inside the week's range); status cards
+             use each record's CURRENT effStatus classification. */
+          var selCards = (qPeriod === "WEEKLY" && __wkSel)
+            ? obsAll.filter(function(o){ return weekPeriodMatch(o, __wkSel); })
+            : sel;
+          function cnt(f){ return selCards.filter(f).length; }
           var ua = cnt(function(o){ return o.obsType === "UNSAFE_ACT"; }),
               uc = cnt(function(o){ return o.obsType === "UNSAFE_CON"; }),
               gd = cnt(function(o){ return o.obsType === "GOOD_OBS"; }),
-              unTy = sel.length - ua - uc - gd;
+              unTy = selCards.length - ua - uc - gd;
           var op = cnt(function(o){ return effStatus(o) === "OPEN"; }),
               ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
               pv = cnt(function(o){ return effStatus(o) === "PENDING_VERIFY"; }),
               cl = cnt(function(o){ return effStatus(o) === "CLOSED"; }),
-              unSt = sel.length - op - ipg - pv - cl;
+              unSt = selCards.length - op - ipg - pv - cl;
           var sr = cnt(function(o){ return o.risk === "SERIOUS"; }),
               mj = cnt(function(o){ return o.risk === "MAJOR"; }),
               mn = cnt(function(o){ return o.risk === "MINOR"; }),
-              unRk = sel.length - sr - mj - mn;
-          var closure = sel.length ? Math.round(cl / sel.length * 100) : 0;
+              unRk = selCards.length - sr - mj - mn;
+          var closure = selCards.length ? Math.round(cl / selCards.length * 100) : 0;
           var tArea = {}, tFloor = {}, tCo = {};
           sel.forEach(function(o){
             var pz = parseZone(o.zone || "");
@@ -8960,7 +8971,7 @@ function App(_refApp) {
             tCo[o.company || "Unspecified"] = (tCo[o.company || "Unspecified"] || 0) + 1;
           });
           var METRICS = [
-            ["Total OBS", sel.length, C.text], ["Unsafe Act", ua, UA_C], ["Unsafe Cond", uc, "#B45309"], ["Good OBS", gd, GD_C]]
+            ["Total OBS", selCards.length, C.text], ["Unsafe Act", ua, UA_C], ["Unsafe Cond", uc, "#B45309"], ["Good OBS", gd, GD_C]]
             .concat(unTy > 0 ? [["Untyped", unTy, UN_C]] : [])
             .concat([["Open", op, UA_C], ["In Progress", ipg, "#2563EB"], ["Pending Verify", pv, C.amber], ["Closed", cl, GD_C]])
             .concat(unSt > 0 ? [["Odd Status", unSt, UN_C]] : [])
@@ -9014,7 +9025,9 @@ function App(_refApp) {
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
               (__cum ? "Reporting Period: Project Start – " + qCutEff : "Selected period: " + selLabel) + " — " + sel.length + " observations",
               __cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#1D4ED8", fontSize: 10, marginTop: 2 } },
-                "Mode: Cumulative to Cut-off Date ✓   ·   Cut-off Date: " + qCutEff + (__wkSel && !qCut ? " (end of " + __wkSel.id + ")" : "") + "   —   NOT week-only; use “Selected Week Only” for a single-week view"),
+                "Mode: Cumulative to Cut-off Date ✓   ·   Cut-off Date: " + qCutEff + (__wkSel && !qCut ? " (end of " + __wkSel.id + ")" : "") +
+                (__wkSel ? "   —   chart & table are cumulative; the summary cards below show " + __wkSel.id + " only"
+                         : "   —   NOT week-only; use “Selected Week Only” for a single-week view")),
               qPeriod === "WEEKLY" && qWeek && !__cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#15803D", fontSize: 10, marginTop: 2 } },
                 "Mode: Selected Week Only ✓   ·   every card, chart and table below counts ONLY " + (__wkSel ? __wkSel.id + " (" + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) + ")" : "the selected week")),
               /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts reflect exactly this dataset)")),
