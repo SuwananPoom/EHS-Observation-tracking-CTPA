@@ -15,6 +15,8 @@ const ROOT = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 const sql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-03_harden_upsert_observation.sql"), "utf8");
 const sqlCode = sql.replace(/--[^\n]*/g, ""); // strip `--` comments (header quotes the OLD code)
+const guardSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-04_ctpa_state_close_guard.sql"), "utf8");
+const guardCode = guardSql.replace(/--[^\n]*/g, ""); // strip `--` comments before pattern checks
 
 let pass = 0;
 function ok(name, cond) {
@@ -49,7 +51,12 @@ const authSrc =
   extractFn(html, "userRole") + "\n" +
   extractFn(html, "canApproveGC") + "\n" +
   extractFn(html, "canApproveGCFor") + "\n" +
-  "; return { setRole: function(r){ window.CTPA_AUTH = { profile: { role: r, company: (arguments[1]||'') } }; }, canApproveGC: canApproveGC, canApproveGCFor: canApproveGCFor };";
+  extractFn(html, "canApprovePMC") + "\n" +
+  extractFn(html, "isAdmin") + "\n" +
+  extractFn(html, "canCloseObs") + "\n" +
+  "; return { setRole: function(r){ window.CTPA_AUTH = { profile: { role: r, company: (arguments[1]||'') } }; }," +
+  "  canApproveGC: canApproveGC, canApproveGCFor: canApproveGCFor," +
+  "  canApprovePMC: canApprovePMC, isAdmin: isAdmin, canCloseObs: canCloseObs };";
 const win = {};
 const AC = new Function("window", authSrc)(win);
 
@@ -190,6 +197,65 @@ console.log("\n8) Counts invariant + export blanking (static)");
   // export builder must gate approver columns on the real role
   ok("export blanks GC approver unless role", /clientApprovedRole\s*\?\s*fmtApprover\(o\.clientApprovedBy\)\s*:\s*""/.test(html));
   ok("export blanks PMC approver unless role", /lpApprovedRole\s*\?\s*fmtApprover\(o\.lpApprovedBy\)\s*:\s*""/.test(html));
+}
+
+console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)");
+{
+  /* Roles that must NEVER be able to close (GC USERs + other non-manager roles).
+     Approved Closed is reachable ONLY through the GC + PMC approval workflow. */
+  const noClose = ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", ""];
+  noClose.forEach((r) => { AC.setRole(r); ok('role "' + (r || "(none)") + '" cannot close (canCloseObs=false)', AC.canCloseObs() === false); });
+  ["dayone_admin", "lm_gc", "ritta_gc", "pmc_manager"].forEach((r) => { AC.setRole(r); ok('role "' + r + '" CAN close (canCloseObs=true)', AC.canCloseObs() === true); });
+
+  /* PMC approval gated to PMC Manager / Admin only (GC USERs & GC Managers cannot). */
+  ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", "lm_gc", "ritta_gc"]
+    .forEach((r) => { AC.setRole(r); ok('role "' + r + '" cannot PMC-approve', AC.canApprovePMC() === false); });
+  ["pmc_manager", "dayone_admin"].forEach((r) => { AC.setRole(r); ok('role "' + r + '" CAN PMC-approve', AC.canApprovePMC() === true); });
+
+  /* ---- Static checks: enforcement code is present in the shipped file ---- */
+  ok("Edit form hides CLOSED unless already closed", /if \(k === "CLOSED" && form\.status !== "CLOSED"\) return null;/.test(html));
+  ok("status select locked when already closed", /disabled:\s*form\.status === "CLOSED"/.test(html));
+  ok("Closed Date & Closed By gated on canCloseObs", (html.match(/disabled:\s*!canCloseObs\(\)/g) || []).length >= 2);
+  ok("submit() blocks a NEW close transition via the form", /form\.status === "CLOSED" && !_wasClosed/.test(html));
+  ok("stCh blocks close for non-closers", /if \(ns === "CLOSED" && !canCloseObs\(\)\)/.test(html));
+  ok("approveClosure PMC branch re-checks canApprovePMC", /if\(!canApprovePMC\(\)\)\{ toast\$\("Not authorized/.test(html));
+  ok("PMC gate message names PMC Manager or Admin", /PMC Manager approval requires a PMC Manager or Admin account/.test(html));
+  ok("edit-save auto-promote requires real sign-offs", /\(\(_sgGC && _sgPMC\) \|\| _sgLegacy\)/.test(html));
+  ok("legacy PMC approver code neutralized", /code === PMC_CODE\)\{ toast\$\("PMC Manager approval requires/.test(html));
+
+  /* ---- Behavioural: a form-close with NO sign-offs must NOT become Approved Closed ---- */
+  function editAutoPromote(merged) {
+    var _sgGC = !!(merged.clientApprovedBy && merged.clientApprovedRole);
+    var _sgPMC = !!(merged.lpApprovedBy && merged.lpApprovedRole);
+    var _sgLegacy = !!(merged.clientApprovedBy && !merged.clientApprovedRole);
+    if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")
+        && ((_sgGC && _sgPMC) || _sgLegacy)) merged.approvalStatus = "APPROVED CLOSED";
+    return merged;
+  }
+  const forced = editAutoPromote({ status: "CLOSED", approvalStatus: "OPEN", clientApprovedBy: "", lpApprovedBy: "", pa: [{}] });
+  ok("form-close w/o sign-offs is NOT stored Approved Closed", forced.approvalStatus === "OPEN");
+  ok("form-close w/o sign-offs → effAp resolves to PENDING REVIEW", effAp(forced) === "PENDING REVIEW");
+  ok("form-close w/o sign-offs → effStatus resolves to PENDING_VERIFY", effStatus(forced) === "PENDING_VERIFY");
+  const realPmc = editAutoPromote({ status: "CLOSED", approvalStatus: "OPEN", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", lpApprovedBy: "PMC", lpApprovedRole: "PMC Manager", pa: [{}] });
+  ok("real GC+PMC close → stored Approved Closed (workflow unaffected)", realPmc.approvalStatus === "APPROVED CLOSED");
+
+  /* ---- Server/DB tier: the ctpa_state close-guard trigger migration ---- */
+  ok("guard migration is BEFORE UPDATE trigger on ctpa_state",
+     /before update on public\.ctpa_state/.test(guardCode) && /create trigger ctpa_state_close_guard_trg/.test(guardCode));
+  ok("guard requires BOTH GC and PMC sign-off roles to allow a close",
+     /clientApprovedRole/.test(guardCode) && /lpApprovedRole/.test(guardCode)
+     && /clientApprovedBy/.test(guardCode) && /lpApprovedBy/.test(guardCode));
+  ok("guard is transition-based (grandfathers existing closed via old_closed)",
+     /old_closed \? \(e->>'id'\)/.test(guardCode) && /old_ids \? \(e->>'id'\)/.test(guardCode));
+  ok("guard closed-ish tests are NULL-safe (coalesce)",
+     (guardCode.match(/coalesce\(e->>'status',''\)\s*=\s*'CLOSED'/g) || []).length >= 1
+     && (guardCode.match(/coalesce\(e->>'approvalStatus',''\)\s*=\s*'APPROVED CLOSED'/g) || []).length >= 1);
+  ok("guard allows brand-new ids (Excel import path)", /not \(old_ids \? \(e->>'id'\)\)/.test(guardCode));
+  ok("guard raises check_violation on unauthorized close transition",
+     /raise\s+exception/i.test(guardCode) && /check_violation/.test(guardCode));
+  ok("guard performs NO schema change (no ALTER TABLE / ADD COLUMN)",
+     !/alter\s+table/i.test(guardCode) && !/add\s+column/i.test(guardCode));
+  ok("guard ships an explicit non-destructive ROLLBACK", /drop trigger if exists ctpa_state_close_guard_trg/.test(guardSql));
 }
 
 console.log("\n==============================");

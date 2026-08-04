@@ -337,6 +337,14 @@ function canApprovePMC(){
   return r === "dayone_admin" || r === "pmc_manager";
 }
 function isAdmin(){ return userRole() === "dayone_admin"; }
+/* Authority to CLOSE an observation / edit its closure metadata (Closed Date,
+   Closed By). Closing is a MANAGER/ADMIN outcome produced ONLY by the GC + PMC
+   approval workflow. Normal GC USERs (contractor users such as LM / Ritta users)
+   may NEVER set status Closed, Closed Date, Closed By, or reach Approved Closed.
+   This gate is defence-in-depth for the UI; the authoritative requirement for
+   reaching Approved Closed is the GC + PMC sign-off enforced in approveClosure()
+   and, at the server level, in the ctpa_state database trigger. */
+function canCloseObs(){ return isAdmin() || canApproveGC() || canApprovePMC(); }
 /* Role-based UI visibility (frontend-only; role from the authenticated profile).
    userRole() falls back to "viewer" when the profile is missing/not yet loaded,
    so restricted components stay HIDDEN by default — no privileged default, no
@@ -6109,14 +6117,17 @@ function App(_refApp) {
     var role = "";
     /* GC approval is role-restricted (GC Manager / Admin only) — the legacy access
        code can no longer grant it. PMC code unlock is unchanged. */
+    /* Both GC and PMC approval are role-restricted (GC Manager/Admin, PMC Manager/
+       Admin). The legacy access codes can no longer grant EITHER approver role —
+       authorization comes solely from the authenticated account. */
     if(code === GC_CODE){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
-    else if(code === PMC_CODE) role = "LP";
+    else if(code === PMC_CODE){ toast$("PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
     else if(code === APPROVER_CODE){
       var pick = window.prompt("Enter your role — type GC or PMC:");
       if(pick === null) return;
       pick = (pick||"").trim().toUpperCase();
       if(pick === "GC" || pick === "CLIENT"){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
-      else if(pick === "PMC" || pick === "LP") role = "LP";
+      else if(pick === "PMC" || pick === "LP"){ toast$("PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
     }
     if(role){
       try{ sessionStorage.setItem("ctpa_apr_role", role); }catch(e){}
@@ -6735,6 +6746,14 @@ function App(_refApp) {
      is truly closed — so the donut/cards can never show 100% while Open items remain. */
   var clR = S.n ? (S.closed === S.n ? 100 : Math.min(99.9, Math.floor(S.closed / S.n * 1000) / 10)) : 0;
   var stCh = function stCh(id, ns) {
+    /* Closing is a manager/admin outcome via the GC + PMC approval workflow — a
+       normal GC USER may never move an observation to CLOSED by any path (defence
+       in depth beyond hiding the CLOSED option from the status controls). */
+    if (ns === "CLOSED" && !canCloseObs()) {
+      toast$("Not authorized — closing requires GC Manager + PMC Manager approval.", "err");
+      setCC(null);
+      return;
+    }
     if (ns === "CLOSED" && APPROVAL_ENABLED) {
       var target = obs.find(function (o) {
         return o.id === id;
@@ -6850,6 +6869,11 @@ function App(_refApp) {
       if (ap !== "PENDING PMC APPROVAL") {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
+      /* Enforce at action time (defence in depth beyond approver-role visibility):
+         PMC sign-off — and therefore Approved Closed — requires a PMC Manager or
+         Admin account. A legacy approver-code unlock can never substitute. This
+         mirrors the GC branch's canApproveGC() gate above. */
+      if(!canApprovePMC()){ toast$("Not authorized — PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
       /* EVIDENCE RULE: final closure requires the After photo to still exist */
       if(!hasAfterPhoto(target)){ toast$("Cannot approve closure — no After photo on record. A new After photo is required.", "err"); return; }
       patch.lpApprovedBy = who;
@@ -7317,6 +7341,22 @@ function App(_refApp) {
       toast$("Please select an Area", "err");
       return;
     }
+    /* CLOSE GUARD (OBS-1191): closing is done ONLY through the GC Manager + PMC
+       Manager approval workflow. The Edit form may never CREATE a close — this
+       rejects any DOM/tamper path that injects status=Closed on a record that was
+       not already closed, for every role. Already-closed (legacy) records
+       round-trip unchanged (edit.status === "CLOSED"). */
+    var _wasClosed = !!(edit && edit.status === "CLOSED");
+    if (form.status === "CLOSED" && !_wasClosed) {
+      toast$("Closing is done through the GC Manager + PMC Manager approval workflow, not the Edit form.", "err");
+      return;
+    }
+    /* Even on an already-closed record, only a Manager/Admin may re-save closure
+       metadata; a normal GC USER can never author Closed Date / Closed By. */
+    if (form.status === "CLOSED" && !canCloseObs()) {
+      toast$("Not authorized — only a GC/PMC Manager or Admin may modify a closed observation's closure details.", "err");
+      return;
+    }
     if (form.status === "CLOSED" && !form.closed) {
       toast$("Closed Date is required when status is Closed", "err");
       return;
@@ -7435,7 +7475,16 @@ function App(_refApp) {
            a stale "OPEN" approvalStatus on a CLOSED record double-counts in the
            dashboard (Open + Closed > Total). Only this transition is synced —
            PENDING/REJECTED states from the real workflow are left untouched. */
-        if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")) {
+        /* Reflect APPROVED CLOSED in the stored field ONLY when the record actually
+           carries GC + PMC sign-offs (or a legacy client-era GC sign-off). A form
+           save can never MANUFACTURE Approved Closed for a record with no approval —
+           that was the OBS-1191 bypass. apOf()/effAp() still classify a sign-off-less
+           CLOSED record correctly for counts/display, so dashboards stay consistent. */
+        var _sgGC     = !!(merged.clientApprovedBy && merged.clientApprovedRole);
+        var _sgPMC    = !!(merged.lpApprovedBy && merged.lpApprovedRole);
+        var _sgLegacy = !!(merged.clientApprovedBy && !merged.clientApprovedRole);
+        if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")
+            && ((_sgGC && _sgPMC) || _sgLegacy)) {
           merged.approvalStatus = "APPROVED CLOSED";
         }
         return merged;
@@ -10837,16 +10886,25 @@ function App(_refApp) {
         });
       });
     },
+    /* An already-closed record is workflow-terminal: its status is locked in the
+       Edit form (re-opening is done via the workflow Reject action, not here), so
+       no path can silently change a closed record's status on save. */
+    disabled: form.status === "CLOSED",
     style: iSt
   }, Object.entries(STATUS).map(function (_ref30) {
     var _ref31 = _slicedToArray(_ref30, 2),
       k = _ref31[0],
       v = _ref31[1];
+    /* Closing is workflow-only (GC + PMC approval). Never offer CLOSED as a NEW
+       status in the Edit form — it appears solely to display an already-closed
+       (legacy) record so it round-trips unchanged. This removes the manual-close
+       path that let a normal GC USER reach Approved Closed (OBS-1191). */
+    if (k === "CLOSED" && form.status !== "CLOSED") return null;
     return /*#__PURE__*/React.createElement("option", {
       key: k,
       value: k
     }, v.label);
-  })))), /*#__PURE__*/React.createElement("div", {
+  })))),/*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 13
     }
@@ -10891,13 +10949,19 @@ function App(_refApp) {
   }, "Closed Date", form.status === "CLOSED" ? " *" : ""), /*#__PURE__*/React.createElement("input", {
     type: "date",
     value: form.closed,
+    /* Closure metadata is set by the approval workflow, not by hand. Only a
+       Manager/Admin may adjust it; a normal GC USER can never set/edit Closed Date. */
+    disabled: !canCloseObs(),
     onChange: function onChange(e) {
+      if (!canCloseObs()) return;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, { closed: e.target.value });
       });
     },
     style: _objectSpread(_objectSpread({}, iSt), {}, {
-      borderColor: form.status === "CLOSED" && !form.closed ? C.red : C.border
+      borderColor: form.status === "CLOSED" && !form.closed ? C.red : C.border,
+      background: !canCloseObs() ? C.slateLight : (iSt.background || "#fff"),
+      cursor: !canCloseObs() ? "not-allowed" : "auto"
     })
   })), /*#__PURE__*/React.createElement("div", {
     style: { marginBottom: 13 }
@@ -10906,7 +10970,10 @@ function App(_refApp) {
   }, "Closed By", form.status === "CLOSED" ? " *" : ""), /*#__PURE__*/React.createElement("input", {
     type: "text",
     value: form.closedBy || "",
+    /* Only a Manager/Admin may set/edit Closed By; a normal GC USER cannot. */
+    disabled: !canCloseObs(),
     onChange: function onChange(e) {
+      if (!canCloseObs()) return;
       var v = e.target.value;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, { closedBy: v });
@@ -10914,7 +10981,9 @@ function App(_refApp) {
     },
     placeholder: "Name of person who closed",
     style: _objectSpread(_objectSpread({}, iSt), {}, {
-      borderColor: form.status === "CLOSED" && !(form.closedBy || "").trim() ? C.red : C.border
+      borderColor: form.status === "CLOSED" && !(form.closedBy || "").trim() ? C.red : C.border,
+      background: !canCloseObs() ? C.slateLight : (iSt.background || "#fff"),
+      cursor: !canCloseObs() ? "not-allowed" : "auto"
     })
   })), /*#__PURE__*/React.createElement(PhotoBlock, {
     item: {
