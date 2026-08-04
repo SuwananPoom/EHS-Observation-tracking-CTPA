@@ -2,6 +2,15 @@
 -- SERVER-SIDE ENFORCEMENT: block the "Approved Closed / Closed without approval"
 -- bypass on ctpa_state — the GC USER permission lockdown (OBS-1191), database tier.
 -- ============================================================================
+-- STATUS: APPLIED to production (project ocwdnvblpjfzkgzratqb) on 2026-08-04 via an
+--   atomic apply+self-test transaction: the same transaction created the guard and
+--   ran a real no-op re-save of the live blob inside a savepoint; had the guard
+--   wrongly rejected that no-op, the whole apply would have rolled back (a faulty
+--   trigger could not persist). Post-apply, a direct-DB write flipping a real OPEN
+--   observation to APPROVED CLOSED with no sign-offs was confirmed REJECTED, and the
+--   live blob (1,215 records at apply time, 1,130+ legacy closes) was untouched.
+--   Instant, non-destructive rollback is at the bottom of this file.
+-- ============================================================================
 -- WHY THIS EXISTS
 --   The app has no server of its own: the SPA talks straight to PostgREST with the
 --   anon key, and RLS on ctpa_state is fully permissive. The database therefore
