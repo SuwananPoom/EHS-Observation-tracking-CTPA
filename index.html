@@ -1908,7 +1908,10 @@ var compressPhoto = function compressPhoto(f) {
   });
 };
 var isOD = function isOD(o) {
-  return effStatus(o) !== "CLOSED" && o.due && o.due < td();
+  /* Overdue = the corrective action is still outstanding past its due date. Fully closed
+     items are excluded — and so are Pending-PMC items: their corrective action is complete
+     and the record is merely awaiting PMC Manager sign-off, so it must not read as overdue. */
+  return effStatus(o) !== "CLOSED" && effAp(o) !== "PENDING PMC APPROVAL" && o.due && o.due < td();
 };
 var pStat = function pStat(o) {
   var b = o.pb ? o.pb.length : 0,

@@ -37,6 +37,12 @@ const { apOf, isUnapprovedClosed, effAp, effStatus } = new Function(
   html.slice(start, end) + "\n;return { apOf, isUnapprovedClosed, effAp, effStatus };",
 )(C);
 
+/* ---- Extract the REAL isOD (overdue) fn; bind effStatus/effAp + a fixed "today" ---- */
+const isODMatch = html.match(/var isOD = function isOD\(o\)\s*\{[\s\S]*?\n\};/);
+assert.ok(isODMatch, "could not locate isOD");
+const isOD = new Function("effStatus", "effAp", "td",
+  isODMatch[0] + "\n;return isOD;")(effStatus, effAp, function () { return "2026-08-05"; });
+
 /* ---- Extract the REAL access-control functions (brace-matched) ---- */
 function extractFn(src, name) {
   const i = src.indexOf("function " + name + "(");
@@ -165,6 +171,20 @@ console.log("\n6b) Card styling: 'Raised by' row is neutral, not green");
 {
   ok("'Raised by' row uses neutral light-blue background (#E8F2FF)", /#E8F2FF"[\s\S]{0,170}Raised by/.test(html));
   ok("'Raised by' row no longer uses the green ✔ approval styling", !html.includes("✔ Raised by"));
+}
+
+console.log("\n6c) Overdue (isOD): Pending-PMC items are NOT overdue");
+{
+  const past = "2026-08-01"; // before the stubbed "today" of 2026-08-05
+  const openPast = { status: "OPEN", due: past, pa: [] };
+  ok("Open + past due → overdue", isOD(openPast) === true);
+  const pendingPmcPast = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", lpApprovedBy: "", pa: [{ _hasPhoto: true }], due: past };
+  ok("Pending PMC + past due → NOT overdue (work done, awaiting PMC)", isOD(pendingPmcPast) === false);
+  const awaitingGcPast = { status: "PENDING_VERIFY", approvalStatus: "PENDING REVIEW", submittedForClosureBy: "x", pa: [{ _hasPhoto: true }], due: past };
+  ok("Awaiting-GC (Pending Verify) + past due → still overdue", isOD(awaitingGcPast) === true);
+  const closedPast = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", lpApprovedBy: "PMC", pa: [{ _hasPhoto: true }], due: past };
+  ok("Fully closed + past due → NOT overdue", isOD(closedPast) === false);
+  ok("shipped isOD source excludes Pending-PMC", /effAp\(o\) !== "PENDING PMC APPROVAL"/.test(html));
 }
 
 console.log("\n7) Real GC+PMC approval and mid-funnel still work");
