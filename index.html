@@ -9054,23 +9054,34 @@ function App(_refApp) {
           var series = aggregateObservationsByQuarter(qPeriod === "YEARLY" ? obsAll : sel, __serPeriod);
           var allKeys = series.map(function(r){ return r.key; });
           var vis;
+          /* Dataset backing the weekly comparison chart + table. Normally the same
+             `sel` as the summary tiles (SAME-DATASET RULE). Sole exception: Weekly
+             "Selected Week Only", where the chart & table show the selected week PLUS
+             the previous 4 configured weeks for trend context — those earlier weeks are
+             not in `sel` (which is the selected week only), so their bars/rows are read
+             from the full obsAll set. Read-only; the summary tiles (selCards) are the
+             selected week only and are NOT affected. */
+          var wkSrc = sel;
           if(qPeriod === "WEEKLY"){
-            /* Rows from the system's weekly PERIOD definitions (sorted by start date):
-               the selected week plus the period immediately before it in the list, so
-               the main table compares against the true previous configured week. */
+            /* Rows from the system's weekly PERIOD definitions (sorted by start date). */
             var selIdx = -1;
             for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
-            /* Week rows follow the SAME-DATASET RULE — buckets from `sel`, never obsAll:
-               - Selected Week Only  → exactly ONE row: the selected week (sel IS that
-                 week's records, so chart total === tile total).
-               - Cumulative to Cut-off → one row per week that has records inside the
-                 cumulative range, so the weekly bars sum to the cumulative tiles.
+            var __weekOnly = qWeek && !__cum;   /* Weekly "Selected Week Only" mode */
+            /* Week rows:
+               - Selected Week Only  → the selected week + the previous 4 configured
+                 weeks (up to 5 where available, at year start there may be fewer). Bars
+                 are read from obsAll so the earlier weeks are populated; the selected
+                 week is LAST so it stays highlighted, and its total still equals the
+                 selected-week tiles. The summary tiles (selCards) remain week-only.
+               - Cumulative to Cut-off → one row per week with records inside the
+                 cumulative range (buckets from `sel`), so weekly bars sum to the tiles.
                - All Weeks → one row per week with records in the tile dataset. */
+            wkSrc = __weekOnly ? obsAll : sel;
             var wkRows = !qWeek || __cum
               ? __wkPeriods.filter(function(p){ return sel.some(function(o){ return weekPeriodMatch(o, p); }); })
-              : (selIdx >= 0 ? [__wkPeriods[selIdx]] : []);
+              : (selIdx >= 0 ? __wkPeriods.slice(Math.max(0, selIdx - 4), selIdx + 1) : []);
             vis = wkRows.map(function(p){
-              var b = sel.filter(function(o){ return weekPeriodMatch(o, p); });
+              var b = wkSrc.filter(function(o){ return weekPeriodMatch(o, p); });
               return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
             });
           } else if(qPeriod === "MONTHLY"){
@@ -9096,7 +9107,8 @@ function App(_refApp) {
                 (__wkSel ? "   —   chart & table are cumulative; the summary cards below show " + __wkSel.id + " only"
                          : "   —   NOT week-only; use “Selected Week Only” for a single-week view")),
               qPeriod === "WEEKLY" && qWeek && !__cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#15803D", fontSize: 10, marginTop: 2 } },
-                "Mode: Selected Week Only ✓   ·   every card, chart and table below counts ONLY " + (__wkSel ? __wkSel.id + " (" + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) + ")" : "the selected week")),
+                "Mode: Selected Week Only ✓   ·   summary cards count ONLY " + (__wkSel ? __wkSel.id + " (" + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) + ")" : "the selected week") +
+                "   ·   comparison chart & table show " + (vis.length > 1 ? (vis[0]._p.id + "–" + vis[vis.length - 1]._p.id + " (" + vis.length + " weeks)") : (__wkSel ? __wkSel.id : "the selected week"))),
               /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts reflect exactly this dataset)")),
             /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
               METRICS.map(function(mt){
@@ -9121,11 +9133,12 @@ function App(_refApp) {
             (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
               ? (function(){
               /* Weekly combo chart: stacked bars + Total curve (read-only).
-                 Buckets from `sel` (same-dataset rule) — one bar in Selected Week
-                 Only mode; per-week breakdown of the cumulative set in Cut-off mode. */
+                 Buckets from `wkSrc`: `sel` for Cumulative (per-week breakdown of the
+                 cumulative set) and All Weeks; obsAll for "Selected Week Only" so the
+                 selected week and the previous 4 weeks each render their real totals. */
               var LN = "#2563EB";
               var rows = vis.map(function(r){
-                var b = sel.filter(function(o){ return weekPeriodMatch(o, r._p); });
+                var b = wkSrc.filter(function(o){ return weekPeriodMatch(o, r._p); });
                 var ua = 0, uc = 0, gd = 0;
                 b.forEach(function(o){ if(o.obsType === "UNSAFE_ACT") ua++; else if(o.obsType === "GOOD_OBS") gd++; else if(o.obsType === "UNSAFE_CON") uc++; });
                 return { p: r._p, ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
