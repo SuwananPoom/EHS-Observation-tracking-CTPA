@@ -17,6 +17,8 @@ const sql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-03_harden_ups
 const sqlCode = sql.replace(/--[^\n]*/g, ""); // strip `--` comments (header quotes the OLD code)
 const guardSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-04_ctpa_state_close_guard.sql"), "utf8");
 const guardCode = guardSql.replace(/--[^\n]*/g, ""); // strip `--` comments before pattern checks
+const authzSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-05_ctpa_state_approval_authz.sql"), "utf8");
+const authzCode = authzSql.replace(/--[^\n]*/g, ""); // Issue 4: role-verified approval trigger
 
 let pass = 0;
 function ok(name, cond) {
@@ -54,9 +56,10 @@ const authSrc =
   extractFn(html, "canApprovePMC") + "\n" +
   extractFn(html, "isAdmin") + "\n" +
   extractFn(html, "canCloseObs") + "\n" +
+  extractFn(html, "canApproveAny") + "\n" +
   "; return { setRole: function(r){ window.CTPA_AUTH = { profile: { role: r, company: (arguments[1]||'') } }; }," +
   "  canApproveGC: canApproveGC, canApproveGCFor: canApproveGCFor," +
-  "  canApprovePMC: canApprovePMC, isAdmin: isAdmin, canCloseObs: canCloseObs };";
+  "  canApprovePMC: canApprovePMC, isAdmin: isAdmin, canCloseObs: canCloseObs, canApproveAny: canApproveAny };";
 const win = {};
 const AC = new Function("window", authSrc)(win);
 
@@ -201,11 +204,18 @@ console.log("\n8) Counts invariant + export blanking (static)");
 
 console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)");
 {
-  /* Roles that must NEVER be able to close (GC USERs + other non-manager roles).
-     Approved Closed is reachable ONLY through the GC + PMC approval workflow. */
-  const noClose = ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", ""];
-  noClose.forEach((r) => { AC.setRole(r); ok('role "' + (r || "(none)") + '" cannot close (canCloseObs=false)', AC.canCloseObs() === false); });
-  ["dayone_admin", "lm_gc", "ritta_gc", "pmc_manager"].forEach((r) => { AC.setRole(r); ok('role "' + r + '" CAN close (canCloseObs=true)', AC.canCloseObs() === true); });
+  /* MANUAL close is an Admin OVERRIDE only. No single manager (GC OR PMC) may set
+     status Closed on their own — a normal close happens ONLY by completing BOTH
+     approval stages in approveClosure(). (Issue 1: not Closed until both approvals.) */
+  const noClose = ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", "lm_gc", "ritta_gc", "pmc_manager", ""];
+  noClose.forEach((r) => { AC.setRole(r); ok('role "' + (r || "(none)") + '" cannot MANUALLY close (canCloseObs=false)', AC.canCloseObs() === false); });
+  ["dayone_admin"].forEach((r) => { AC.setRole(r); ok('role "' + r + '" CAN manually close / override (canCloseObs=true)', AC.canCloseObs() === true); });
+
+  /* Approval UI visibility (Issue 5): canApproveAny() true ONLY for approver roles. */
+  ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", ""].forEach((r) => {
+    AC.setRole(r); ok('role "' + (r || "(none)") + '" sees NO approval UI (canApproveAny=false)', AC.canApproveAny() === false); });
+  ["lm_gc", "ritta_gc", "pmc_manager", "dayone_admin"].forEach((r) => {
+    AC.setRole(r); ok('role "' + r + '" is an approver (canApproveAny=true)', AC.canApproveAny() === true); });
 
   /* PMC approval gated to PMC Manager / Admin only (GC USERs & GC Managers cannot). */
   ["lm_user", "ritta_user", "dayone_user", "ms_user", "pmc_user", "viewer", "lm_gc", "ritta_gc"]
@@ -222,6 +232,17 @@ console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)")
   ok("PMC gate message names PMC Manager or Admin", /PMC Manager approval requires a PMC Manager or Admin account/.test(html));
   ok("edit-save auto-promote requires real sign-offs", /\(\(_sgGC && _sgPMC\) \|\| _sgLegacy\)/.test(html));
   ok("legacy PMC approver code neutralized", /code === PMC_CODE\)\{ toast\$\("PMC Manager approval requires/.test(html));
+
+  /* ---- Issue 1: manual close is Admin-only (single GC/PMC manager cannot close) ---- */
+  ok("canCloseObs() is Admin-only", /function canCloseObs\(\)\s*\{\s*return isAdmin\(\);\s*\}/.test(html));
+  /* ---- Issue 2: approver role is auth-derived only — no sessionStorage fallback ---- */
+  ok("no stale sessionStorage approver fallback", !/sessionStorage\.getItem\("ctpa_apr_role"\)/.test(html));
+  /* ---- Issue 5: approval UI hidden from non-approvers ---- */
+  ok("Pending Review dashboard card gated on canApproveAny()", /APPROVAL_ENABLED && canApproveAny\(\) && React\.createElement\("div", \{ style: _ctpaAssign\(\{\}, crd, \{ marginBottom: 14/.test(html));
+  ok("detail-view Unlock-Approver buttons removed", /Unlock-Approver removed: approver authority is auth-derived/.test(html) && !/padding: "9px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" \}\s*\}, "🔓 Unlock Approver"/.test(html));
+  /* ---- Issue 3: no legacy/non-GC-manager role can GC-approve (belt-and-suspenders) ---- */
+  ["lm_user","ritta_user","dayone_user","ms_user","pmc_user","pmc_manager","viewer",""].forEach((r) => {
+    AC.setRole(r); ok('legacy/non-GC role "' + (r || "(none)") + '" cannot GC-approve', AC.canApproveGC() === false); });
 
   /* ---- Behavioural: a form-close with NO sign-offs must NOT become Approved Closed ---- */
   function editAutoPromote(merged) {
@@ -256,6 +277,24 @@ console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)")
   ok("guard performs NO schema change (no ALTER TABLE / ADD COLUMN)",
      !/alter\s+table/i.test(guardCode) && !/add\s+column/i.test(guardCode));
   ok("guard ships an explicit non-destructive ROLLBACK", /drop trigger if exists ctpa_state_close_guard_trg/.test(guardSql));
+
+  /* ---- Issue 4: server-side APPROVAL AUTHORIZATION trigger (role-verified) ---- */
+  ok("authz trigger runs SECURITY DEFINER with a fixed search_path",
+     /security\s+definer/i.test(authzCode) && /set\s+search_path\s*=/i.test(authzCode));
+  ok("authz resolves the CALLER's role from the request JWT + ctpa_user_profiles",
+     /current_setting\('request\.jwt\.claims'/.test(authzCode) && /from public\.ctpa_user_profiles where id::text = caller_uid/.test(authzCode));
+  ok("authz: GC sign-off requires GC Manager or Admin caller",
+     /caller_role,''\) not in \('dayone_admin','lm_gc','ritta_gc'\)/.test(authzCode));
+  ok("authz: PMC sign-off requires PMC Manager or Admin caller",
+     /caller_role,''\) not in \('dayone_admin','pmc_manager'\)/.test(authzCode));
+  ok("authz is change-scoped (only newly added/changed roles are checked)",
+     /is distinct from coalesce\(old_gcrole->>eid,''\)/.test(authzCode) && /is distinct from coalesce\(old_pmcrole->>eid,''\)/.test(authzCode));
+  ok("authz rejects unauthorized approvals with insufficient_privilege (403-like)",
+     (authzCode.match(/insufficient_privilege/g) || []).length >= 2);
+  ok("authz preserves the close-without-both-sign-offs invariant",
+     /check_violation/.test(authzCode) && /old_closed \? eid/.test(authzCode));
+  ok("authz performs NO schema change and ships a ROLLBACK",
+     !/alter\s+table/i.test(authzCode) && /drop trigger if exists ctpa_state_close_guard_trg/.test(authzSql) && /drop function if exists public\.ctpa_state_close_guard/.test(authzSql));
 }
 
 console.log("\n==============================");

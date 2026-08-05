@@ -337,14 +337,17 @@ function canApprovePMC(){
   return r === "dayone_admin" || r === "pmc_manager";
 }
 function isAdmin(){ return userRole() === "dayone_admin"; }
-/* Authority to CLOSE an observation / edit its closure metadata (Closed Date,
-   Closed By). Closing is a MANAGER/ADMIN outcome produced ONLY by the GC + PMC
-   approval workflow. Normal GC USERs (contractor users such as LM / Ritta users)
-   may NEVER set status Closed, Closed Date, Closed By, or reach Approved Closed.
-   This gate is defence-in-depth for the UI; the authoritative requirement for
-   reaching Approved Closed is the GC + PMC sign-off enforced in approveClosure()
-   and, at the server level, in the ctpa_state database trigger. */
-function canCloseObs(){ return isAdmin() || canApproveGC() || canApprovePMC(); }
+/* Authority to MANUALLY set/edit an observation's closed status or closure metadata
+   (Closed Date, Closed By) — an Admin OVERRIDE only. A normal close is NEVER manual:
+   it is produced solely by completing BOTH approval stages (GC Manager -> PMC Manager)
+   in approveClosure(), which alone sets status CLOSED. No single manager — GC OR PMC —
+   may close an observation on their own, so this must NOT include canApproveGC/PMC.
+   (Issue 1: status must not become Closed until BOTH approvals are complete.) */
+function canCloseObs(){ return isAdmin(); }
+/* May this account act as a closure approver AT ALL (GC or PMC stage)? Drives whether
+   the approval UI (Approve / Reject / Unlock) is rendered — GC USERs get NONE of it
+   (Issue 5). Admin has both GC and PMC authority, so it is covered here too. */
+function canApproveAny(){ return canApproveGC() || canApprovePMC(); }
 /* Role-based UI visibility (frontend-only; role from the authenticated profile).
    userRole() falls back to "viewer" when the profile is missing/not yet loaded,
    so restricted components stay HIDDEN by default — no privileged default, no
@@ -6104,7 +6107,11 @@ function App(_refApp) {
     if (canApproveGC() && !canApprovePMC()) return "CLIENT";   /* GC-only roles */
     if (canApprovePMC() && !canApproveGC()) return "LP";       /* PMC-only roles */
     if (canApproveGC() && canApprovePMC())  return "BOTH";     /* Admin/DayOne — can approve both GC and PMC */
-    try{ return sessionStorage.getItem("ctpa_apr_role")||""; }catch(e){ return ""; }
+    /* Not an approver by authenticated role → NO approver role. This previously fell
+       back to sessionStorage ("ctpa_apr_role"), which let a stale/legacy code-unlock
+       leak an approver role to a GC USER (Issue 2: legacy GC User could approve).
+       Approver authority now comes SOLELY from the authenticated account. */
+    return "";
   })()),
     approverRole = _aprSt[0],
     setApproverRole = _aprSt[1];
@@ -10003,7 +10010,7 @@ function App(_refApp) {
         style: pill(ps$2.l === "B+A" ? C.greenBg : ps$2.l === "None" ? C.redBg : C.amberBg, ps$2.l === "B+A" ? C.greenDk : ps$2.l === "None" ? C.redDk : C.amberDk, 9)
       }, ps$2.l);
     }()));
-  })))))), view === "dashboard" && APPROVAL_ENABLED && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
+  })))))), view === "dashboard" && APPROVAL_ENABLED && canApproveAny() && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
     className: "fade-in" + (mobFilt ? " filters-open" : "")
   }, /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, crd), {}, {
@@ -11430,10 +11437,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.red, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2716 Reject Closure") : null,
-        !approver ? /*#__PURE__*/React.createElement("button", {
-          onClick: unlockApprover,
-          style: { background: "#fff", color: C.slate, border: "1.5px solid " + C.border, borderRadius: 9, padding: "9px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
-        }, "\uD83D\uDD13 Unlock Approver") : null,
+        /* Unlock-Approver removed: approver authority is auth-derived, and GC USERs
+           must never see any approval control (Issue 5). */
+        null,
         approver && !isGC ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid, padding: "9px 0" } }, "Awaiting GC Manager approval before PMC review") : null
       );
     } else if (ap === "PENDING PMC APPROVAL") {
@@ -11454,10 +11460,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.red, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2716 Reject Closure") : null,
-        !approver ? /*#__PURE__*/React.createElement("button", {
-          onClick: unlockApprover,
-          style: { background: "#fff", color: C.slate, border: "1.5px solid " + C.border, borderRadius: 9, padding: "9px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
-        }, "\uD83D\uDD13 Unlock Approver") : null,
+        /* Unlock-Approver removed: approver authority is auth-derived, and GC USERs
+           must never see any approval control (Issue 5). */
+        null,
         approver && !isPMC ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid, padding: "9px 0" } }, "GC approved \u2714 \u2014 awaiting PMC Manager review") : null
       );
     } else {
