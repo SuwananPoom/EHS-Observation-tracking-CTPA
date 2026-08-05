@@ -9125,24 +9125,41 @@ function App(_refApp) {
                 return /*#__PURE__*/React.createElement("span", { key: lg[0] },
                   /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: lg[1], marginRight: 5, verticalAlign: "middle" } }), lg[0]);
               }),
-              qPeriod === "WEEKLY" && qWeek && /*#__PURE__*/React.createElement("span", { key: "tcurve" },
+              vis.length > 0 && /*#__PURE__*/React.createElement("span", { key: "tcurve" },
                 /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 14, height: 3, borderRadius: 2, background: "#2563EB", marginRight: 5, verticalAlign: "middle" } }),
                 /*#__PURE__*/React.createElement("span", { style: { display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: "#fff", border: "2px solid #2563EB", marginRight: 5, verticalAlign: "middle", marginLeft: -12 } }),
                 "Total (Curve)"),
               qPeriod === "YEARLY" && /*#__PURE__*/React.createElement("span", { style: { color: C.slate } }, "(chart shows all years; tiles above = selected year only)")),
-            (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
+            (vis.length > 0)
               ? (function(){
-              /* Weekly combo chart: stacked bars + Total curve (read-only).
-                 Buckets from `wkSrc`: `sel` for Cumulative (per-week breakdown of the
-                 cumulative set) and All Weeks; obsAll for "Selected Week Only" so the
-                 selected week and the previous 4 weeks each render their real totals. */
+              /* Combo chart: stacked bars + Total curve (read-only). Now used for EVERY
+                 Reporting-Period view — Weekly (incl. All Weeks), Monthly, Quarterly, Yearly.
+                 Each bar's bucket is read from the SAME dataset that view's tiles/table use,
+                 so bar totals, curve markers, summary cards and the comparison table agree:
+                   - Weekly  → wkSrc (obsAll for Selected-Week-Only's 5-week window, else sel),
+                               matched by the week PERIOD (carries _p) via weekPeriodMatch.
+                   - Yearly  → obsAll (all-years context, matching the tiles' note).
+                   - Monthly/Quarterly → sel, matched by getPeriodKey(date) === r.key.
+                 Same resolvers the previous bar chart used, so no total changes. */
               var LN = "#2563EB";
+              var chartSrc = qPeriod === "YEARLY" ? obsAll : wkSrc;
               var rows = vis.map(function(r){
-                var b = wkSrc.filter(function(o){ return weekPeriodMatch(o, r._p); });
+                var b = r._p
+                  ? chartSrc.filter(function(o){ return weekPeriodMatch(o, r._p); })
+                  : chartSrc.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
                 var ua = 0, uc = 0, gd = 0;
                 b.forEach(function(o){ if(o.obsType === "UNSAFE_ACT") ua++; else if(o.obsType === "GOOD_OBS") gd++; else if(o.obsType === "UNSAFE_CON") uc++; });
-                return { p: r._p, ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
+                return { key: r.key,
+                         label: r._p ? r._p.id : periodKeyLabel(r.key, qPeriod),
+                         sub: r._p ? fmtWeekRange(r._p.startDate, r._p.endDate).replace(/\s\d{4}$/, "") : "",
+                         ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
               });
+              /* Light-blue highlight band: selected year (Yearly), the latest period WITH
+                 data (Monthly/Quarterly), else the last bar (Weekly — selected week in
+                 Selected-Week-Only, cut-off week in Cumulative, latest week in All Weeks). */
+              var hlIdx = rows.length - 1;
+              if(qPeriod === "YEARLY"){ for(var _h1 = 0; _h1 < rows.length; _h1++){ if(rows[_h1].key === qYearEff){ hlIdx = _h1; break; } } }
+              else if(qPeriod === "MONTHLY" || qPeriod === "QUARTERLY"){ for(var _h3 = 0; _h3 < rows.length; _h3++){ if(rows[_h3].total > 0) hlIdx = _h3; } }
               var mxT = rows.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
               function niceTop(v){ if(v <= 5) return 5; if(v <= 10) return 10; var s = v <= 30 ? 5 : v <= 60 ? 10 : v <= 100 ? 20 : 50; return Math.ceil(v / s) * s; }
               var top = niceTop(mxT);
@@ -9179,7 +9196,7 @@ function App(_refApp) {
                     /*#__PURE__*/React.createElement("linearGradient", { id: "wkLine", x1: "0", y1: "0", x2: "0", y2: "1" },
                       /*#__PURE__*/React.createElement("stop", { offset: "0%", stopColor: "#60A5FA" }),
                       /*#__PURE__*/React.createElement("stop", { offset: "100%", stopColor: "#1D4ED8" }))),
-                  /*#__PURE__*/React.createElement("rect", { x: padL + (rows.length - 1) * bw + 4, y: 6, width: bw - 8, height: padT + plotH + 28, rx: 8, fill: "#3B82F6", opacity: 0.08 }),
+                  /*#__PURE__*/React.createElement("rect", { x: padL + hlIdx * bw + 4, y: 6, width: bw - 8, height: padT + plotH + 28, rx: 8, fill: "#3B82F6", opacity: 0.08 }),
                   ticks.map(function(tk, ti){ return /*#__PURE__*/React.createElement("g", { key: ti },
                     /*#__PURE__*/React.createElement("line", { x1: padL - 4, x2: Wd - padR + 4, y1: Y(tk), y2: Y(tk), stroke: "#CBD5E1", strokeDasharray: "3 4", strokeWidth: 1 }),
                     /*#__PURE__*/React.createElement("text", { x: padL - 8, y: Y(tk) + 3, fontSize: 8, fill: "#94A3B8", textAnchor: "end" }, tk),
@@ -9187,7 +9204,7 @@ function App(_refApp) {
                   rows.map(function(r, ri){
                     var bx = X(ri) - barW / 2, base = padT + plotH, acc = 0;
                     var segs = [[r.ua, UA_C], [r.uc, UC_C], [r.gd, GD_C], [r.un, UN_C]];
-                    return /*#__PURE__*/React.createElement("g", { key: r.p.id },
+                    return /*#__PURE__*/React.createElement("g", { key: r.key },
                       segs.map(function(sg, si){
                         if(!sg[0]) return null;
                         var h = (sg[0] / top) * plotH;
@@ -9197,14 +9214,14 @@ function App(_refApp) {
                   }),
                   /*#__PURE__*/React.createElement("path", { d: areaD, fill: "url(#wkArea)" }),
                   /*#__PURE__*/React.createElement("path", { d: d, fill: "none", stroke: "url(#wkLine)", strokeWidth: 2.5, strokeLinecap: "round" }),
-                  rows.map(function(r, ri){ return /*#__PURE__*/React.createElement("g", { key: "pt" + r.p.id },
+                  rows.map(function(r, ri){ return /*#__PURE__*/React.createElement("g", { key: "pt" + r.key },
                     /*#__PURE__*/React.createElement("circle", { cx: X(ri), cy: Y(r.total), r: 4.5, fill: "#fff", stroke: LN, strokeWidth: 2.5 }),
                     /*#__PURE__*/React.createElement("text", { x: X(ri), y: Y(r.total) - 10, fontSize: 11, fontWeight: 800, fill: LN, textAnchor: "middle" }, r.total)); }),
                   rows.map(function(r, ri){
-                    var isSel = ri === rows.length - 1;
-                    return /*#__PURE__*/React.createElement("g", { key: "xl" + r.p.id },
-                      /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 18, fontSize: 10, fontWeight: 800, fill: isSel ? LN : C.text, textAnchor: "middle" }, r.p.id),
-                      /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 31, fontSize: 8, fill: "#94A3B8", textAnchor: "middle" }, fmtWeekRange(r.p.startDate, r.p.endDate).replace(/\s\d{4}$/, "")));
+                    var isSel = ri === hlIdx;
+                    return /*#__PURE__*/React.createElement("g", { key: "xl" + r.key },
+                      /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 18, fontSize: 10, fontWeight: 800, fill: isSel ? LN : C.text, textAnchor: "middle" }, r.label),
+                      r.sub ? /*#__PURE__*/React.createElement("text", { x: X(ri), y: padT + plotH + 31, fontSize: 8, fill: "#94A3B8", textAnchor: "middle" }, r.sub) : null);
                   }),
                   /*#__PURE__*/React.createElement("text", { x: Wd - padR + 8, y: 14, fontSize: 8, fill: LN, fontWeight: 700, textAnchor: "start" }, "Total")));
             })()
