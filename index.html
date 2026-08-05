@@ -1470,9 +1470,12 @@ function effAp(o){
      restarts from the beginning). Display-only; stored data untouched. */
   if(!hasAfterPhoto(o) && (ap === "APPROVED CLOSED" || ap === "PENDING REVIEW" || ap === "PENDING PMC APPROVAL")) return "OPEN";
   if(ap === "APPROVED CLOSED"){
+    /* Approved Closed requires BOTH sign-offs (or an Admin full-close override, which
+       records both). A GC sign-off alone — INCLUDING a legacy GC approval with no role —
+       is the GC stage ONLY: it resolves to PENDING PMC APPROVAL (awaiting PMC review),
+       never Approved Closed. No GC sign-off → PENDING REVIEW (awaiting GC). */
     var hasGC = !!(o && o.clientApprovedBy), hasPMC = !!(o && o.lpApprovedBy);
     if(hasGC && hasPMC) return "APPROVED CLOSED";
-    if(hasGC && !o.clientApprovedRole) return "APPROVED CLOSED";   /* legacy client-era */
     if(hasGC) return "PENDING PMC APPROVAL";
     return "PENDING REVIEW";
   }
@@ -1497,11 +1500,15 @@ function effStatus(o){
      workflow (photo → Pending Verify → GC → PMC → Approved Closed). */
   if(!hasAfterPhoto(o) && (o.status === "CLOSED" || o.status === "PENDING_VERIFY" || apOf(o) === "APPROVED CLOSED")) return "IN_PROGRESS";
   if(o.status === "CLOSED"){
+    /* Derive from the ACTUAL sign-offs, never the stored status alone: an observation is
+       CLOSED only when BOTH a GC and a PMC sign-off exist (an Admin full-close override
+       records both). A GC sign-off ALONE — INCLUDING a legacy GC approval that carries no
+       role — means the GC stage is complete but PMC is still pending → PENDING_VERIFY (the
+       "Pending PMC" stage). No sign-off at all → still awaiting GC review. A legacy GC
+       approval is never treated as PMC approval or final closure. */
     var hasGC = !!o.clientApprovedBy, hasPMC = !!o.lpApprovedBy;
     if(hasGC && hasPMC) return "CLOSED";
-    if(hasGC && !o.clientApprovedRole) return "CLOSED";   /* legacy client-era */
-    if(hasGC) return "PENDING_VERIFY";
-    return "PENDING_VERIFY";   /* closed via form with no sign-offs → awaiting GC review */
+    return "PENDING_VERIFY";
   }
   return o.status;
 }
@@ -2030,7 +2037,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
       v(pz.area === "Other" ? pz.other : pz.area),
       v(o.cat), v(o.fc),
       v((RISK[o.risk]||{}).label),
-      v((STATUS[o.status]||{}).label),
+      v((STATUS[effStatus(o)]||{}).label),
       v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
       /* Export shows an approver ONLY when a real sign-off ROLE is on record
          (set solely by the GC/PMC Approve buttons). A backfilled/legacy closer
@@ -2192,10 +2199,10 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
 
     /* ═══ SHEET 1: Summary ═══ */
     var total=rows.length;
-    var nOpen=rows.filter(function(o){return o.status==="OPEN";}).length;
-    var nIP=rows.filter(function(o){return o.status==="IN_PROGRESS";}).length;
-    var nPV=rows.filter(function(o){return o.status==="PENDING_VERIFY";}).length;
-    var nClosed=rows.filter(function(o){return o.status==="CLOSED";}).length;
+    var nOpen=rows.filter(function(o){return effStatus(o)==="OPEN";}).length;
+    var nIP=rows.filter(function(o){return effStatus(o)==="IN_PROGRESS";}).length;
+    var nPV=rows.filter(function(o){return effStatus(o)==="PENDING_VERIFY";}).length;
+    var nClosed=rows.filter(function(o){return effStatus(o)==="CLOSED";}).length;
     var nOD=rows.filter(function(o){return isOD(o);}).length;
     var nSer=rows.filter(function(o){return o.risk==="SERIOUS";}).length;
     var nMaj=rows.filter(function(o){return o.risk==="MAJOR";}).length;
@@ -2280,8 +2287,8 @@ function printRegister(rows) {
       label: o.risk,
       color: "#999"
     };
-    var st = STATUS[o.status] || {
-      label: o.status,
+    var st = STATUS[effStatus(o)] || {
+      label: effStatus(o),
       color: "#999"
     };
     var ot = OBS_TYPE[o.obsType] || {
@@ -2449,7 +2456,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     var sl = pptx.addSlide();
     sl.background = { color:"FFFFFF" };
     var rk      = RISK[o.risk]      || { label: o.risk      || "" };
-    var st      = STATUS[o.status]  || { label: o.status    || "" };
+    var st      = STATUS[effStatus(o)]  || { label: effStatus(o)    || "" };
     var ot      = OBS_TYPE[o.obsType] || { label: o.obsType || "" };
     var rkColor = o.risk === "SERIOUS" ? RED : o.risk === "MAJOR" ? AMB : G;
     var stLbl   = (st.label || o.status || "").replace(/_/g, " ");
@@ -2473,7 +2480,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
       ["Due Date",         o.due     || "—"],
       ["Raised By",        o.by      || "—"],
       ["Closed Date",      o.closed  || "—"],
-      ["Closed By",        o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
+      ["Closed By",        effStatus(o) === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     var detY = 0.82;
     fields.forEach(function(f, fi) {
@@ -2553,8 +2560,8 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     var hrData = [
       [hCell("ID","7F1D1D"), hCell("Date","7F1D1D"), hCell("Zone / Area","7F1D1D"), hCell("Contractor","7F1D1D"), hCell("Description","7F1D1D"), hCell("Status","7F1D1D")]
     ].concat(hrObs.map(function(o) {
-      var stC = o.status === "CLOSED" ? G : RED;
-      var stL = (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ");
+      var stC = effStatus(o) === "CLOSED" ? G : RED;
+      var stL = (STATUS[effStatus(o)]||{label:effStatus(o)}).label.replace(/_/g," ");
       var desc = (o.desc||"").length > 85 ? (o.desc||"").slice(0,85)+"…" : (o.desc||"");
       return [
         { text:o.id,             options:{bold:true, fontSize:9, fontFace:"Arial"} },
@@ -2727,7 +2734,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
     var co=o.company||"Unknown";
     if (!contMap2[co]) contMap2[co]={total:0,open:0,closed:0,overdue:0};
     contMap2[co].total++;
-    if (o.status==="CLOSED") contMap2[co].closed++; else contMap2[co].open++;
+    if (effStatus(o)==="CLOSED") contMap2[co].closed++; else contMap2[co].open++;
     if (isOD(o)) contMap2[co].overdue++;
   });
   var ct2Keys = Object.keys(contMap2).sort();
@@ -2790,7 +2797,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
   __fcRows2.forEach(function(o) {
     doc.addPage();
     var rk  = RISK[o.risk]     || { label:o.risk    ||"" };
-    var st  = STATUS[o.status] || { label:o.status   ||"" };
+    var st  = STATUS[effStatus(o)] || { label:effStatus(o)   ||"" };
     var ot  = OBS_TYPE[o.obsType]||{ label:o.obsType||"" };
     var rkColor = o.risk==="SERIOUS"?"#EF4444":o.risk==="MAJOR"?"#F59E0B":"#00CC79";
     var stLbl   = (st.label||o.status||"").replace(/_/g," ");
@@ -2815,7 +2822,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
       ["Due Date",    o.due     || "—"],
       ["Raised By",   o.by      || "—"],
       ["Closed Date", o.closed  || "—"],
-      ["Closed By",   o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
+      ["Closed By",   effStatus(o) === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     fields.forEach(function(f,fi) {
       var fy = fieldY + fi*12;
@@ -2906,7 +2913,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
         return [
           o.id, o.date, o.zone||"—", o.company||"—",
           (o.desc||"").slice(0,100)+((o.desc||"").length>100?"…":""),
-          (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ")
+          (STATUS[effStatus(o)]||{label:effStatus(o)}).label.replace(/_/g," ")
         ];
       }),
       headStyles:{ fillColor:hx("#7F1D1D"), textColor:[255,255,255], fontStyle:"bold", fontSize:9 },
@@ -2959,10 +2966,10 @@ function ReportView(props) {
   }, [obs, dateFrom, dateTo]);
 
   var totalF   = filtered.length;
-  var openF    = filtered.filter(function(o){ return o.status==="OPEN"; }).length;
-  var closedF  = filtered.filter(function(o){ return o.status==="CLOSED"; }).length;
+  var openF    = filtered.filter(function(o){ return effStatus(o)==="OPEN"; }).length;
+  var closedF  = filtered.filter(function(o){ return effStatus(o)==="CLOSED"; }).length;
   var overdueF = filtered.filter(function(o){ return isOD(o); }).length;
-  var seriousF = filtered.filter(function(o){ return o.risk==="SERIOUS"&&o.status!=="CLOSED"; }).length;
+  var seriousF = filtered.filter(function(o){ return o.risk==="SERIOUS"&&effStatus(o)!=="CLOSED"; }).length;
   var photosF  = filtered.filter(function(o){ return (o.pb&&o.pb.length)||(o.pa&&o.pa.length); }).length;
 
   function setWeekRange(wk) {
@@ -10346,7 +10353,7 @@ function App(_refApp) {
       style: pill(rk.bg, rk.text, 9)
     }, rk.label), /*#__PURE__*/React.createElement("span", {
       style: pill((STATUS[effStatus(o)]||STATUS["OPEN"]).bg, (STATUS[effStatus(o)]||STATUS["OPEN"]).text, 9)
-    }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
+    }, (STATUS[effStatus(o)]||STATUS["OPEN"]).label), /*#__PURE__*/React.createElement("span", {
       style: pill((APPROVAL[effAp(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -10377,8 +10384,10 @@ function App(_refApp) {
         lineHeight: 1.5
       }
     }, o.desc), /*#__PURE__*/React.createElement("div", {
-      style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
-    }, "\u2714 Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
+      /* "Raised by" is NOT an approval or closure step \u2014 neutral light-blue, never green
+         (green is reserved for completed GC / PMC approval rows). */
+      style: { fontSize: 10, color: "#1E3A5F", background: "#E8F2FF", border: "1px solid #C7DBF0", borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
+    }, "\ud83d\udcdd Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
       var ap = effAp(o);
       var info = null;
       if (ap === "PENDING REVIEW" && o.submittedForClosureBy) {
@@ -10522,8 +10531,8 @@ function App(_refApp) {
       }
     }, "Edit"), effAp(o) === "PENDING REVIEW" || effAp(o) === "PENDING PMC APPROVAL" || effAp(o) === "APPROVED CLOSED" || effAp(o) === "REJECTED"
       ? /*#__PURE__*/React.createElement("span", {
-          style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
-        }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN).label)
+          style: (function(){ var B = (APPROVAL[effAp(o)] || STATUS[effStatus(o)]) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
+        }, ((APPROVAL[effAp(o)] || STATUS[effStatus(o)]) || STATUS.OPEN).label)
       : /*#__PURE__*/React.createElement("select", {
           value: o.status,
           onClick: function onClick(e) { return e.stopPropagation(); },
@@ -11147,8 +11156,8 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
   }, OBS_TYPE[det.obsType].label), det.risk && RISK[det.risk] && /*#__PURE__*/React.createElement("span", {
     style: pill((RISK[det.risk]||RISK["MINOR"]).bg, (RISK[det.risk]||RISK["MINOR"]).text, 10)
   }, RISK[det.risk].label), /*#__PURE__*/React.createElement("span", {
-    style: pill((_STATUS$det$status = STATUS[det.status]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[det.status]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
-  }, (_STATUS$det$status3 = STATUS[det.status]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
+    style: pill((_STATUS$det$status = STATUS[effStatus(det)]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[effStatus(det)]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
+  }, (_STATUS$det$status3 = STATUS[effStatus(det)]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
     style: pill(C.redBg, C.redDk, 10)
   }, "OVERDUE"), APPROVAL[effAp(det)] && /*#__PURE__*/React.createElement("span", {
     style: pill((APPROVAL[effAp(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[effAp(det)]||APPROVAL["OPEN"]).text, 10)
@@ -11175,7 +11184,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
   }, {
     l: "Closed Date",
     v: det.closed || "—"
-  }, det.status === "CLOSED" ? {
+  }, effStatus(det) === "CLOSED" ? {
     l: "Closed By",
     v: det.closedBy || "—"
   } : null, {

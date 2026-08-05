@@ -138,13 +138,33 @@ console.log("\n5) Role permissions — only GC Manager / Admin can GC-approve");
   ok("Admin can approve any company", AC.canApproveGCFor({ company: "Anything" }) === true);
 }
 
-console.log("\n6) Existing ~1,147 legacy closed — counted Closed, shown honestly");
+console.log("\n6) GC-only (incl. LEGACY) closed records → Pending PMC, NOT Approved Closed");
 {
-  const legacy = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "Ritta", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
-  ok("counts as Closed (effStatus)", effStatus(legacy) === "CLOSED");
-  ok("counts in Approved-Closed bucket (effAp) — unchanged", effAp(legacy) === "APPROVED CLOSED");
-  ok("flagged unapproved for honest display", isUnapprovedClosed(legacy) === true);
-  ok("export mirror blanks its approver (no role)", rpcGcApproved(legacy) === false);
+  /* The reported bug: a stored-CLOSED record with a GC name (legacy, no role) and NO
+     PMC sign-off was classified CLOSED / APPROVED CLOSED. It must now be Pending PMC. */
+  const legacy = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "Pimonrat(Ritta)", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
+  ok("legacy GC-only → effStatus PENDING_VERIFY (NOT CLOSED)", effStatus(legacy) === "PENDING_VERIFY");
+  ok("legacy GC-only → effAp PENDING PMC APPROVAL (awaiting PMC)", effAp(legacy) === "PENDING PMC APPROVAL");
+  ok("legacy GC-only → NOT Approved Closed", effAp(legacy) !== "APPROVED CLOSED");
+  ok("legacy GC-only → export mirror blanks its approver (no role)", rpcGcApproved(legacy) === false);
+  /* A GC sign-off WITH a role but no PMC → also Pending PMC (not closed). */
+  const gcRoleNoPmc = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", clientApprovedRole: "GC Manager", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
+  ok("GC-role-only (no PMC) → Pending PMC", effAp(gcRoleNoPmc) === "PENDING PMC APPROVAL" && effStatus(gcRoleNoPmc) === "PENDING_VERIFY");
+  /* No sign-off at all but stored CLOSED → awaiting GC (Pending Review). */
+  const noSignoff = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
+  ok("force-closed no sign-off → awaiting GC (PENDING REVIEW / PENDING_VERIFY)", effAp(noSignoff) === "PENDING REVIEW" && effStatus(noSignoff) === "PENDING_VERIFY");
+  /* Both sign-offs (even legacy names, no roles) → Closed / Approved Closed. */
+  const bothLegacy = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GCname", lpApprovedBy: "PMCname", pa: [{ _hasPhoto: true }] };
+  ok("both sign-offs present (even legacy) → CLOSED / APPROVED CLOSED", effStatus(bothLegacy) === "CLOSED" && effAp(bothLegacy) === "APPROVED CLOSED");
+  /* Admin full-close override records BOTH sign-offs → Approved Closed. */
+  const adminOverride = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "A", clientApprovedRole: "Admin", lpApprovedBy: "A", lpApprovedRole: "Admin", pa: [{ _hasPhoto: true }] };
+  ok("admin full-close override (both) → Approved Closed", effStatus(adminOverride) === "CLOSED" && effAp(adminOverride) === "APPROVED CLOSED");
+}
+
+console.log("\n6b) Card styling: 'Raised by' row is neutral, not green");
+{
+  ok("'Raised by' row uses neutral light-blue background (#E8F2FF)", /#E8F2FF"[\s\S]{0,170}Raised by/.test(html));
+  ok("'Raised by' row no longer uses the green ✔ approval styling", !html.includes("✔ Raised by"));
 }
 
 console.log("\n7) Real GC+PMC approval and mid-funnel still work");
@@ -176,8 +196,8 @@ console.log("\n9) EVIDENCE RULE — no After photo → cannot be/stay closed (UA
   ok("legacy closed WITHOUT photo → effAp OPEN (restart workflow)", effAp(legacyNoPhoto) === "OPEN");
 
   const legacyWithPhoto = { status: "CLOSED", pa: [{ _hasPhoto: true }], clientApprovedBy: "Someone" };
-  ok("legacy closed WITH photo → still CLOSED (counts unchanged)", effStatus(legacyWithPhoto) === "CLOSED");
-  ok("legacy closed WITH photo → still APPROVED CLOSED bucket", effAp(legacyWithPhoto) === "APPROVED CLOSED");
+  ok("legacy GC-only closed WITH photo → PENDING_VERIFY (awaiting PMC)", effStatus(legacyWithPhoto) === "PENDING_VERIFY");
+  ok("legacy GC-only closed WITH photo → PENDING PMC APPROVAL bucket", effAp(legacyWithPhoto) === "PENDING PMC APPROVAL");
 
   const realClosedWithPhoto = { status: "CLOSED", pa: [{}], clientApprovedBy: "GC", clientApprovedRole: "GC Manager", lpApprovedBy: "PMC", lpApprovedRole: "PMC Manager" };
   ok("properly approved closed WITH photo → unchanged", effStatus(realClosedWithPhoto) === "CLOSED" && effAp(realClosedWithPhoto) === "APPROVED CLOSED");
