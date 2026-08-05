@@ -337,6 +337,17 @@ function canApprovePMC(){
   return r === "dayone_admin" || r === "pmc_manager";
 }
 function isAdmin(){ return userRole() === "dayone_admin"; }
+/* Authority to MANUALLY set/edit an observation's closed status or closure metadata
+   (Closed Date, Closed By) — an Admin OVERRIDE only. A normal close is NEVER manual:
+   it is produced solely by completing BOTH approval stages (GC Manager -> PMC Manager)
+   in approveClosure(), which alone sets status CLOSED. No single manager — GC OR PMC —
+   may close an observation on their own, so this must NOT include canApproveGC/PMC.
+   (Issue 1: status must not become Closed until BOTH approvals are complete.) */
+function canCloseObs(){ return isAdmin(); }
+/* May this account act as a closure approver AT ALL (GC or PMC stage)? Drives whether
+   the approval UI (Approve / Reject / Unlock) is rendered — GC USERs get NONE of it
+   (Issue 5). Admin has both GC and PMC authority, so it is covered here too. */
+function canApproveAny(){ return canApproveGC() || canApprovePMC(); }
 /* Role-based UI visibility (frontend-only; role from the authenticated profile).
    userRole() falls back to "viewer" when the profile is missing/not yet loaded,
    so restricted components stay HIDDEN by default — no privileged default, no
@@ -1430,8 +1441,21 @@ function apOf(o) {
 /* True when a record is CLOSED/"approved closed" by classification but carries NO
    approval sign-off at all (neither GC nor PMC) — e.g. closed directly via the Edit
    form. Display-only: badges/texts must not claim managers approved. */
+/* EVIDENCE RULE (UAT OBS-1036): closure requires proof. An observation with no
+   After photo can never be — or remain — Pending Verify / Closed / Approved
+   Closed, regardless of stored status or sign-off fields. */
+function hasAfterPhoto(o){ return !!(o && o.pa && o.pa.length > 0); }
 function isUnapprovedClosed(o){
-  return apOf(o) === "APPROVED CLOSED" && !(o && (o.clientApprovedBy || o.lpApprovedBy));
+  /* "Approved" requires a REAL manager sign-off, identified by the approval ROLE
+     (clientApprovedRole / lpApprovedRole) — set ONLY by the GC/PMC Approve
+     buttons. A backfilled/legacy approver NAME with no role does NOT count as an
+     approval, so historical / on-the-spot form-closed records are shown honestly
+     as closed-without-sign-off and never as "Approved by GC". This is display
+     classification only — apOf/effAp/effStatus (counts, filters, exports) are
+     intentionally left unchanged, so these records stay counted as Closed. */
+  var realGC  = !!(o && o.clientApprovedBy && o.clientApprovedRole);
+  var realPMC = !!(o && o.lpApprovedBy && o.lpApprovedRole);
+  return apOf(o) === "APPROVED CLOSED" && !(realGC || realPMC);
 }
 /* ══ EFFECTIVE WORKFLOW STAGE — the single stage resolver for display, buttons,
    and stage-scoped actions. A stored "APPROVED CLOSED" is honoured ONLY when the
@@ -1441,10 +1465,17 @@ function isUnapprovedClosed(o){
 function effAp(o){
   if(!APPROVAL_ENABLED) return null;
   var ap = apOf(o);
+  /* EVIDENCE RULE: without an After photo a record cannot hold any closure-
+     workflow stage — it resolves to OPEN (After photo required, workflow
+     restarts from the beginning). Display-only; stored data untouched. */
+  if(!hasAfterPhoto(o) && (ap === "APPROVED CLOSED" || ap === "PENDING REVIEW" || ap === "PENDING PMC APPROVAL")) return "OPEN";
   if(ap === "APPROVED CLOSED"){
+    /* Approved Closed requires BOTH sign-offs (or an Admin full-close override, which
+       records both). A GC sign-off alone — INCLUDING a legacy GC approval with no role —
+       is the GC stage ONLY: it resolves to PENDING PMC APPROVAL (awaiting PMC review),
+       never Approved Closed. No GC sign-off → PENDING REVIEW (awaiting GC). */
     var hasGC = !!(o && o.clientApprovedBy), hasPMC = !!(o && o.lpApprovedBy);
     if(hasGC && hasPMC) return "APPROVED CLOSED";
-    if(hasGC && !o.clientApprovedRole) return "APPROVED CLOSED";   /* legacy client-era */
     if(hasGC) return "PENDING PMC APPROVAL";
     return "PENDING REVIEW";
   }
@@ -1464,12 +1495,20 @@ function effAp(o){
    Read-only derivation — never written back; stored records stay untouched. */
 function effStatus(o){
   if(!o) return "OPEN";
+  /* EVIDENCE RULE: no After photo → cannot be (or stay) Closed / Pending Verify.
+     Such records show as IN_PROGRESS until a new After photo restarts the
+     workflow (photo → Pending Verify → GC → PMC → Approved Closed). */
+  if(!hasAfterPhoto(o) && (o.status === "CLOSED" || o.status === "PENDING_VERIFY" || apOf(o) === "APPROVED CLOSED")) return "IN_PROGRESS";
   if(o.status === "CLOSED"){
+    /* Derive from the ACTUAL sign-offs, never the stored status alone: an observation is
+       CLOSED only when BOTH a GC and a PMC sign-off exist (an Admin full-close override
+       records both). A GC sign-off ALONE — INCLUDING a legacy GC approval that carries no
+       role — means the GC stage is complete but PMC is still pending → PENDING_VERIFY (the
+       "Pending PMC" stage). No sign-off at all → still awaiting GC review. A legacy GC
+       approval is never treated as PMC approval or final closure. */
     var hasGC = !!o.clientApprovedBy, hasPMC = !!o.lpApprovedBy;
     if(hasGC && hasPMC) return "CLOSED";
-    if(hasGC && !o.clientApprovedRole) return "CLOSED";   /* legacy client-era */
-    if(hasGC) return "PENDING_VERIFY";
-    return "PENDING_VERIFY";   /* closed via form with no sign-offs → awaiting GC review */
+    return "PENDING_VERIFY";
   }
   return o.status;
 }
@@ -1869,7 +1908,10 @@ var compressPhoto = function compressPhoto(f) {
   });
 };
 var isOD = function isOD(o) {
-  return effStatus(o) !== "CLOSED" && o.due && o.due < td();
+  /* Overdue = the corrective action is still outstanding past its due date. Fully closed
+     items are excluded — and so are Pending-PMC items: their corrective action is complete
+     and the record is merely awaiting PMC Manager sign-off, so it must not read as overdue. */
+  return effStatus(o) !== "CLOSED" && effAp(o) !== "PENDING PMC APPROVAL" && o.due && o.due < td();
 };
 var pStat = function pStat(o) {
   var b = o.pb ? o.pb.length : 0,
@@ -1998,10 +2040,14 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
       v(pz.area === "Other" ? pz.other : pz.area),
       v(o.cat), v(o.fc),
       v((RISK[o.risk]||{}).label),
-      v((STATUS[o.status]||{}).label),
+      v((STATUS[effStatus(o)]||{}).label),
       v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
-      v(fmtApprover(o.clientApprovedBy)),
-      v(fmtApprover(o.lpApprovedBy)),
+      /* Export shows an approver ONLY when a real sign-off ROLE is on record
+         (set solely by the GC/PMC Approve buttons). A backfilled/legacy closer
+         name with no role is never exported as "GC/PMC Approved By". Column
+         structure is unchanged; the cell is simply blank for such records. */
+      v(o.clientApprovedRole ? fmtApprover(o.clientApprovedBy) : ""),
+      v(o.lpApprovedRole ? fmtApprover(o.lpApprovedBy) : ""),
       v(o.desc), v(o.rect),
       "", ""  /* photo cells filled with images */
     ];
@@ -2156,10 +2202,10 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
 
     /* ═══ SHEET 1: Summary ═══ */
     var total=rows.length;
-    var nOpen=rows.filter(function(o){return o.status==="OPEN";}).length;
-    var nIP=rows.filter(function(o){return o.status==="IN_PROGRESS";}).length;
-    var nPV=rows.filter(function(o){return o.status==="PENDING_VERIFY";}).length;
-    var nClosed=rows.filter(function(o){return o.status==="CLOSED";}).length;
+    var nOpen=rows.filter(function(o){return effStatus(o)==="OPEN";}).length;
+    var nIP=rows.filter(function(o){return effStatus(o)==="IN_PROGRESS";}).length;
+    var nPV=rows.filter(function(o){return effStatus(o)==="PENDING_VERIFY";}).length;
+    var nClosed=rows.filter(function(o){return effStatus(o)==="CLOSED";}).length;
     var nOD=rows.filter(function(o){return isOD(o);}).length;
     var nSer=rows.filter(function(o){return o.risk==="SERIOUS";}).length;
     var nMaj=rows.filter(function(o){return o.risk==="MAJOR";}).length;
@@ -2244,8 +2290,8 @@ function printRegister(rows) {
       label: o.risk,
       color: "#999"
     };
-    var st = STATUS[o.status] || {
-      label: o.status,
+    var st = STATUS[effStatus(o)] || {
+      label: effStatus(o),
       color: "#999"
     };
     var ot = OBS_TYPE[o.obsType] || {
@@ -2413,7 +2459,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     var sl = pptx.addSlide();
     sl.background = { color:"FFFFFF" };
     var rk      = RISK[o.risk]      || { label: o.risk      || "" };
-    var st      = STATUS[o.status]  || { label: o.status    || "" };
+    var st      = STATUS[effStatus(o)]  || { label: effStatus(o)    || "" };
     var ot      = OBS_TYPE[o.obsType] || { label: o.obsType || "" };
     var rkColor = o.risk === "SERIOUS" ? RED : o.risk === "MAJOR" ? AMB : G;
     var stLbl   = (st.label || o.status || "").replace(/_/g, " ");
@@ -2437,7 +2483,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
       ["Due Date",         o.due     || "—"],
       ["Raised By",        o.by      || "—"],
       ["Closed Date",      o.closed  || "—"],
-      ["Closed By",        o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
+      ["Closed By",        effStatus(o) === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     var detY = 0.82;
     fields.forEach(function(f, fi) {
@@ -2517,8 +2563,8 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     var hrData = [
       [hCell("ID","7F1D1D"), hCell("Date","7F1D1D"), hCell("Zone / Area","7F1D1D"), hCell("Contractor","7F1D1D"), hCell("Description","7F1D1D"), hCell("Status","7F1D1D")]
     ].concat(hrObs.map(function(o) {
-      var stC = o.status === "CLOSED" ? G : RED;
-      var stL = (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ");
+      var stC = effStatus(o) === "CLOSED" ? G : RED;
+      var stL = (STATUS[effStatus(o)]||{label:effStatus(o)}).label.replace(/_/g," ");
       var desc = (o.desc||"").length > 85 ? (o.desc||"").slice(0,85)+"…" : (o.desc||"");
       return [
         { text:o.id,             options:{bold:true, fontSize:9, fontFace:"Arial"} },
@@ -2691,7 +2737,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
     var co=o.company||"Unknown";
     if (!contMap2[co]) contMap2[co]={total:0,open:0,closed:0,overdue:0};
     contMap2[co].total++;
-    if (o.status==="CLOSED") contMap2[co].closed++; else contMap2[co].open++;
+    if (effStatus(o)==="CLOSED") contMap2[co].closed++; else contMap2[co].open++;
     if (isOD(o)) contMap2[co].overdue++;
   });
   var ct2Keys = Object.keys(contMap2).sort();
@@ -2754,7 +2800,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
   __fcRows2.forEach(function(o) {
     doc.addPage();
     var rk  = RISK[o.risk]     || { label:o.risk    ||"" };
-    var st  = STATUS[o.status] || { label:o.status   ||"" };
+    var st  = STATUS[effStatus(o)] || { label:effStatus(o)   ||"" };
     var ot  = OBS_TYPE[o.obsType]||{ label:o.obsType||"" };
     var rkColor = o.risk==="SERIOUS"?"#EF4444":o.risk==="MAJOR"?"#F59E0B":"#00CC79";
     var stLbl   = (st.label||o.status||"").replace(/_/g," ");
@@ -2779,7 +2825,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
       ["Due Date",    o.due     || "—"],
       ["Raised By",   o.by      || "—"],
       ["Closed Date", o.closed  || "—"],
-      ["Closed By",   o.status === "CLOSED" ? (o.closedBy || "—") : "—"]
+      ["Closed By",   effStatus(o) === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
     fields.forEach(function(f,fi) {
       var fy = fieldY + fi*12;
@@ -2870,7 +2916,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
         return [
           o.id, o.date, o.zone||"—", o.company||"—",
           (o.desc||"").slice(0,100)+((o.desc||"").length>100?"…":""),
-          (STATUS[o.status]||{label:o.status}).label.replace(/_/g," ")
+          (STATUS[effStatus(o)]||{label:effStatus(o)}).label.replace(/_/g," ")
         ];
       }),
       headStyles:{ fillColor:hx("#7F1D1D"), textColor:[255,255,255], fontStyle:"bold", fontSize:9 },
@@ -2923,10 +2969,10 @@ function ReportView(props) {
   }, [obs, dateFrom, dateTo]);
 
   var totalF   = filtered.length;
-  var openF    = filtered.filter(function(o){ return o.status==="OPEN"; }).length;
-  var closedF  = filtered.filter(function(o){ return o.status==="CLOSED"; }).length;
+  var openF    = filtered.filter(function(o){ return effStatus(o)==="OPEN"; }).length;
+  var closedF  = filtered.filter(function(o){ return effStatus(o)==="CLOSED"; }).length;
   var overdueF = filtered.filter(function(o){ return isOD(o); }).length;
-  var seriousF = filtered.filter(function(o){ return o.risk==="SERIOUS"&&o.status!=="CLOSED"; }).length;
+  var seriousF = filtered.filter(function(o){ return o.risk==="SERIOUS"&&effStatus(o)!=="CLOSED"; }).length;
   var photosF  = filtered.filter(function(o){ return (o.pb&&o.pb.length)||(o.pa&&o.pa.length); }).length;
 
   function setWeekRange(wk) {
@@ -6071,7 +6117,11 @@ function App(_refApp) {
     if (canApproveGC() && !canApprovePMC()) return "CLIENT";   /* GC-only roles */
     if (canApprovePMC() && !canApproveGC()) return "LP";       /* PMC-only roles */
     if (canApproveGC() && canApprovePMC())  return "BOTH";     /* Admin/DayOne — can approve both GC and PMC */
-    try{ return sessionStorage.getItem("ctpa_apr_role")||""; }catch(e){ return ""; }
+    /* Not an approver by authenticated role → NO approver role. This previously fell
+       back to sessionStorage ("ctpa_apr_role"), which let a stale/legacy code-unlock
+       leak an approver role to a GC USER (Issue 2: legacy GC User could approve).
+       Approver authority now comes SOLELY from the authenticated account. */
+    return "";
   })()),
     approverRole = _aprSt[0],
     setApproverRole = _aprSt[1];
@@ -6084,14 +6134,17 @@ function App(_refApp) {
     var role = "";
     /* GC approval is role-restricted (GC Manager / Admin only) — the legacy access
        code can no longer grant it. PMC code unlock is unchanged. */
+    /* Both GC and PMC approval are role-restricted (GC Manager/Admin, PMC Manager/
+       Admin). The legacy access codes can no longer grant EITHER approver role —
+       authorization comes solely from the authenticated account. */
     if(code === GC_CODE){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
-    else if(code === PMC_CODE) role = "LP";
+    else if(code === PMC_CODE){ toast$("PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
     else if(code === APPROVER_CODE){
       var pick = window.prompt("Enter your role — type GC or PMC:");
       if(pick === null) return;
       pick = (pick||"").trim().toUpperCase();
       if(pick === "GC" || pick === "CLIENT"){ toast$("GC Manager approval requires a GC Manager or Admin account.", "err"); return; }
-      else if(pick === "PMC" || pick === "LP") role = "LP";
+      else if(pick === "PMC" || pick === "LP"){ toast$("PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
     }
     if(role){
       try{ sessionStorage.setItem("ctpa_apr_role", role); }catch(e){}
@@ -6710,6 +6763,14 @@ function App(_refApp) {
      is truly closed — so the donut/cards can never show 100% while Open items remain. */
   var clR = S.n ? (S.closed === S.n ? 100 : Math.min(99.9, Math.floor(S.closed / S.n * 1000) / 10)) : 0;
   var stCh = function stCh(id, ns) {
+    /* Closing is a manager/admin outcome via the GC + PMC approval workflow — a
+       normal GC USER may never move an observation to CLOSED by any path (defence
+       in depth beyond hiding the CLOSED option from the status controls). */
+    if (ns === "CLOSED" && !canCloseObs()) {
+      toast$("Not authorized — closing requires GC Manager + PMC Manager approval.", "err");
+      setCC(null);
+      return;
+    }
     if (ns === "CLOSED" && APPROVAL_ENABLED) {
       var target = obs.find(function (o) {
         return o.id === id;
@@ -6806,6 +6867,8 @@ function App(_refApp) {
       /* Contractor scope: this observation's contractor must match the GC Manager's
          own contractor (Admin exempt). */
       if(!canApproveGCFor(target)){ toast$("Not authorized — " + (target.company || "this contractor") + " observations can only be GC-approved by that contractor's GC Manager or an Admin.", "err"); return; }
+      /* EVIDENCE RULE: approval requires the After photo to still exist */
+      if(!hasAfterPhoto(target)){ toast$("Cannot approve — no After photo on record. A new After photo is required.", "err"); return; }
       patch.clientApprovedBy = who;
       patch.clientApprovedById = (_authProfile() && _authProfile().id) || "";
       /* Record the approver's REAL authenticated role — an Admin approving in the
@@ -6823,6 +6886,13 @@ function App(_refApp) {
       if (ap !== "PENDING PMC APPROVAL") {
         toast$("PMC Manager can only approve after GC Manager has approved", "err"); return;
       }
+      /* Enforce at action time (defence in depth beyond approver-role visibility):
+         PMC sign-off — and therefore Approved Closed — requires a PMC Manager or
+         Admin account. A legacy approver-code unlock can never substitute. This
+         mirrors the GC branch's canApproveGC() gate above. */
+      if(!canApprovePMC()){ toast$("Not authorized — PMC Manager approval requires a PMC Manager or Admin account.", "err"); return; }
+      /* EVIDENCE RULE: final closure requires the After photo to still exist */
+      if(!hasAfterPhoto(target)){ toast$("Cannot approve closure — no After photo on record. A new After photo is required.", "err"); return; }
       patch.lpApprovedBy = who;
       patch.lpApprovedById = (_authProfile() && _authProfile().id) || "";
       patch.lpApprovedRole = userRole() === "dayone_admin" ? "Admin" : "PMC Manager";
@@ -6977,6 +7047,66 @@ function App(_refApp) {
     var added = photos.slice(prev.length);
     var slotKey = id + "|" + k;
 
+    /* ══ EVIDENCE RULE — deleting the LAST After photo (UAT OBS-1036) ══
+       A record in the closure workflow (Pending Verify / Approved Closed /
+       Closed) loses its proof when its last After photo is removed, so the
+       deletion must confirm first, then cancel BOTH manager sign-offs
+       (archived to approvalHistory — never destroyed), clear the closure
+       fields, and reset the record to IN_PROGRESS for a full restart:
+       new After photo → Pending Verify (GC) → GC approved → PMC → Closed. */
+    var __uphReset = null;
+    if (k === "pa" && photos.length === 0 && prev.length > 0) {
+      var curFR = obs.find(function(o){ return o.id === id; }) || {};
+      var apNow = apOf(curFR) || "OPEN";
+      var stNow = curFR.status || "OPEN";
+      var wasClosed = apNow === "APPROVED CLOSED" || stNow === "CLOSED";
+      var wasPending = apNow === "PENDING REVIEW" || apNow === "PENDING PMC APPROVAL" || stNow === "PENDING_VERIFY";
+      if (wasClosed || wasPending) {
+        var msg = wasClosed
+          ? "Deleting the last After photo will cancel the existing approvals and reopen this observation. Do you want to continue?"
+          : "Deleting the last After photo will remove this observation from the verification queue and reset it to In Progress. Do you want to continue?";
+        if (!window.confirm(msg)) return;   /* user cancelled — photo kept, nothing changes */
+        /* archive ALL existing sign-offs (incl. legacy names) before clearing —
+           approval history is preserved, per the Issue #4 audit convention */
+        var hist3 = (curFR.approvalHistory || []).slice();
+        if (curFR.clientApprovedBy || curFR.lpApprovedBy) {
+          hist3.push({
+            archivedAt: nowStamp(),
+            archivedReason: "After photo deleted — approvals cancelled, workflow restarted",
+            clientApprovedBy: curFR.clientApprovedBy || "",
+            clientApprovedById: curFR.clientApprovedById || "",
+            clientApprovedRole: curFR.clientApprovedRole || "",
+            clientApprovedDate: curFR.clientApprovedDate || "",
+            lpApprovedBy: curFR.lpApprovedBy || "",
+            lpApprovedById: curFR.lpApprovedById || "",
+            lpApprovedRole: curFR.lpApprovedRole || "",
+            lpApprovedDate: curFR.lpApprovedDate || ""
+          });
+        }
+        __uphReset = {
+          status: "IN_PROGRESS",
+          approvalStatus: "OPEN",
+          closed: "", closedBy: "",
+          approvedBy: "", approvedDate: "", approvalComment: "",
+          submittedForClosureBy: "", submittedForClosureDate: "",
+          approvalHistory: hist3,
+          clientApprovedBy: "", clientApprovedById: "", clientApprovedRole: "", clientApprovedDate: "",
+          lpApprovedBy: "", lpApprovedById: "", lpApprovedRole: "", lpApprovedDate: ""
+        };
+        logEvent("APPROVAL_RESET", id,
+          "After photo deleted by " + (ctpaUser() || "Anonymous") +
+          " — previous status: " + stNow + " / approval: " + apNow +
+          (curFR.clientApprovedBy ? " | GC sign-off cancelled: " + curFR.clientApprovedBy + (curFR.clientApprovedDate ? " @ " + curFR.clientApprovedDate : "") : "") +
+          (curFR.lpApprovedBy ? " | PMC sign-off cancelled: " + curFR.lpApprovedBy + (curFR.lpApprovedDate ? " @ " + curFR.lpApprovedDate : "") : "") +
+          " | reset to IN_PROGRESS — new After photo required before verification");
+        toast$("Approvals cancelled — observation reopened (In Progress). Upload a new After photo to restart verification.", "err");
+      }
+    }
+    if (photos.length < prev.length) {
+      logEvent("DELETE_PHOTO", id, "Deleted " + (prev.length - photos.length) + " " + (k === "pb" ? "Before" : "After") +
+        " photo(s) (" + prev.length + " → " + photos.length + ") by " + (ctpaUser() || "Anonymous"));
+    }
+
     /* When photos are deleted, clear stale cache keys so old base64 can't bleed back.
        Guard: only clear when no uploads are in-flight for this slot to avoid race. */
     if (photos.length < prev.length) {
@@ -7005,10 +7135,15 @@ function App(_refApp) {
     }
 
     /* update local state immediately (optimistic) — build from FRESH state, not the stale
-       `obs` closure, so saving this obs's photos never reverts other obs' recent edits. */
+       `obs` closure, so saving this obs's photos never reverts other obs' recent edits.
+       When the last After photo was deleted, __uphReset (approval cancellation +
+       IN_PROGRESS) is applied in the SAME update so no intermediate state exists. */
     setObs(function(cur){
       var nx0 = cur.map(function(o){
-        return o.id === id ? _objectSpread(_objectSpread({}, o), {}, _defineProperty({ rev: Date.now() }, k, photos)) : o;
+        if (o.id !== id) return o;
+        var upd = _objectSpread(_objectSpread({}, o), {}, _defineProperty({ rev: Date.now() }, k, photos));
+        if (__uphReset) upd = _objectSpread(_objectSpread({}, upd), __uphReset);
+        return upd;
       });
       sv(nx0);
       setDet(nx0.find(function(o){ return o.id === id; }));
@@ -7029,16 +7164,37 @@ function App(_refApp) {
       logEvent("UPLOAD_PHOTO", id, "Uploaded " + (k === "pb" ? "before" : "after") + " photo: " + (p.name || "photo"));
     });
     /* AUTO-TRANSITION: the first After photo moves an OPEN / IN_PROGRESS / REJECTED
-       observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed). */
+       observation straight to PENDING VERIFY — Awaiting GC Manager Review (never Closed).
+       Guards use the EFFECTIVE state (evidence rule), so a record whose closure was
+       invalidated by After-photo deletion (e.g. OBS-1036) restarts the workflow here;
+       any stale sign-offs are archived + cleared so the new review cycle starts clean. */
     if(k === "pa" && prev.length === 0 && photos.length > 0){
       var curObs = obs.find(function(oo){ return oo.id === id; });
-      if(curObs && curObs.status !== "CLOSED" && effAp(curObs) !== "PENDING PMC APPROVAL" && effAp(curObs) !== "APPROVED CLOSED"){
-        applyTo(id, {
+      var evAp0 = curObs ? effAp(curObs) : null;
+      if(curObs && effStatus(curObs) !== "CLOSED" && evAp0 !== "PENDING PMC APPROVAL" && evAp0 !== "APPROVED CLOSED"){
+        var trPatch = {
           approvalStatus: "PENDING REVIEW",
           status: "PENDING_VERIFY",
           submittedForClosureBy: ctpaUser() || "Anonymous",
           submittedForClosureDate: nowStamp()
-        });
+        };
+        if (curObs.clientApprovedBy || curObs.lpApprovedBy) {
+          var histT = (curObs.approvalHistory || []).slice();
+          histT.push({
+            archivedAt: nowStamp(),
+            archivedReason: "Stale sign-offs cleared — new After photo restarted the review cycle",
+            clientApprovedBy: curObs.clientApprovedBy || "", clientApprovedById: curObs.clientApprovedById || "",
+            clientApprovedRole: curObs.clientApprovedRole || "", clientApprovedDate: curObs.clientApprovedDate || "",
+            lpApprovedBy: curObs.lpApprovedBy || "", lpApprovedById: curObs.lpApprovedById || "",
+            lpApprovedRole: curObs.lpApprovedRole || "", lpApprovedDate: curObs.lpApprovedDate || ""
+          });
+          trPatch.approvalHistory = histT;
+          trPatch.clientApprovedBy = ""; trPatch.clientApprovedById = ""; trPatch.clientApprovedRole = ""; trPatch.clientApprovedDate = "";
+          trPatch.lpApprovedBy = ""; trPatch.lpApprovedById = ""; trPatch.lpApprovedRole = ""; trPatch.lpApprovedDate = "";
+          trPatch.approvedBy = ""; trPatch.approvedDate = ""; trPatch.closed = ""; trPatch.closedBy = "";
+          logEvent("APPROVAL_RESET", id, "Stale sign-offs archived on workflow restart (new After photo) by " + (ctpaUser() || "Anonymous"));
+        }
+        applyTo(id, trPatch);
         toast$("After photo received — Pending Verify (awaiting GC Manager review)");
       }
     }
@@ -7202,12 +7358,33 @@ function App(_refApp) {
       toast$("Please select an Area", "err");
       return;
     }
+    /* CLOSE GUARD (OBS-1191): closing is done ONLY through the GC Manager + PMC
+       Manager approval workflow. The Edit form may never CREATE a close — this
+       rejects any DOM/tamper path that injects status=Closed on a record that was
+       not already closed, for every role. Already-closed (legacy) records
+       round-trip unchanged (edit.status === "CLOSED"). */
+    var _wasClosed = !!(edit && edit.status === "CLOSED");
+    if (form.status === "CLOSED" && !_wasClosed) {
+      toast$("Closing is done through the GC Manager + PMC Manager approval workflow, not the Edit form.", "err");
+      return;
+    }
+    /* Even on an already-closed record, only a Manager/Admin may re-save closure
+       metadata; a normal GC USER can never author Closed Date / Closed By. */
+    if (form.status === "CLOSED" && !canCloseObs()) {
+      toast$("Not authorized — only a GC/PMC Manager or Admin may modify a closed observation's closure details.", "err");
+      return;
+    }
     if (form.status === "CLOSED" && !form.closed) {
       toast$("Closed Date is required when status is Closed", "err");
       return;
     }
     if (form.status === "CLOSED" && !(form.closedBy || "").trim()) {
       toast$("Closed By is required when status is Closed", "err");
+      return;
+    }
+    /* EVIDENCE RULE: a record can never be saved as Closed without an After photo */
+    if (form.status === "CLOSED" && (!fAft || fAft.length === 0)) {
+      toast$("Cannot set status Closed — After photo required / ต้องแนบรูปหลังแก้ไขก่อนปิดรายการ", "err");
       return;
     }
     if (form.area === "Other" && !(form.zoneOther || "").trim()) {
@@ -7262,7 +7439,21 @@ function App(_refApp) {
           id: newId,
           pb: fBef,
           pa: fAft,
-          rev: Date.now()
+          rev: Date.now(),
+          /* WORKFLOW FIX (approval): a newly submitted observation ALWAYS starts
+             OPEN and carries NO approval/closure sign-offs. It can only advance
+             through the funnel — After photo → GC Manager → PMC Manager. This
+             stops new / on-the-spot "Daily Site" observations from appearing as
+             Pending Verify or being auto "Approved by GC". Existing records and
+             the Excel-import path are unaffected. */
+          status: "OPEN",
+          approvalStatus: "OPEN",
+          closed: "",
+          closedBy: "",
+          clientApprovedBy: "", clientApprovedById: "", clientApprovedRole: "", clientApprovedDate: "",
+          lpApprovedBy: "", lpApprovedById: "", lpApprovedRole: "", lpApprovedDate: "",
+          approvedBy: "", approvedDate: "", approvalComment: "",
+          submittedForClosureBy: "", submittedForClosureDate: ""
         });
         /* cache all photos from the create form under the new ID, upload to Storage,
            and attach the returned URL so it syncs cross-device. */
@@ -7301,7 +7492,16 @@ function App(_refApp) {
            a stale "OPEN" approvalStatus on a CLOSED record double-counts in the
            dashboard (Open + Closed > Total). Only this transition is synced —
            PENDING/REJECTED states from the real workflow are left untouched. */
-        if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")) {
+        /* Reflect APPROVED CLOSED in the stored field ONLY when the record actually
+           carries GC + PMC sign-offs (or a legacy client-era GC sign-off). A form
+           save can never MANUFACTURE Approved Closed for a record with no approval —
+           that was the OBS-1191 bypass. apOf()/effAp() still classify a sign-off-less
+           CLOSED record correctly for counts/display, so dashboards stay consistent. */
+        var _sgGC     = !!(merged.clientApprovedBy && merged.clientApprovedRole);
+        var _sgPMC    = !!(merged.lpApprovedBy && merged.lpApprovedRole);
+        var _sgLegacy = !!(merged.clientApprovedBy && !merged.clientApprovedRole);
+        if (merged.status === "CLOSED" && (!merged.approvalStatus || merged.approvalStatus === "OPEN")
+            && ((_sgGC && _sgPMC) || _sgLegacy)) {
           merged.approvalStatus = "APPROVED CLOSED";
         }
         return merged;
@@ -8802,21 +9002,32 @@ function App(_refApp) {
                : qMonths.map(function(m){ return __MN[m-1]; }).join("+") + " " + qYearEff);
           if(!sel.length) return /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slate, marginTop: 10 } }, "No observations in " + selLabel + ".");
           var UA_C = "#EF4444", UC_C = C.amber, GD_C = C.green, UN_C = "#94A3B8";
-          function cnt(f){ return sel.filter(f).length; }
+          /* ══ CARDS-ONLY dataset (UAT rule) ══
+             When Reporting Period = Weekly and a specific week is selected, the
+             summary number cards below ALWAYS show that week only — even while
+             "Cumulative to Cut-off" is selected. Deliberately a SEPARATE local
+             variable: the shared dataset (dsObs/sel), header, Top lists, weekly
+             chart and comparison table keep their existing behavior untouched.
+             Counts raised-in-week (date inside the week's range); status cards
+             use each record's CURRENT effStatus classification. */
+          var selCards = (qPeriod === "WEEKLY" && __wkSel)
+            ? obsAll.filter(function(o){ return weekPeriodMatch(o, __wkSel); })
+            : sel;
+          function cnt(f){ return selCards.filter(f).length; }
           var ua = cnt(function(o){ return o.obsType === "UNSAFE_ACT"; }),
               uc = cnt(function(o){ return o.obsType === "UNSAFE_CON"; }),
               gd = cnt(function(o){ return o.obsType === "GOOD_OBS"; }),
-              unTy = sel.length - ua - uc - gd;
+              unTy = selCards.length - ua - uc - gd;
           var op = cnt(function(o){ return effStatus(o) === "OPEN"; }),
               ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
               pv = cnt(function(o){ return effStatus(o) === "PENDING_VERIFY"; }),
               cl = cnt(function(o){ return effStatus(o) === "CLOSED"; }),
-              unSt = sel.length - op - ipg - pv - cl;
+              unSt = selCards.length - op - ipg - pv - cl;
           var sr = cnt(function(o){ return o.risk === "SERIOUS"; }),
               mj = cnt(function(o){ return o.risk === "MAJOR"; }),
               mn = cnt(function(o){ return o.risk === "MINOR"; }),
-              unRk = sel.length - sr - mj - mn;
-          var closure = sel.length ? Math.round(cl / sel.length * 100) : 0;
+              unRk = selCards.length - sr - mj - mn;
+          var closure = selCards.length ? Math.round(cl / selCards.length * 100) : 0;
           var tArea = {}, tFloor = {}, tCo = {};
           sel.forEach(function(o){
             var pz = parseZone(o.zone || "");
@@ -8826,16 +9037,20 @@ function App(_refApp) {
             tCo[o.company || "Unspecified"] = (tCo[o.company || "Unspecified"] || 0) + 1;
           });
           var METRICS = [
-            ["Total OBS", sel.length, C.text], ["Unsafe Act", ua, UA_C], ["Unsafe Cond", uc, "#B45309"], ["Good OBS", gd, GD_C]]
+            ["Total OBS", selCards.length, C.text], ["Unsafe Act", ua, UA_C], ["Unsafe Cond", uc, "#B45309"], ["Good OBS", gd, GD_C]]
             .concat(unTy > 0 ? [["Untyped", unTy, UN_C]] : [])
             .concat([["Open", op, UA_C], ["In Progress", ipg, "#2563EB"], ["Pending Verify", pv, C.amber], ["Closed", cl, GD_C]])
             .concat(unSt > 0 ? [["Odd Status", unSt, UN_C]] : [])
             .concat([["Serious", sr, UA_C], ["Major", mj, "#B45309"], ["Minor", mn, C.textMid]])
             .concat(unRk > 0 ? [["No Risk Set", unRk, UN_C]] : [])
             .concat([["Closure Rate", closure + "%", GD_C]]);
-          /* Trend series from the FULL data (obsAll) so previous-period comparison has context */
+          /* SAME-DATASET RULE (UAT fix): every chart/table bucket below derives from
+             `sel` — the exact dataset the tiles above use — so cards, charts and
+             summary widgets can never disagree. Sole labeled exception: YEARLY keeps
+             its documented all-years context chart (caption states tiles = selected
+             year only). */
           var __serPeriod = qPeriod === "YEARLY" ? "YEARLY" : qPeriod === "QUARTERLY" ? "QUARTERLY" : qPeriod === "WEEKLY" ? "WEEKLY" : "MONTHLY";
-          var series = aggregateObservationsByQuarter(obsAll, __serPeriod);
+          var series = aggregateObservationsByQuarter(qPeriod === "YEARLY" ? obsAll : sel, __serPeriod);
           var allKeys = series.map(function(r){ return r.key; });
           var vis;
           if(qPeriod === "WEEKLY"){
@@ -8844,17 +9059,17 @@ function App(_refApp) {
                the main table compares against the true previous configured week. */
             var selIdx = -1;
             for(var _si2 = 0; _si2 < __wkPeriods.length; _si2++){ if(__wkPeriods[_si2].id === qWeek){ selIdx = _si2; break; } }
-            /* All Weeks → one row per configured week of the year.
-               Selected week → exactly 5 consecutive weeks: the 4 week definitions
-               immediately BEFORE it in the ordered period list + the selected week
-               (position-based, so it works across year boundaries; fewer are shown
-               only when fewer earlier weeks exist). Zero-observation weeks still
-               render with 0 — rows come from the period definitions, not the data. */
-            var wkRows = !qWeek
-              ? __wkPeriods.filter(function(p){ return obsAll.some(function(o){ return weekPeriodMatch(o, p); }); })  /* All Weeks: hide weeks with no records */
-              : selIdx >= 0 ? __wkPeriods.slice(Math.max(0, selIdx - 4), selIdx + 1) : [];
+            /* Week rows follow the SAME-DATASET RULE — buckets from `sel`, never obsAll:
+               - Selected Week Only  → exactly ONE row: the selected week (sel IS that
+                 week's records, so chart total === tile total).
+               - Cumulative to Cut-off → one row per week that has records inside the
+                 cumulative range, so the weekly bars sum to the cumulative tiles.
+               - All Weeks → one row per week with records in the tile dataset. */
+            var wkRows = !qWeek || __cum
+              ? __wkPeriods.filter(function(p){ return sel.some(function(o){ return weekPeriodMatch(o, p); }); })
+              : (selIdx >= 0 ? [__wkPeriods[selIdx]] : []);
             vis = wkRows.map(function(p){
-              var b = obsAll.filter(function(o){ return weekPeriodMatch(o, p); });
+              var b = sel.filter(function(o){ return weekPeriodMatch(o, p); });
               return { key: p.id, total: b.length, ua: 0, uc: 0, good: 0, _p: p };
             });
           } else if(qPeriod === "MONTHLY"){
@@ -8876,8 +9091,12 @@ function App(_refApp) {
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
               (__cum ? "Reporting Period: Project Start – " + qCutEff : "Selected period: " + selLabel) + " — " + sel.length + " observations",
               __cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#1D4ED8", fontSize: 10, marginTop: 2 } },
-                "Mode: Cumulative to Cut-off Date ✓" + (__wkSel ? "   ·   Selected Week: " + __wkSel.id + " — " + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) : "") + "   ·   Cut-off Date: " + qCutEff),
-              /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts now reflect this selection)")),
+                "Mode: Cumulative to Cut-off Date ✓   ·   Cut-off Date: " + qCutEff + (__wkSel && !qCut ? " (end of " + __wkSel.id + ")" : "") +
+                (__wkSel ? "   —   chart & table are cumulative; the summary cards below show " + __wkSel.id + " only"
+                         : "   —   NOT week-only; use “Selected Week Only” for a single-week view")),
+              qPeriod === "WEEKLY" && qWeek && !__cum && /*#__PURE__*/React.createElement("div", { style: { fontWeight: 600, color: "#15803D", fontSize: 10, marginTop: 2 } },
+                "Mode: Selected Week Only ✓   ·   every card, chart and table below counts ONLY " + (__wkSel ? __wkSel.id + " (" + fmtWeekRange(__wkSel.startDate, __wkSel.endDate) + ")" : "the selected week")),
+              /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts reflect exactly this dataset)")),
             /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
               METRICS.map(function(mt){
                 return /*#__PURE__*/React.createElement("div", { key: mt[0], style: { background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 8, padding: "7px 9px" } },
@@ -8900,10 +9119,12 @@ function App(_refApp) {
               qPeriod === "YEARLY" && /*#__PURE__*/React.createElement("span", { style: { color: C.slate } }, "(chart shows all years; tiles above = selected year only)")),
             (qPeriod === "WEEKLY" && qWeek && vis.length > 0)
               ? (function(){
-              /* Weekly 5-week combo chart: stacked bars + monotone-spline Total curve (read-only) */
+              /* Weekly combo chart: stacked bars + Total curve (read-only).
+                 Buckets from `sel` (same-dataset rule) — one bar in Selected Week
+                 Only mode; per-week breakdown of the cumulative set in Cut-off mode. */
               var LN = "#2563EB";
               var rows = vis.map(function(r){
-                var b = obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); });
+                var b = sel.filter(function(o){ return weekPeriodMatch(o, r._p); });
                 var ua = 0, uc = 0, gd = 0;
                 b.forEach(function(o){ if(o.obsType === "UNSAFE_ACT") ua++; else if(o.obsType === "GOOD_OBS") gd++; else if(o.obsType === "UNSAFE_CON") uc++; });
                 return { p: r._p, ua: ua, uc: uc, gd: gd, un: b.length - ua - uc - gd, total: b.length };
@@ -8978,9 +9199,11 @@ function App(_refApp) {
                 var H = 118;
                 var rUn = r.total - r.ua - r.uc - r.good;   /* aggregate uc includes untyped; recompute strict */
                 var strictUC = r.uc; /* aggregateObservationsByQuarter folds untyped into uc — split it out visually */
-                /* recompute strict per bucket from obsAll for exactness */
-                var bucket = r._p ? obsAll.filter(function(o){ return weekPeriodMatch(o, r._p); })
-                  : obsAll.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
+                /* recompute strict per bucket from `sel` (same-dataset rule) —
+                   YEARLY keeps its labeled all-years context from obsAll */
+                var __bSrc = qPeriod === "YEARLY" ? obsAll : sel;
+                var bucket = r._p ? __bSrc.filter(function(o){ return weekPeriodMatch(o, r._p); })
+                  : __bSrc.filter(function(o){ return getPeriodKey(o.date, __serPeriod) === r.key; });
                 var bUA = bucket.filter(function(o){ return o.obsType === "UNSAFE_ACT"; }).length;
                 var bUC = bucket.filter(function(o){ return o.obsType === "UNSAFE_CON"; }).length;
                 var bGD = bucket.filter(function(o){ return o.obsType === "GOOD_OBS"; }).length;
@@ -9797,7 +10020,7 @@ function App(_refApp) {
         style: pill(ps$2.l === "B+A" ? C.greenBg : ps$2.l === "None" ? C.redBg : C.amberBg, ps$2.l === "B+A" ? C.greenDk : ps$2.l === "None" ? C.redDk : C.amberDk, 9)
       }, ps$2.l);
     }()));
-  })))))), view === "dashboard" && APPROVAL_ENABLED && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
+  })))))), view === "dashboard" && APPROVAL_ENABLED && canApproveAny() && React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 } }, React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, "\uD83D\uDD52 Pending Review (", S.apPending, ")"), approver ? React.createElement("span", { style: pill(C.greenBg, C.greenDk, 10) }, "\u2714 " + roleLabel(approverRole) + " approver") : React.createElement("button", { onClick: unlockApprover, style: { fontSize: 10, padding: "5px 11px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, fontWeight: 600, cursor: "pointer" } }, "\uD83D\uDD12 Unlock Approver")), (function () { var pend = dsObs.filter(function (o) { return effAp(o) === "PENDING REVIEW"; }); if (pend.length === 0) return React.createElement("div", { style: { fontSize: 11, color: C.slate, padding: "8px 2px" } }, "No observations awaiting closure approval."); return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, pend.map(function (o) { var myDone = approverRole === "CLIENT" ? !!o.clientApprovedBy : approverRole === "LP" ? !!o.lpApprovedBy : false; var myRoleLabel = roleLabel(approverRole); var tag = function (label, by) { return React.createElement("span", { style: pill(by ? C.greenBg : "#FFFFFF", by ? C.greenDk : C.slate, 9) }, (by ? "\u2714 " : "\u25CB ") + label); }; return React.createElement("div", { key: o.id, style: { border: "1px solid " + C.border, borderRadius: 9, padding: "10px 12px", background: C.amberBg } }, React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 4 } }, React.createElement("span", { style: { fontSize: 12, fontWeight: 800, color: C.green, cursor: "pointer" }, onClick: function () { setDet(o); setView("detail"); } }, o.id), React.createElement("span", { style: pill(APPROVAL["PENDING REVIEW"].bg, APPROVAL["PENDING REVIEW"].text, 9) }, "PENDING REVIEW")), React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 6 } }, o.zone, " \u00B7 ", o.cat ? o.cat.replace(" (HRA)", "") : "\u2014"), React.createElement("div", { style: { fontSize: 10, color: C.slate, marginBottom: 6 } }, "Submitted by ", React.createElement("strong", null, o.submittedForClosureBy || "\u2014"), o.submittedForClosureDate ? " \u00B7 " + o.submittedForClosureDate : ""), React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 8 } }, tag("GC Manager", o.clientApprovedBy), tag("PMC Manager", o.lpApprovedBy)), React.createElement("div", { style: { display: "flex", gap: 8 } }, React.createElement("button", { disabled: approver && myDone, onClick: function () { if (!approver) { unlockApprover(); return; } if (myDone) return; var c = window.prompt("Approval comment (optional):") || ""; approveClosure(o.id, c); }, style: { flex: 1, background: approver ? (myDone ? "#CBD5E1" : C.green) : "#CBD5E1", color: approver && !myDone ? "#fff" : "#94A3B8", border: "none", borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver && !myDone ? "pointer" : "not-allowed" } }, approver ? (myDone ? "\u2714 " + myRoleLabel + " signed off" : "\u2714 Approve as " + myRoleLabel) : "\u2713 Approve Closure"), React.createElement("button", { disabled: !approver, onClick: function () { if (!approver) { unlockApprover(); return; } var c = window.prompt("Rejection reason:") || ""; rejectClosure(o.id, c); }, style: { flex: 1, background: "#FFFFFF", color: approver ? C.redDk : "#94A3B8", border: "1.5px solid " + (approver ? C.red : C.border), borderRadius: 8, padding: "8px 0", fontSize: 11, fontWeight: 700, cursor: approver ? "pointer" : "not-allowed" } }, "\u2715 Reject Closure"))); })); })()), view === "list" && /*#__PURE__*/React.createElement("div", {
     className: "fade-in" + (mobFilt ? " filters-open" : "")
   }, /*#__PURE__*/React.createElement("div", {
     style: _objectSpread(_objectSpread({}, crd), {}, {
@@ -9992,12 +10215,38 @@ function App(_refApp) {
     title: "Clear cut-off (export all filtered observations)",
     style: { fontSize: 10, padding: "5px 8px", borderRadius: 8, border: "1.5px solid " + C.border, background: "#fff", color: C.textMid, cursor: "pointer", fontWeight: 600 }
   }, "✕"),
+  /* Live cut-off preview (UAT fix): show the effect BEFORE exporting.
+     "in list" = cut-off applied ON TOP of the active Week/Date/Status/Company/
+     Floor/Area/search filters; "in all records" = cut-off alone over the whole
+     dataset. A red 0 with a non-zero total means the OTHER filters exclude the
+     matching records — not the cut-off itself. Date compare is inclusive (<=),
+     normalized to YYYY-MM-DD, pure string compare — no timezone conversion. */
+  exCut && (function(){
+    var __cutLe = function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; };
+    var nList = filt.filter(__cutLe).length;
+    var nAll = obs.filter(__cutLe).length;
+    var zero = nList === 0;
+    return /*#__PURE__*/React.createElement("span", {
+      className: "mob-secf",
+      title: zero && nAll > 0 ? "The active Week/Date/Status filters exclude all records dated on or before the cut-off — clear those filters or adjust the cut-off." : "Records dated on or before the cut-off (inclusive)",
+      style: { fontSize: 10, fontWeight: 700, alignSelf: "center", padding: "4px 8px", borderRadius: 8,
+        background: zero ? "#FEF2F2" : "#E6F4EA", color: zero ? "#B91C1C" : "#217346",
+        border: "1.5px solid " + (zero ? "#FECACA" : "#217346") }
+    }, "≤ " + exCut + ": " + nList + " in list · " + nAll + " in all records");
+  })(),
   /*#__PURE__*/React.createElement("button", {
     onClick: function onClick() {
       /* temporary in-memory data set: Observation Date <= cut-off (inclusive);
-         records with no date are excluded when a cut-off is set */
-      var exRows = exCut ? filt.filter(function(o){ return o.date && o.date <= exCut; }) : filt;
-      if(exCut && exRows.length === 0){ setT({ msg: "❌ No observations dated on or before " + exCut, type: "err" }); setTimeout(function(){ setT(null); }, 6000); return; }
+         normalized to YYYY-MM-DD so a timestamped date can never be excluded on
+         its own day; records with no date are excluded when a cut-off is set */
+      var exRows = exCut ? filt.filter(function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; }) : filt;
+      if(exCut && exRows.length === 0){
+        var exAll = obs.filter(function(o){ return o.date && String(o.date).slice(0, 10) <= exCut; }).length;
+        setT({ msg: exAll > 0
+          ? "❌ 0 of the " + filt.length + " filtered observations are dated on or before " + exCut + " — but " + exAll + " exist in ALL records. The active Week/Date/Status/Company filters exclude them: clear those filters or adjust the cut-off."
+          : "❌ No observations dated on or before " + exCut + " exist in the data.", type: "err" });
+        setTimeout(function(){ setT(null); }, 9000); return;
+      }
       setT({ msg: "⏳ Generating Excel with photos…" + (exCut ? " (cut-off " + exCut + ", " + exRows.length + " records)" : ""), type: "ok" });
       var p = exportExcel(exRows,
         function(msg){ setT({ msg: "❌ " + msg, type: "err" }); setTimeout(function(){ setT(null); }, 8000); },
@@ -10036,7 +10285,13 @@ function App(_refApp) {
       padding: 48,
       color: C.slate
     }
-  }, "No observations found"), filt.map(function (o) {
+  }, "No observations found",
+    /* UAT fix: a zero list with records in the data is ALWAYS caused by the
+       active filters (the export Cut-off never hides list rows) \u2014 say so and
+       say how to recover, instead of a dead-end message. */
+    obs.length > 0 && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: "#B45309" } },
+      "All " + obs.length + " records are excluded by the active filters (Reporting Week / Date range / Status / Company / Floor / Area / search). Clear or adjust those filters to see records \u2014 the export Cut-off date does not hide rows from this list.")
+  ), filt.map(function (o) {
     var ps$ = pStat(o);
     var rk = RISK[o.risk || "MINOR"];
     var ot = OBS_TYPE[o.obsType] || {
@@ -10101,7 +10356,7 @@ function App(_refApp) {
       style: pill(rk.bg, rk.text, 9)
     }, rk.label), /*#__PURE__*/React.createElement("span", {
       style: pill((STATUS[effStatus(o)]||STATUS["OPEN"]).bg, (STATUS[effStatus(o)]||STATUS["OPEN"]).text, 9)
-    }, STATUS[o.status].label), /*#__PURE__*/React.createElement("span", {
+    }, (STATUS[effStatus(o)]||STATUS["OPEN"]).label), /*#__PURE__*/React.createElement("span", {
       style: pill((APPROVAL[effAp(o)] || APPROVAL["OPEN"]).bg, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).text, 9)
     }, (APPROVAL[effAp(o)] || APPROVAL["OPEN"]).label))), /*#__PURE__*/React.createElement("div", {
       style: {
@@ -10132,8 +10387,10 @@ function App(_refApp) {
         lineHeight: 1.5
       }
     }, o.desc), /*#__PURE__*/React.createElement("div", {
-      style: { fontSize: 10, color: C.greenDk, background: C.greenBg, borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
-    }, "\u2714 Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
+      /* "Raised by" is NOT an approval or closure step \u2014 neutral light-blue, never green
+         (green is reserved for completed GC / PMC approval rows). */
+      style: { fontSize: 10, color: "#1E3A5F", background: "#E8F2FF", border: "1px solid #C7DBF0", borderRadius: 7, padding: "5px 9px", marginBottom: 7, fontWeight: 600 }
+    }, "\ud83d\udcdd Raised by: ", o.by || "\u2014", o.date ? " \u2022 " + o.date : ""), function () {
       var ap = effAp(o);
       var info = null;
       if (ap === "PENDING REVIEW" && o.submittedForClosureBy) {
@@ -10141,14 +10398,16 @@ function App(_refApp) {
       } else if (ap === "PENDING PMC APPROVAL") {
         info = "\u2714 GC approved" + (o.clientApprovedBy ? " by " + o.clientApprovedBy : "") + (o.clientApprovedDate ? " \u2022 " + o.clientApprovedDate : "") + " \u2014 Awaiting PMC review";
       } else if (ap === "APPROVED CLOSED" && (o.approvedBy || o.approvedDate)) {
-        /* Same data source as the Closure Workflow panel (clientApprovedBy /
-           lpApprovedBy) so both screens always show identical approvers; the
-           legacy combined approvedBy field is only a fallback when neither
-           per-role sign-off exists. Display-only. */
-        if (o.clientApprovedBy || o.lpApprovedBy) {
-          info = "\u2714 Approved by GC: " + (o.clientApprovedBy ? (o.clientApprovedBy + (o.clientApprovedRole ? "" : " (legacy)")) : "\u2014") + "  \u00B7  PMC: " + (o.lpApprovedBy || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+        /* Only assert a manager APPROVED the closure when a real sign-off ROLE is
+           on record (set solely by the GC/PMC Approve buttons). A backfilled or
+           legacy approver name with no role is shown as a plain historical
+           closure \u2014 never "Approved by GC". Display-only; counts are unchanged. */
+        var realGCd  = o.clientApprovedBy && o.clientApprovedRole;
+        var realPMCd = o.lpApprovedBy && o.lpApprovedRole;
+        if (realGCd || realPMCd) {
+          info = "\u2714 Approved by GC: " + (realGCd ? o.clientApprovedBy : "\u2014") + "  \u00B7  PMC: " + (realPMCd ? o.lpApprovedBy : "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
         } else {
-          info = "\u2714 Approved by " + (fmtApprover(o.approvedBy) || "\u2014") + (o.approvedDate ? " \u2022 " + o.approvedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
+          info = "\u2714 Closed" + (o.closed ? " \u2022 " + o.closed : "") + " \u2014 historical closure (no GC/PMC Manager sign-off)";
         }
       } else if (ap === "REJECTED" && (o.rejectedBy || o.rejectedDate)) {
         info = "\u2716 Rejected by " + (o.rejectedBy || "\u2014") + (o.rejectedDate ? " \u2022 " + o.rejectedDate : "") + (o.approvalComment ? " \u2014 \u201C" + o.approvalComment + "\u201D" : "");
@@ -10275,8 +10534,8 @@ function App(_refApp) {
       }
     }, "Edit"), effAp(o) === "PENDING REVIEW" || effAp(o) === "PENDING PMC APPROVAL" || effAp(o) === "APPROVED CLOSED" || effAp(o) === "REJECTED"
       ? /*#__PURE__*/React.createElement("span", {
-          style: (function(){ var B = (isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
-        }, ((isUnapprovedClosed(o) ? STATUS[o.status] : (APPROVAL[effAp(o)] || STATUS[o.status])) || STATUS.OPEN).label)
+          style: (function(){ var B = (APPROVAL[effAp(o)] || STATUS[effStatus(o)]) || STATUS.OPEN; return { fontSize: 10, padding: "4px 10px", borderRadius: 7, border: "1.5px solid " + B.color, background: B.bg, color: B.text, fontWeight: 700 }; })()
+        }, ((APPROVAL[effAp(o)] || STATUS[effStatus(o)]) || STATUS.OPEN).label)
       : /*#__PURE__*/React.createElement("select", {
           value: o.status,
           onClick: function onClick(e) { return e.stopPropagation(); },
@@ -10646,16 +10905,25 @@ function App(_refApp) {
         });
       });
     },
+    /* An already-closed record is workflow-terminal: its status is locked in the
+       Edit form (re-opening is done via the workflow Reject action, not here), so
+       no path can silently change a closed record's status on save. */
+    disabled: form.status === "CLOSED",
     style: iSt
   }, Object.entries(STATUS).map(function (_ref30) {
     var _ref31 = _slicedToArray(_ref30, 2),
       k = _ref31[0],
       v = _ref31[1];
+    /* Closing is workflow-only (GC + PMC approval). Never offer CLOSED as a NEW
+       status in the Edit form — it appears solely to display an already-closed
+       (legacy) record so it round-trips unchanged. This removes the manual-close
+       path that let a normal GC USER reach Approved Closed (OBS-1191). */
+    if (k === "CLOSED" && form.status !== "CLOSED") return null;
     return /*#__PURE__*/React.createElement("option", {
       key: k,
       value: k
     }, v.label);
-  })))), /*#__PURE__*/React.createElement("div", {
+  })))),/*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 13
     }
@@ -10700,13 +10968,19 @@ function App(_refApp) {
   }, "Closed Date", form.status === "CLOSED" ? " *" : ""), /*#__PURE__*/React.createElement("input", {
     type: "date",
     value: form.closed,
+    /* Closure metadata is set by the approval workflow, not by hand. Only a
+       Manager/Admin may adjust it; a normal GC USER can never set/edit Closed Date. */
+    disabled: !canCloseObs(),
     onChange: function onChange(e) {
+      if (!canCloseObs()) return;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, { closed: e.target.value });
       });
     },
     style: _objectSpread(_objectSpread({}, iSt), {}, {
-      borderColor: form.status === "CLOSED" && !form.closed ? C.red : C.border
+      borderColor: form.status === "CLOSED" && !form.closed ? C.red : C.border,
+      background: !canCloseObs() ? C.slateLight : (iSt.background || "#fff"),
+      cursor: !canCloseObs() ? "not-allowed" : "auto"
     })
   })), /*#__PURE__*/React.createElement("div", {
     style: { marginBottom: 13 }
@@ -10715,7 +10989,10 @@ function App(_refApp) {
   }, "Closed By", form.status === "CLOSED" ? " *" : ""), /*#__PURE__*/React.createElement("input", {
     type: "text",
     value: form.closedBy || "",
+    /* Only a Manager/Admin may set/edit Closed By; a normal GC USER cannot. */
+    disabled: !canCloseObs(),
     onChange: function onChange(e) {
+      if (!canCloseObs()) return;
       var v = e.target.value;
       return setForm(function (p) {
         return _objectSpread(_objectSpread({}, p), {}, { closedBy: v });
@@ -10723,7 +11000,9 @@ function App(_refApp) {
     },
     placeholder: "Name of person who closed",
     style: _objectSpread(_objectSpread({}, iSt), {}, {
-      borderColor: form.status === "CLOSED" && !(form.closedBy || "").trim() ? C.red : C.border
+      borderColor: form.status === "CLOSED" && !(form.closedBy || "").trim() ? C.red : C.border,
+      background: !canCloseObs() ? C.slateLight : (iSt.background || "#fff"),
+      cursor: !canCloseObs() ? "not-allowed" : "auto"
     })
   })), /*#__PURE__*/React.createElement(PhotoBlock, {
     item: {
@@ -10880,8 +11159,8 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
   }, OBS_TYPE[det.obsType].label), det.risk && RISK[det.risk] && /*#__PURE__*/React.createElement("span", {
     style: pill((RISK[det.risk]||RISK["MINOR"]).bg, (RISK[det.risk]||RISK["MINOR"]).text, 10)
   }, RISK[det.risk].label), /*#__PURE__*/React.createElement("span", {
-    style: pill((_STATUS$det$status = STATUS[det.status]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[det.status]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
-  }, (_STATUS$det$status3 = STATUS[det.status]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
+    style: pill((_STATUS$det$status = STATUS[effStatus(det)]) === null || _STATUS$det$status === void 0 ? void 0 : _STATUS$det$status.bg, (_STATUS$det$status2 = STATUS[effStatus(det)]) === null || _STATUS$det$status2 === void 0 ? void 0 : _STATUS$det$status2.text, 10)
+  }, (_STATUS$det$status3 = STATUS[effStatus(det)]) === null || _STATUS$det$status3 === void 0 ? void 0 : _STATUS$det$status3.label), isOD(det) && /*#__PURE__*/React.createElement("span", {
     style: pill(C.redBg, C.redDk, 10)
   }, "OVERDUE"), APPROVAL[effAp(det)] && /*#__PURE__*/React.createElement("span", {
     style: pill((APPROVAL[effAp(det)]||APPROVAL["OPEN"]).bg, (APPROVAL[effAp(det)]||APPROVAL["OPEN"]).text, 10)
@@ -10908,7 +11187,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
   }, {
     l: "Closed Date",
     v: det.closed || "—"
-  }, det.status === "CLOSED" ? {
+  }, effStatus(det) === "CLOSED" ? {
     l: "Closed By",
     v: det.closedBy || "—"
   } : null, {
@@ -11170,10 +11449,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.red, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2716 Reject Closure") : null,
-        !approver ? /*#__PURE__*/React.createElement("button", {
-          onClick: unlockApprover,
-          style: { background: "#fff", color: C.slate, border: "1.5px solid " + C.border, borderRadius: 9, padding: "9px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
-        }, "\uD83D\uDD13 Unlock Approver") : null,
+        /* Unlock-Approver removed: approver authority is auth-derived, and GC USERs
+           must never see any approval control (Issue 5). */
+        null,
         approver && !isGC ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid, padding: "9px 0" } }, "Awaiting GC Manager approval before PMC review") : null
       );
     } else if (ap === "PENDING PMC APPROVAL") {
@@ -11194,10 +11472,9 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
           },
           style: { background: C.red, color: "#fff", border: "none", borderRadius: 9, padding: "9px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }
         }, "\u2716 Reject Closure") : null,
-        !approver ? /*#__PURE__*/React.createElement("button", {
-          onClick: unlockApprover,
-          style: { background: "#fff", color: C.slate, border: "1.5px solid " + C.border, borderRadius: 9, padding: "9px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }
-        }, "\uD83D\uDD13 Unlock Approver") : null,
+        /* Unlock-Approver removed: approver authority is auth-derived, and GC USERs
+           must never see any approval control (Issue 5). */
+        null,
         approver && !isPMC ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, color: C.textMid, padding: "9px 0" } }, "GC approved \u2714 \u2014 awaiting PMC Manager review") : null
       );
     } else {
