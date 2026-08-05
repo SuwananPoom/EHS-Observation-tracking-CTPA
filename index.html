@@ -454,7 +454,12 @@ function uploadPhotoToStorage(obsId, slot, idx, photo){
   var url = CLOUD.url.replace(/\/$/,"") + "/storage/v1/object/" + CLOUD.bucket + "/" + path.split("/").map(encodeURIComponent).join("/");
   return fetch(url, {
     method: "POST",
-    headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": blob.type || "image/jpeg", "x-upsert": "true" },
+    headers: { "apikey": CLOUD.key, "Authorization": "Bearer " + CLOUD.key, "Content-Type": blob.type || "image/jpeg", "x-upsert": "true",
+      /* EGRESS OPTIMIZATION: new uploads are served with a 1-year browser/CDN
+         cache. Safe: the stored public URL gains a fresh ?v= version on every
+         (re)upload, so a replaced photo is always fetched anew while unchanged
+         files stop being re-downloaded. Existing files are NOT modified. */
+      "cache-control": "max-age=31536000" },
     body: blob
   }).then(function(r){
     if(r.ok){
@@ -611,6 +616,17 @@ function photoSrc(p){
 }
 /* True when a photo can be displayed on THIS device right now (url or local src). */
 function photoHas(p){ return !!photoSrc(p); }
+/* EGRESS OPTIMIZATION — small-preview source: prefer the LOCAL display copy
+   (≤1600px JPEG cached on this device — zero network) over the full-resolution
+   Storage URL. Used ONLY for small thumbnails (56–70px tiles); the lightbox,
+   zoom, downloads, and exports keep photoSrc()/fetch of the full original. */
+function thumbSrc(p){
+  if(!p) return null;
+  if(p.src && p.src.length > 32) return p.src;
+  if(p.url) return p.url;
+  if(p.durl) return p.durl;
+  return null;
+}
 
 /* Merge individually-cached photos back into an obs array.
    Called after restorePhotos so same-device photos always display. */
@@ -682,8 +698,16 @@ function fetchCloudPhotos(obsIds){
 }
 
 /* Fetch a public URL and convert it to a base64 data URI (for PDF/PPT embedding). */
+/* EGRESS OPTIMIZATION: session-scoped download memo. Each unique image URL is
+   fetched AT MOST ONCE per session — concurrent/repeated exports share the same
+   in-flight promise instead of re-downloading. The browser HTTP cache is used
+   (URLs are stable: replacements get a new ?v= version, so this is safe) instead
+   of the previous cache:"no-store", which forced a full re-download of every
+   original on every export. Failed fetches are NOT memoized (retry works). */
+var __urlDataUriCache = {};
 function urlToDataUri(url){
-  return fetch(url, { cache: "no-store" })
+  if(__urlDataUriCache[url]) return __urlDataUriCache[url];
+  var p = fetch(url)
     .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
     .then(function(blob){
       return new Promise(function(res, rej){
@@ -693,6 +717,9 @@ function urlToDataUri(url){
         fr.readAsDataURL(blob);
       });
     });
+  __urlDataUriCache[url] = p;
+  p.catch(function(){ delete __urlDataUriCache[url]; });
+  return p;
 }
 /* Read an image's natural pixel dimensions from a data URI / URL.
    Used by PDF/PPT export to preserve the original aspect ratio (no distortion). */
@@ -3777,7 +3804,9 @@ function Strip(_ref2) {
       }
     }, photoHas(p)
       ? /*#__PURE__*/React.createElement("img", {
-          src: photoSrc(p),
+          src: thumbSrc(p),
+          loading: "lazy",
+          decoding: "async",
           alt: "",
           onError: function(e){
             console.warn("[CTPA] <img> load FAILED", { src: (e.target.src||"").slice(0,160), naturalWidth: e.target.naturalWidth, naturalHeight: e.target.naturalHeight, eventType: e.type });
@@ -6300,6 +6329,10 @@ function App(_refApp) {
   var _fdti = useState(""), fDToIn = _fdti[0], setFDToIn = _fdti[1];
   var _fdf = useState(""), fDFrom = _fdf[0], setFDFrom = _fdf[1];
   var _fdt = useState(""), fDTo = _fdt[0], setFDTo = _fdt[1];
+  /* EGRESS/PERF: incremental list rendering — first 60 cards, "Show more" adds
+     120. Resets whenever any filter changes. Counts/exports still use the FULL
+     filtered set; only how many cards are mounted at once changes. */
+  var _visN = useState(60), visN = _visN[0], setVisN = _visN[1];
   /* Excel export cut-off date (display/export-time filter only; never written back) */
   var _exc = useState(""), exCut = _exc[0], setExCut = _exc[1];
   var _useState39 = useState(""),
@@ -6648,6 +6681,7 @@ function App(_refApp) {
       return true;
     });
   }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo]);
+  React.useEffect(function(){ setVisN(60); }, [fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo]);
   /* ══ SINGLE SOURCE OF TRUTH for all dashboard analytics ══
      dsObs = the selected reporting-period dataset (in-memory filter of obs).
      WEEKLY (default) = full obs → dashboard behaves exactly as before.
@@ -10326,7 +10360,7 @@ function App(_refApp) {
        say how to recover, instead of a dead-end message. */
     obs.length > 0 && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: "#B45309" } },
       "All " + obs.length + " records are excluded by the active filters (Reporting Week / Date range / Status / Company / Floor / Area / search). Clear or adjust those filters to see records \u2014 the export Cut-off date does not hide rows from this list.")
-  ), filt.map(function (o) {
+  ), filt.slice(0, visN).map(function (o) {
     var ps$ = pStat(o);
     var rk = RISK[o.risk || "MINOR"];
     var ot = OBS_TYPE[o.obsType] || {
@@ -10592,7 +10626,12 @@ function App(_refApp) {
         color: isOD(o) ? C.red : C.slate
       }
     }, o.due))));
-  })), view === "form" && /*#__PURE__*/React.createElement("div", {
+  }), filt.length > visN && /*#__PURE__*/React.createElement("button", {
+    onClick: function(){ setVisN(function(n){ return n + 120; }); },
+    style: { display: "block", width: "100%", padding: "13px 0", marginTop: 6, borderRadius: 11,
+      border: "1.5px dashed " + C.border, background: "#fff", color: C.textMid,
+      fontSize: 13, fontWeight: 700, cursor: "pointer" }
+  }, "Show more — " + Math.min(120, filt.length - visN) + " of " + (filt.length - visN) + " remaining")), view === "form" && /*#__PURE__*/React.createElement("div", {
     className: "fade-in",
     style: _objectSpread({
       maxWidth: 740
