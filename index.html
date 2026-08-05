@@ -6604,6 +6604,16 @@ function App(_refApp) {
         /* Umbrella bucket, same resolver as the Open KPI card: everything not
            fully approved-closed (Open + In Progress + Pending Verify + Rejected). */
         if (effAp(o) === "APPROVED CLOSED") return false;
+      } else if (fSt === "PENDING_GC") {
+        /* "Pending Verify" card = awaiting GC MANAGER review (stage 1). Resolve via
+           effAp() — the SAME source as the dashboard S.apPendingGC count — so the
+           linked list length ALWAYS equals the card number. Pending PMC is excluded. */
+        if (effAp(o) !== "PENDING REVIEW") return false;
+      } else if (fSt === "PENDING_PMC") {
+        /* "Pending PMC" card = awaiting PMC MANAGER review (stage 2) — the distinct
+           second approval stage. Resolve via effAp() to match S.apPendingPMC exactly.
+           Awaiting-GC items are excluded. */
+        if (effAp(o) !== "PENDING PMC APPROVAL") return false;
       } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
@@ -7857,14 +7867,14 @@ function App(_refApp) {
     s: "Not closed (incl. Rejected)"
   }, {
     l: "Pending Verify",
-    nav: { st: "PENDING_VERIFY" },
+    nav: { st: "PENDING_GC" },
     v: S.apPendingGC,
     c: S.apPendingGC > 0 ? C.amber : C.green,
     bg: S.apPendingGC > 0 ? C.amberBg : "#fff",
     s: "Awaiting GC review"
   }, {
     l: "Pending PMC",
-    nav: { st: "PENDING_VERIFY" },
+    nav: { st: "PENDING_PMC" },
     v: S.apPendingPMC,
     c: S.apPendingPMC > 0 ? C.blue : C.green,
     bg: S.apPendingPMC > 0 ? C.blueBg : "#fff",
@@ -10105,12 +10115,16 @@ function App(_refApp) {
   [{
     v: fSt,
     s: setFS,
-    o: [["ALL", "All Status"]].concat(_toConsumableArray(Object.entries(STATUS).map(function (_ref20) {
+    o: [["ALL", "All Status"]].concat(_toConsumableArray(Object.entries(STATUS).filter(function (_refPv) {
+      /* The combined "Pending Verify" (effStatus) conflates two workflow stages; it is
+         split below into the GC and PMC stages so each filter maps to exactly one card. */
+      return _refPv[0] !== "PENDING_VERIFY";
+    }).map(function (_ref20) {
       var _ref21 = _slicedToArray(_ref20, 2),
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"]]))
+    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"]]))
   }, {
     v: fRi,
     s: setFR,

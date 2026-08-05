@@ -347,6 +347,35 @@ console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)")
      /stripPhotos\(\[testObs\]\)/.test(html) && !/\(currentObs \|\| \[\]\)\.concat/.test(html));
 }
 
+console.log("\n11) Pending-Verify vs Pending-PMC card navigation (stage-accurate, count == list)");
+{
+  /* Each pending card must navigate to its OWN stage, matched by the SAME effAp()
+     resolver used for its count — so the linked list length equals the card number. */
+  ok("Pending Verify card navigates to PENDING_GC (not the combined PENDING_VERIFY)",
+     /l: "Pending Verify",\s*nav: \{ st: "PENDING_GC" \},\s*v: S\.apPendingGC/.test(html));
+  ok("Pending PMC card navigates to PENDING_PMC",
+     /l: "Pending PMC",\s*nav: \{ st: "PENDING_PMC" \},\s*v: S\.apPendingPMC/.test(html));
+  ok("no card still navigates to the combined PENDING_VERIFY bucket",
+     !/nav: \{ st: "PENDING_VERIFY" \}/.test(html));
+  ok("card count apPendingGC uses effAp === PENDING REVIEW",
+     /apPendingGC:[\s\S]{0,70}effAp\(o\) === "PENDING REVIEW"/.test(html));
+  ok("card count apPendingPMC uses effAp === PENDING PMC APPROVAL",
+     /apPendingPMC:[\s\S]{0,70}effAp\(o\) === "PENDING PMC APPROVAL"/.test(html));
+  ok("list filter PENDING_GC matches effAp === PENDING REVIEW (same source as the card)",
+     /fSt === "PENDING_GC"[\s\S]{0,400}effAp\(o\) !== "PENDING REVIEW"/.test(html));
+  ok("list filter PENDING_PMC matches effAp === PENDING PMC APPROVAL (same source as the card)",
+     /fSt === "PENDING_PMC"[\s\S]{0,400}effAp\(o\) !== "PENDING PMC APPROVAL"/.test(html));
+  ok("status dropdown offers the two distinct stages",
+     /\["PENDING_GC", "Pending Verify \(Awaiting GC\)"\]/.test(html) && /\["PENDING_PMC", "Pending PMC \(Awaiting PMC\)"\]/.test(html));
+
+  /* Behavioural: the two stages are mutually exclusive under the shared effAp() resolver. */
+  const gcStage  = { status: "PENDING_VERIFY", approvalStatus: "PENDING REVIEW", submittedForClosureBy: "x", pa: [{ _hasPhoto: true }] };
+  const pmcStage = { status: "CLOSED", approvalStatus: "APPROVED CLOSED", clientApprovedBy: "GC", lpApprovedBy: "", pa: [{ _hasPhoto: true }] };
+  ok("awaiting-GC record → effAp PENDING REVIEW (would appear ONLY under Pending Verify)", effAp(gcStage) === "PENDING REVIEW");
+  ok("awaiting-PMC record → effAp PENDING PMC APPROVAL (would appear ONLY under Pending PMC)", effAp(pmcStage) === "PENDING PMC APPROVAL");
+  ok("the two pending stages are distinct effAp values (never in the same list)", effAp(gcStage) !== effAp(pmcStage));
+}
+
 console.log("\n==============================");
 console.log("ALL " + pass + " ASSERTIONS PASSED ✓");
 console.log("==============================");
