@@ -6678,6 +6678,10 @@ function App(_refApp) {
            second approval stage. Resolve via effAp() to match S.apPendingPMC exactly.
            Awaiting-GC items are excluded. */
         if (effAp(o) !== "PENDING PMC APPROVAL") return false;
+      } else if (fSt === "APPROVED_CLOSED") {
+        /* "Approved Closed" card counts effAp() === APPROVED CLOSED — match the
+           SAME bucket here so the linked list always equals the card number. */
+        if (effAp(o) !== "APPROVED CLOSED") return false;
       } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
@@ -7946,7 +7950,7 @@ function App(_refApp) {
     s: "Awaiting PMC review"
   }, {
     l: "Approved Closed",
-    nav: { st: "CLOSED" },
+    nav: { st: "APPROVED_CLOSED" },
     v: S.apApproved,
     c: C.green,
     bg: C.greenBg,
@@ -7974,6 +7978,36 @@ function App(_refApp) {
       onClick: k.nav ? function(){
         setFS(k.nav.st || "ALL");
         setFOT(k.nav.ot || "ALL");
+        /* FILTER PROPAGATION (dashboard → list): translate the ACTIVE Reporting
+           Period scope into the list's raised-date range — the same date field
+           and string comparison dsObs uses — so the list shows exactly the
+           records the card counted. Also clear the list's other filters (risk,
+           floor, area, finding cat, company, photo, search): the card applies
+           none of them, so stale values must not skew the result. */
+        var _f = "", _t = "";
+        if (qPeriod === "WEEKLY") {
+          if (qCutEff) { _t = qCutEff; }                       /* cumulative → ≤ cut-off */
+          else if (qWeek) {
+            for (var _wi = 0; _wi < __wkPeriods.length; _wi++) {
+              if (__wkPeriods[_wi].id === qWeek) { _f = __wkPeriods[_wi].startDate; _t = __wkPeriods[_wi].endDate; break; }
+            }
+          }                                                    /* All Weeks → no bounds */
+        } else if (qPeriod === "YEARLY") {
+          _f = qYearEff + "-01-01"; _t = qYearEff + "-12-31";
+        } else if (qPeriod === "QUARTERLY" && qQuarters.length) {
+          var _qs = qQuarters.slice().sort(function(a,b){ return a-b; });
+          _f = qYearEff + "-" + String((_qs[0]-1)*3 + 1).padStart(2,"0") + "-01";
+          var _qm = _qs[_qs.length-1]*3;
+          _t = qYearEff + "-" + String(_qm).padStart(2,"0") + "-" + String(new Date(parseInt(qYearEff,10), _qm, 0).getDate()).padStart(2,"0");
+        } else if (qPeriod === "MONTHLY" && qMonths.length) {
+          var _ms = qMonths.slice().sort(function(a,b){ return a-b; });
+          _f = qYearEff + "-" + String(_ms[0]).padStart(2,"0") + "-01";
+          _t = qYearEff + "-" + String(_ms[_ms.length-1]).padStart(2,"0") + "-" + String(new Date(parseInt(qYearEff,10), _ms[_ms.length-1], 0).getDate()).padStart(2,"0");
+        }
+        setFDFrom(_f); setFDTo(_t);
+        setFDFromIn(_f); setFDToIn(_t);   /* keep the visible date inputs in sync */
+        setFR("ALL"); setFl("ALL"); setFAr("ALL"); setFF("ALL");
+        setFCo("ALL"); setFPh("ALL"); setSr("");
         setView("list");
       } : undefined,
       title: k.nav ? "View these observations in the list" : undefined,
@@ -10219,7 +10253,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"]]))
+    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"]]))
   }, {
     v: fRi,
     s: setFR,
