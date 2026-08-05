@@ -704,10 +704,28 @@ function fetchCloudPhotos(obsIds){
    (URLs are stable: replacements get a new ?v= version, so this is safe) instead
    of the previous cache:"no-store", which forced a full re-download of every
    original on every export. Failed fetches are NOT memoized (retry works). */
-var __urlDataUriCache = {};
+var __urlDataUriCache = {};   /* url → { p: Promise, size: chars } */
+var __urlDataUriOrder = [];   /* insertion order for oldest-first eviction */
+var __urlDataUriBytes = 0;
+/* MEMORY BOUND: cap the retained base64 at ~120MB of text (≈90MB of image
+   data) so a large full-register export cannot grow RAM without limit,
+   especially on mobile. Oldest entries are evicted beyond the cap — a later
+   repeat just re-downloads that image (graceful, no failure). During one
+   export the working set itself (photos embedded into the deck/PDF) is the
+   same as before this cache existed; only the RETAINED memory is new+capped. */
+var __URL_CACHE_MAX = 120 * 1024 * 1024;
+function __urlCacheEvict(){
+  while(__urlDataUriBytes > __URL_CACHE_MAX && __urlDataUriOrder.length){
+    var u = __urlDataUriOrder.shift();
+    var e = __urlDataUriCache[u];
+    if(e){ __urlDataUriBytes -= (e.size || 0); delete __urlDataUriCache[u]; }
+  }
+}
 function urlToDataUri(url){
-  if(__urlDataUriCache[url]) return __urlDataUriCache[url];
-  var p = fetch(url)
+  var hit = __urlDataUriCache[url];
+  if(hit) return hit.p;
+  var ent = { size: 0, p: null };
+  ent.p = fetch(url)
     .then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.blob(); })
     .then(function(blob){
       return new Promise(function(res, rej){
@@ -716,10 +734,23 @@ function urlToDataUri(url){
         fr.onerror = rej;
         fr.readAsDataURL(blob);
       });
+    })
+    .then(function(dataUri){
+      ent.size = (dataUri && dataUri.length) || 0;
+      __urlDataUriBytes += ent.size;
+      __urlCacheEvict();
+      return dataUri;
     });
-  __urlDataUriCache[url] = p;
-  p.catch(function(){ delete __urlDataUriCache[url]; });
-  return p;
+  __urlDataUriCache[url] = ent;
+  __urlDataUriOrder.push(url);
+  /* failures are NOT memoized — a retry (next export) fetches again */
+  ent.p.catch(function(){
+    if(__urlDataUriCache[url] === ent){
+      __urlDataUriBytes -= (ent.size || 0);
+      delete __urlDataUriCache[url];
+    }
+  });
+  return ent.p;
 }
 /* Read an image's natural pixel dimensions from a data URI / URL.
    Used by PDF/PPT export to preserve the original aspect ratio (no distortion). */
