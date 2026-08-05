@@ -4021,7 +4021,11 @@ function runObsWorkflowTest(currentObs) {
     testId: testId,
     steps: [],
     cloudObsCount: null,
-    payloadSizeKB: null
+    payloadSizeKB: null,
+    /* Dedicated throwaway row for the self-test. The test writes ONLY to this row and
+       deletes it afterward, so it NEVER reads, appends to, approves, or overwrites any
+       production observation in the 'bkk22' blob. */
+    _testRow: "__ctpa_wf_selftest__"
   };
 
   function step(name, meta, fn) {
@@ -4065,10 +4069,10 @@ function runObsWorkflowTest(currentObs) {
     });
   })
 
-  /* Step 3: Build test observation WITH embedded photo */
+  /* Step 3: Build test observation WITH embedded photo — for an ISOLATED throwaway row */
   .then(function() {
     return step("3. Build test observation payload with photo", {
-      table: "ctpa_state", column: "data (JSONB)", operation: "PAYLOAD BUILD"
+      table: "ctpa_state", column: "id, data (JSONB)", operation: "PAYLOAD BUILD"
     }, function() {
       var testObs = {
         id: testId,
@@ -4088,67 +4092,62 @@ function runObsWorkflowTest(currentObs) {
         pb: [{ id: 1, src: DIAG_TEST_PHOTO, name: "test_before.png", at: new Date().toISOString().slice(0,10) }],
         pa: []
       };
-      /* Build full payload with existing obs + test obs — strip photos to match production behavior */
-      var newData = (currentObs || []).concat([testObs]);
-      var strippedData = stripPhotos(newData);
-      var payload = JSON.stringify({ data: strippedData });
+      /* ISOLATION: write ONLY [testObs] to the dedicated throwaway row (results._testRow).
+         The production 'bkk22' blob is never read into, appended to, or overwritten — so no
+         existing observation, approval, or photo can be touched. Photos stripped to mirror
+         the real save payload. */
+      var strippedData = stripPhotos([testObs]);
+      var payload = JSON.stringify({ id: results._testRow, data: strippedData });
       results._testObs = testObs;
-      results._newData = newData;       /* keep full data for local verify */
-      results._strippedData = strippedData; /* stripped for cloud write */
       results._payload = payload;
       results.payloadSizeKB = (payload.length / 1024).toFixed(1);
-      var rawKB = (JSON.stringify({ data: newData }).length / 1024).toFixed(1);
-      return "Payload built | obs count: " + newData.length + " | stripped size: " + results.payloadSizeKB + " KB (raw with photos: " + rawKB + " KB) | photo: 1×1px PNG";
+      return "Payload built | isolated test row: " + results._testRow + " | 1 test obs (production 'bkk22' untouched) | photo: 1×1px PNG";
     });
   })
 
-  /* Step 4: PATCH observation data to cloud (this is exactly what sv() does) */
+  /* Step 4: UPSERT the test observation into its OWN throwaway row — never bkk22 */
   .then(function() {
-    return step("4. Save observation to cloud — PATCH ctpa_state", {
-      table: "ctpa_state", column: "data", operation: "PATCH",
-      filter: "id=eq.bkk22", payloadSize: results.payloadSizeKB + " KB"
+    return step("4. Save test observation — isolated row (never bkk22)", {
+      table: "ctpa_state", column: "id, data", operation: "UPSERT",
+      filter: "id=eq." + results._testRow, payloadSize: results.payloadSizeKB + " KB"
     }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
-        method: "PATCH",
-        headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
+      return diagFetch(base + "/rest/v1/" + CLOUD.table, {
+        method: "POST",
+        headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal", "Content-Type": "application/json" }, cloudHeaders()),
         body: results._payload,
         cache: "no-store"
       }).then(function(r) {
         if (!r.ok) throw new Error(
           "HTTP " + r.status + " " + r.statusText +
-          "\n  table: ctpa_state | column: data | operation: PATCH" +
-          "\n  payload size: " + results.payloadSizeKB + " KB" +
+          "\n  table: ctpa_state | row: " + results._testRow + " (isolated test row) | operation: UPSERT" +
           "\n  Supabase error: " + parseSupaErr(r.body)
         );
-        return "PATCH HTTP " + r.status + " — wrote " + results._newData.length + " obs to ctpa_state.data";
+        return "UPSERT HTTP " + r.status + " — wrote test obs to isolated row " + results._testRow + " (production 'bkk22' untouched)";
       });
     });
   })
 
-  /* Step 5: Read back and verify test obs + photo survived round-trip */
+  /* Step 5: Read back and verify the test obs survived the round-trip */
   .then(function() {
-    return step("5. Verify observation saved — re-read from cloud", {
+    return step("5. Verify test observation saved — re-read isolated row", {
       table: "ctpa_state", column: "data", operation: "GET (verify round-trip)"
     }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + results._testRow + "&select=data", {
         headers: cloudHeaders(), cache: "no-store"
       }).then(function(r) {
         if (!r.ok) throw new Error("HTTP " + r.status + " — re-read failed: " + parseSupaErr(r.body));
         var rows = JSON.parse(r.body);
-        if (!rows || !rows.length) throw new Error("Row bkk22 disappeared after write — RLS may have blocked the save");
+        if (!rows || !rows.length) throw new Error("Test row " + results._testRow + " not found after write — RLS may have blocked the save");
         var d = rows[0].data;
         if (!Array.isArray(d)) throw new Error("data field is not an array after write — got: " + typeof d);
         var found = d.find(function(o){ return o.id === testId; });
-        if (!found) throw new Error("Test observation " + testId + " NOT FOUND in cloud data after write — write silently failed or RLS blocked it");
-        /* Photos are intentionally stripped from cloud payload to keep size < 1 MB.
-           Verify photo METADATA synced (_hasPhoto flag, name, count) but not the src. */
+        if (!found) throw new Error("Test observation " + testId + " NOT FOUND in isolated row after write");
         var photoMeta = found.pb && found.pb.length > 0;
         var hasFlag   = found.pb && found.pb[0] && found.pb[0]._hasPhoto === true;
         var photoNote = photoMeta
           ? "✅ metadata synced (name=" + found.pb[0].name + ", _hasPhoto=" + hasFlag + ") | src stripped by design"
           : "⚠️ no photo metadata";
-        return "✅ Observation " + testId + " confirmed in cloud | obs total: " + d.length +
-               " | photo: " + photoNote;
+        return "✅ Test obs " + testId + " confirmed in isolated row | photo: " + photoNote;
       });
     });
   })
@@ -4158,7 +4157,7 @@ function runObsWorkflowTest(currentObs) {
     return step("6. Cross-device read simulation — fresh fetch", {
       table: "ctpa_state", column: "data", operation: "GET (simulated 2nd device)"
     }, function() {
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data", {
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + results._testRow + "&select=data", {
         headers: cloudHeaders(),
         cache: "no-store"
       }).then(function(r) {
@@ -4167,38 +4166,30 @@ function runObsWorkflowTest(currentObs) {
         var d = (rows && rows[0] && rows[0].data) || [];
         var found = d.find(function(o){ return o.id === testId; });
         if (!found) throw new Error("Test obs not readable on simulated 2nd device — possible replication lag or write failure");
-        /* Photo src is intentionally stripped — verify metadata synced correctly */
         var hasMeta = found.pb && found.pb.length > 0 && found.pb[0].name;
-        var srcStripped = !found.pb || !found.pb[0] || !found.pb[0].src;
         if(!hasMeta) throw new Error("Photo metadata missing on 2nd device — pb array empty or name missing");
-        return "✅ 2nd device read obs successfully | obs total: " + d.length +
-               " | photo metadata: ✅ (name=" + found.pb[0].name + ")" +
-               " | photo src: stripped by design (local-only, ~10 MB saved per sync)";
+        return "✅ 2nd device read the isolated test obs | photo metadata: ✅ (name=" + found.pb[0].name + ")" +
+               " | photo src: stripped by design (local-only)";
       });
     });
   })
 
-  /* Step 7: Cleanup — remove test observation */
+  /* Step 7: Cleanup — DELETE the entire throwaway row (removes ONLY the test record) */
   .then(function() {
-    return step("7. Cleanup — remove test observation from cloud", {
-      table: "ctpa_state", column: "data", operation: "PATCH (remove test obs)"
+    return step("7. Cleanup — delete the isolated test row", {
+      table: "ctpa_state", column: "id", operation: "DELETE (test row only)"
     }, function() {
-      if (!results._newData || results._newData.length === 0) {
-        throw new Error("SAFETY ABORT: results._newData is empty — refusing to PATCH Supabase with empty data array to prevent data loss. Manually delete test obs id=" + testId);
+      /* SAFETY: only ever deletes the dedicated test row id — never the production 'bkk22'. */
+      if (!results._testRow || results._testRow === CLOUD.row) {
+        throw new Error("SAFETY ABORT: refusing to delete — test row id is missing or equals the production row " + CLOUD.row + ".");
       }
-      var cleanData = stripPhotos(results._newData.filter(function(o){ return o.id !== testId; }));
-      if (cleanData.length === 0 && results._newData.length > 1) {
-        throw new Error("SAFETY ABORT: cleanData is unexpectedly empty after filter — refusing to wipe data. Manually delete test obs id=" + testId);
-      }
-      var cleanPayload = JSON.stringify({ data: cleanData });
-      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row, {
-        method: "PATCH",
+      return diagFetch(base + "/rest/v1/" + CLOUD.table + "?id=eq." + results._testRow, {
+        method: "DELETE",
         headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
-        body: cleanPayload,
         cache: "no-store"
       }).then(function(r) {
-        if (!r.ok) throw new Error("HTTP " + r.status + " — cleanup PATCH failed: " + parseSupaErr(r.body) + "\nManually delete obs id=" + testId);
-        return "Removed test obs, cloud restored to " + cleanData.length + " observations";
+        if (!r.ok) throw new Error("HTTP " + r.status + " — cleanup DELETE failed: " + parseSupaErr(r.body) + "\nManually delete row id=" + results._testRow);
+        return "Deleted isolated test row " + results._testRow + " — production 'bkk22' never modified";
       });
     });
   })

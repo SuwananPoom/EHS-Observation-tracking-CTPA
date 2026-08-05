@@ -18,7 +18,9 @@ const sqlCode = sql.replace(/--[^\n]*/g, ""); // strip `--` comments (header quo
 const guardSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-04_ctpa_state_close_guard.sql"), "utf8");
 const guardCode = guardSql.replace(/--[^\n]*/g, ""); // strip `--` comments before pattern checks
 const authzSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-05_ctpa_state_approval_authz.sql"), "utf8");
-const authzCode = authzSql.replace(/--[^\n]*/g, ""); // Issue 4: role-verified approval trigger
+const authzCode = authzSql.replace(/--[^\n]*/g, ""); // retained in history but SUPERSEDED
+const revertSql = fs.readFileSync(path.join(ROOT, "migrations", "2026-08-05b_ctpa_state_revert_authz.sql"), "utf8");
+const revertCode = revertSql.replace(/--[^\n]*/g, ""); // the LIVE trigger: close-guard, no auth check
 
 let pass = 0;
 function ok(name, cond) {
@@ -318,23 +320,31 @@ console.log("\n10) GC USER permissions — Close / Approve lockdown (OBS-1191)")
      !/alter\s+table/i.test(guardCode) && !/add\s+column/i.test(guardCode));
   ok("guard ships an explicit non-destructive ROLLBACK", /drop trigger if exists ctpa_state_close_guard_trg/.test(guardSql));
 
-  /* ---- Issue 4: server-side APPROVAL AUTHORIZATION trigger (role-verified) ---- */
-  ok("authz trigger runs SECURITY DEFINER with a fixed search_path",
-     /security\s+definer/i.test(authzCode) && /set\s+search_path\s*=/i.test(authzCode));
-  ok("authz resolves the CALLER's role from the request JWT + ctpa_user_profiles",
-     /current_setting\('request\.jwt\.claims'/.test(authzCode) && /from public\.ctpa_user_profiles where id::text = caller_uid/.test(authzCode));
-  ok("authz: GC sign-off requires GC Manager or Admin caller",
-     /caller_role,''\) not in \('dayone_admin','lm_gc','ritta_gc'\)/.test(authzCode));
-  ok("authz: PMC sign-off requires PMC Manager or Admin caller",
-     /caller_role,''\) not in \('dayone_admin','pmc_manager'\)/.test(authzCode));
-  ok("authz is change-scoped (only newly added/changed roles are checked)",
-     /is distinct from coalesce\(old_gcrole->>eid,''\)/.test(authzCode) && /is distinct from coalesce\(old_pmcrole->>eid,''\)/.test(authzCode));
-  ok("authz rejects unauthorized approvals with insufficient_privilege (403-like)",
-     (authzCode.match(/insufficient_privilege/g) || []).length >= 2);
-  ok("authz preserves the close-without-both-sign-offs invariant",
-     /check_violation/.test(authzCode) && /old_closed \? eid/.test(authzCode));
-  ok("authz performs NO schema change and ships a ROLLBACK",
-     !/alter\s+table/i.test(authzCode) && /drop trigger if exists ctpa_state_close_guard_trg/.test(authzSql) && /drop function if exists public\.ctpa_state_close_guard/.test(authzSql));
+  /* ---- Server-side guard: the LIVE trigger is the REVERT (2026-08-05b). The app writes
+     ctpa_state with the ANON key (auth.uid() null), so the auth.uid()-based authz version
+     (2026-08-05) blocked real approvals and is SUPERSEDED — retained only as history. ---- */
+  ok("revert migration is a close-guard with NO auth.uid()/profiles/security-definer check",
+     /create or replace function public\.ctpa_state_close_guard/.test(revertCode)
+     && !/ctpa_user_profiles/.test(revertCode) && !/request\.jwt\.claims/.test(revertCode)
+     && !/security\s+definer/i.test(revertCode) && !/insufficient_privilege/.test(revertCode));
+  ok("revert keeps the close-without-both-sign-offs invariant (transition-based)",
+     /check_violation/.test(revertCode) && /old_closed \? \(e->>'id'\)/.test(revertCode) && /old_ids \? \(e->>'id'\)/.test(revertCode));
+  ok("revert requires BOTH GC and PMC sign-offs (name+role) to allow a close",
+     /clientApprovedRole/.test(revertCode) && /clientApprovedBy/.test(revertCode) && /lpApprovedRole/.test(revertCode) && /lpApprovedBy/.test(revertCode));
+  ok("revert closed-ish tests are NULL-safe (coalesce)",
+     /coalesce\(e->>'status',''\)\s*=\s*'CLOSED'/.test(revertCode) && /coalesce\(e->>'approvalStatus',''\)\s*=\s*'APPROVED CLOSED'/.test(revertCode));
+  ok("revert performs NO schema change and ships a ROLLBACK; documents supersession",
+     !/alter\s+table/i.test(revertCode) && /drop trigger if exists ctpa_state_close_guard_trg/.test(revertSql) && /supersed/i.test(revertSql));
+
+  /* ---- Issue 2: the workflow self-test is ISOLATED to a throwaway row, never bkk22 ---- */
+  ok("workflow test declares a dedicated throwaway row id (not the production row)",
+     /_testRow:\s*"__ctpa_wf_selftest__"/.test(html));
+  ok("workflow test SAVE upserts the isolated row (merge-duplicates), not a bkk22 PATCH",
+     /Save test observation — isolated row \(never bkk22\)/.test(html) && /resolution=merge-duplicates/.test(html));
+  ok("workflow test CLEANUP deletes ONLY the isolated row, guarded against bkk22",
+     /operation: "DELETE \(test row only\)"/.test(html) && /results\._testRow === CLOUD\.row/.test(html));
+  ok("workflow test payload is ONLY the test obs (no concat of production data)",
+     /stripPhotos\(\[testObs\]\)/.test(html) && !/\(currentObs \|\| \[\]\)\.concat/.test(html));
 }
 
 console.log("\n==============================");
