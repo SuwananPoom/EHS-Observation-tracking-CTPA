@@ -6682,6 +6682,11 @@ function App(_refApp) {
         /* "Approved Closed" card counts effAp() === APPROVED CLOSED — match the
            SAME bucket here so the linked list always equals the card number. */
         if (effAp(o) !== "APPROVED CLOSED") return false;
+      } else if (fSt === "OVERDUE") {
+        /* "Overdue" card counts isOD() — the one shared overdue rule (not
+           closed, not awaiting-PMC-only, past due date vs today). Match the
+           SAME function here so the linked list always equals the card. */
+        if (!isOD(o)) return false;
       } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
@@ -7889,6 +7894,7 @@ function App(_refApp) {
     s: "All records"
   }, {
     l: "Overdue",
+    nav: { st: "OVERDUE" },
     v: S.od,
     c: S.od > 0 ? C.red : C.green,
     bg: S.od > 0 ? C.redBg : "#fff",
@@ -10253,7 +10259,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"]]))
+    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"], ["OVERDUE", "Overdue"]]))
   }, {
     v: fRi,
     s: setFR,
