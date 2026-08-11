@@ -10071,7 +10071,10 @@ function App(_refApp) {
                 setView("list");
               },
               title: "View the " + r.count + " source observations",
-              style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer" }
+              /* UI only: subtle pastel background per Top-5 rank (rows beyond 5 stay plain) */
+              style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer",
+                borderRadius: 10,
+                background: ri === 0 ? "#FFF1F2" : ri === 1 ? "#FFF7ED" : ri === 2 ? "#FFFBEB" : ri === 3 ? "#EFF6FF" : ri === 4 ? "#ECFDF5" : "transparent" }
             },
               /*#__PURE__*/(function(){
                 /* rank badge colored by the group's HIGHEST risk: Serious → red,
