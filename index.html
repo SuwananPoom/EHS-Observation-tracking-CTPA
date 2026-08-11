@@ -1907,6 +1907,11 @@ function buildRecurringAnalysis(filtered, allObs, wkPeriods, selIdx){
     var groups = {};
     (filtered || []).forEach(function(o){
       if(!o) return;
+      /* ANALYSIS-ONLY exclusion: Good Observations are positive findings, not
+         recurring problems — they are skipped HERE only (grouping, totals,
+         company/area/serious counts, ranking). Source data and every other
+         view are untouched. */
+      if(o.obsType === "GOOD_OBS") return;
       var g = classifyRecurringDetail(o);
       if(g.key === "other") return;   /* catch-all excluded from Top-5 ranking */
       var e = groups[g.key] || (groups[g.key] = { key: g.key, label: g.label, count: 0,
@@ -1931,7 +1936,7 @@ function buildRecurringAnalysis(filtered, allObs, wkPeriods, selIdx){
       var e = groups[k];
       e.weeklyCounts = wks.map(function(p){
         return (allObs || []).filter(function(o){
-          try { return weekPeriodMatch(o, p) && classifyRecurringDetail(o).key === k; }
+          try { return o && o.obsType !== "GOOD_OBS" && weekPeriodMatch(o, p) && classifyRecurringDetail(o).key === k; }
           catch(_){ return false; }
         }).length;
       });
@@ -10026,7 +10031,7 @@ function App(_refApp) {
   })),   /* ══ 3. DETAIL RECURRENCE ANALYSIS (TOP 5) — additive, read-only ══ */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 } },
-      "3. DETAIL RECURRENCE ANALYSIS (TOP 5)"),
+      "DETAIL RECURRENCE ANALYSIS (TOP 5)"),
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 10 } },
       "Recurring issue groups in the current dashboard dataset (≥ 3 occurrences, or ≥ 2 with Serious risk) · trend vs previous week · click a row to view its source observations"),
     recurAnalysis.length === 0
@@ -10068,7 +10073,13 @@ function App(_refApp) {
               title: "View the " + r.count + " source observations",
               style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer" }
             },
-              /*#__PURE__*/React.createElement("div", { style: { width: 22, height: 22, borderRadius: 7, background: ri === 0 ? C.redBg : "#F1F5F9", color: ri === 0 ? C.redDk : C.slate, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1),
+              /*#__PURE__*/(function(){
+                /* rank badge colored by the group's HIGHEST risk: Serious → red,
+                   Major → orange, else (Minor) → green */
+                var bBg = r.serious > 0 ? C.redBg : r.major > 0 ? "#FFEDD5" : C.greenBg;
+                var bFg = r.serious > 0 ? C.redDk : r.major > 0 ? "#C2410C" : C.greenDk;
+                return React.createElement("div", { style: { width: 22, height: 22, borderRadius: 7, background: bBg, color: bFg, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1);
+              })(),
               /*#__PURE__*/React.createElement("div", null,
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, r.label,
                   r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null),
