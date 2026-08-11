@@ -6682,6 +6682,11 @@ function App(_refApp) {
         /* "Approved Closed" card counts effAp() === APPROVED CLOSED — match the
            SAME bucket here so the linked list always equals the card number. */
         if (effAp(o) !== "APPROVED CLOSED") return false;
+      } else if (fSt === "STATUS_OPEN") {
+        /* Reporting-tile "Open": pure effStatus OPEN (INCLUDING rejected),
+           exactly the tile's own count — unlike the main OPEN filter below,
+           which excludes rejected records. */
+        if (effStatus(o) !== "OPEN") return false;
       } else if (fSt === "NOT_CLOSED") {
         /* "Serious Open" card status half: effStatus not CLOSED — the same
            resolver/condition S.sr uses, so card == list when combined with
@@ -9151,12 +9156,34 @@ function App(_refApp) {
             tFloor[pz.floor || "Unspecified"] = (tFloor[pz.floor || "Unspecified"] || 0) + 1;
             tCo[o.company || "Unspecified"] = (tCo[o.company || "Unspecified"] || 0) + 1;
           });
+          /* ══ Tile click-through: the EXACT date basis of the tile dataset
+             (selCards). Weekly + selected week → that week's dates (even in
+             cumulative mode, matching the CARDS-ONLY rule); cumulative w/o a
+             week → project start..cut-off; All Weeks → selected year; Monthly/
+             Quarterly/Yearly → selected range bounds. Never today's date. ══ */
+          var _tileF = "", _tileT = "";
+          if (qPeriod === "WEEKLY" && __wkSel) { _tileF = __wkSel.startDate; _tileT = __wkSel.endDate; }
+          else if (qPeriod === "WEEKLY" && qCutEff) { _tileT = qCutEff; }
+          else if (qPeriod === "WEEKLY" || qPeriod === "YEARLY") { _tileF = qYearEff + "-01-01"; _tileT = qYearEff + "-12-31"; }
+          else if (qPeriod === "QUARTERLY" && qQuarters.length) {
+            var _tq = qQuarters.slice().sort(function(a,b){ return a-b; });
+            _tileF = qYearEff + "-" + String((_tq[0]-1)*3 + 1).padStart(2,"0") + "-01";
+            var _tqm = _tq[_tq.length-1]*3;
+            _tileT = qYearEff + "-" + String(_tqm).padStart(2,"0") + "-" + String(new Date(parseInt(qYearEff,10), _tqm, 0).getDate()).padStart(2,"0");
+          } else if (qPeriod === "MONTHLY" && qMonths.length) {
+            var _tm = qMonths.slice().sort(function(a,b){ return a-b; });
+            _tileF = qYearEff + "-" + String(_tm[0]).padStart(2,"0") + "-01";
+            _tileT = qYearEff + "-" + String(_tm[_tm.length-1]).padStart(2,"0") + "-" + String(new Date(parseInt(qYearEff,10), _tm[_tm.length-1], 0).getDate()).padStart(2,"0");
+          }
+          /* 4th element = list-navigation spec; predicates chosen to be the
+             IDENTICAL classification each tile counts (STATUS_OPEN = effStatus
+             OPEN incl. rejected, exactly like `op` above). */
           var METRICS = [
-            ["Total OBS", selCards.length, C.text], ["Unsafe Act", ua, UA_C], ["Unsafe Cond", uc, "#B45309"], ["Good OBS", gd, GD_C]]
+            ["Total OBS", selCards.length, C.text, { st: "ALL" }], ["Unsafe Act", ua, UA_C, { ot: "UNSAFE_ACT" }], ["Unsafe Cond", uc, "#B45309", { ot: "UNSAFE_CON" }], ["Good OBS", gd, GD_C, { ot: "GOOD_OBS" }]]
             .concat(unTy > 0 ? [["Untyped", unTy, UN_C]] : [])
-            .concat([["Open", op, UA_C], ["In Progress", ipg, "#2563EB"], ["Pending Verify", pv, C.amber], ["Closed", cl, GD_C]])
+            .concat([["Open", op, UA_C, { st: "STATUS_OPEN" }], ["In Progress", ipg, "#2563EB", { st: "IN_PROGRESS" }], ["Pending Verify", pv, C.amber, { st: "PENDING_VERIFY" }], ["Closed", cl, GD_C, { st: "CLOSED" }]])
             .concat(unSt > 0 ? [["Odd Status", unSt, UN_C]] : [])
-            .concat([["Serious", sr, UA_C], ["Major", mj, "#B45309"], ["Minor", mn, C.textMid]])
+            .concat([["Serious", sr, UA_C, { ri: "SERIOUS" }], ["Major", mj, "#B45309", { ri: "MAJOR" }], ["Minor", mn, C.textMid, { ri: "MINOR" }]])
             .concat(unRk > 0 ? [["No Risk Set", unRk, UN_C]] : [])
             .concat([["Closure Rate", closure + "%", GD_C]]);
           /* SAME-DATASET RULE (UAT fix): every chart/table bucket below derives from
@@ -9226,7 +9253,17 @@ function App(_refApp) {
               /*#__PURE__*/React.createElement("span", { style: { fontWeight: 600, color: C.slate } }, "   (all dashboard cards & charts reflect exactly this dataset)")),
             /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(96px,1fr))", gap: 8, marginBottom: 6 } },
               METRICS.map(function(mt){
-                return /*#__PURE__*/React.createElement("div", { key: mt[0], style: { background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 8, padding: "7px 9px" } },
+                var nv = mt[3];
+                var go = nv ? function(){
+                  /* Inherit the tile's full context: its classification AND its
+                     exact date basis. Other list filters reset (the tile applies
+                     none). "All Status"/"Clear Date" restore the full list. */
+                  setFS(nv.st || "ALL"); setFOT(nv.ot || "ALL"); setFR(nv.ri || "ALL");
+                  setFl("ALL"); setFAr("ALL"); setFF("ALL"); setFCo("ALL"); setFPh("ALL"); setSr("");
+                  setFDFrom(_tileF); setFDTo(_tileT); setFDFromIn(_tileF); setFDToIn(_tileT);
+                  setView("list");
+                } : undefined;
+                return /*#__PURE__*/React.createElement("div", { key: mt[0], onClick: go, title: nv ? "View these observations in the list (" + (selLabel || "") + ")" : undefined, style: { cursor: nv ? "pointer" : "default", background: "#F8FAFC", border: "1px solid " + C.border, borderRadius: 8, padding: "7px 9px" } },
                   /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, fontWeight: 600 } }, mt[0]),
                   /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: mt[2] } }, String(mt[1])));
               })),
@@ -10268,7 +10305,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"], ["OVERDUE", "Overdue"], ["NOT_CLOSED", "Not Closed (Any Stage)"]]))
+    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"], ["OVERDUE", "Overdue"], ["NOT_CLOSED", "Not Closed (Any Stage)"], ["STATUS_OPEN", "Open (incl. Rejected)"]]))
   }, {
     v: fRi,
     s: setFR,
