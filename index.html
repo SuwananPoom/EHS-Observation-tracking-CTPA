@@ -114,6 +114,22 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   .obc-desktop{display:none!important}
   .obc-mobile{display:block!important}
 }
+/* ── DETAIL RECURRENCE ANALYSIS — mobile-only compact cards (≤600px).
+     These classes carry NO rules above 600px, so desktop/tablet rendering is
+     pixel-identical; below 600px they override the inline grid with a compact
+     wrapped-card layout. UI only — no logic involved. ── */
+@media(max-width:600px){
+  .recur-head{display:none!important}
+  .recur-row{display:flex!important;flex-wrap:wrap!important;gap:6px 8px!important;padding:10px!important;margin-bottom:8px!important;border-bottom:none!important}
+  .recur-rank{flex:0 0 auto}
+  .recur-main{flex:1 1 calc(100% - 40px);min-width:0}
+  .recur-main div{overflow-wrap:anywhere}
+  .recur-occ{flex:1 1 auto;display:flex!important;align-items:center;gap:6px;text-align:left!important}
+  .recur-occ::before{content:"Occurrences:";font-size:10px;font-weight:700;color:#64748B}
+  .recur-occ>div{font-size:14px!important;margin-top:0!important}
+  .recur-trend{flex:0 0 auto;margin-left:auto;display:flex!important;align-items:center;gap:6px;text-align:right!important;padding-top:0!important}
+  .recur-trend::before{content:"Trend:";font-size:10px;font-weight:700;color:#64748B}
+}
 </style>
 </head>
 <body>
@@ -10038,7 +10054,7 @@ function App(_refApp) {
       ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, padding: "10px 0" } },
           "No recurring details meet the threshold in the selected period.")
       : /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("div", { className: "mob-secondary", style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
+          /*#__PURE__*/React.createElement("div", { className: "recur-head", style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
             /*#__PURE__*/React.createElement("span", null, "Rank"),
             /*#__PURE__*/React.createElement("span", null, "Recurring Detail (Grouped)"),
             /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occurrences"),
@@ -10062,6 +10078,7 @@ function App(_refApp) {
               + (r.areas.length > 3 ? "  +" + (r.areas.length - 3) + " more" : "");
             return /*#__PURE__*/React.createElement("div", {
               key: r.key,
+              className: "recur-row",
               onClick: function(){
                 /* temporary navigation filter: ONLY this group's source records */
                 setRecurGrp({ label: r.label, ids: r.observationIds.slice() });
@@ -10081,18 +10098,18 @@ function App(_refApp) {
                    Major → orange, else (Minor) → green */
                 var bBg = r.serious > 0 ? C.redBg : r.major > 0 ? "#FFEDD5" : C.greenBg;
                 var bFg = r.serious > 0 ? C.redDk : r.major > 0 ? "#C2410C" : C.greenDk;
-                return React.createElement("div", { style: { width: 22, height: 22, borderRadius: 7, background: bBg, color: bFg, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1);
+                return React.createElement("div", { className: "recur-rank", style: { width: 22, height: 22, borderRadius: 7, background: bBg, color: bFg, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1);
               })(),
-              /*#__PURE__*/React.createElement("div", null,
+              /*#__PURE__*/React.createElement("div", { className: "recur-main" },
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, r.label,
                   r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null),
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 2 } }, "Companies: " + coStr),
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, "Areas: " + arStr)),
-              /*#__PURE__*/React.createElement("div", { style: { textAlign: "right" } },
+              /*#__PURE__*/React.createElement("div", { className: "recur-occ", style: { textAlign: "right" } },
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.text } }, r.count),
                 /*#__PURE__*/React.createElement("svg", { width: 60, height: 18, viewBox: "0 0 60 18", style: { display: "inline-block", marginTop: 2 } },
                   /*#__PURE__*/React.createElement("polyline", { points: pts, fill: "none", stroke: "#00CC79", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }))),
-              /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
+              /*#__PURE__*/React.createElement("div", { className: "recur-trend", style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
           }),
           recurAnalysis.length > 5 ? /*#__PURE__*/React.createElement("button", {
             onClick: function(){ setRecurShowAll(!recurShowAll); },
