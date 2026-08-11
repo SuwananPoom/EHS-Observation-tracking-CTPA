@@ -6682,6 +6682,11 @@ function App(_refApp) {
         /* "Approved Closed" card counts effAp() === APPROVED CLOSED — match the
            SAME bucket here so the linked list always equals the card number. */
         if (effAp(o) !== "APPROVED CLOSED") return false;
+      } else if (fSt === "NOT_CLOSED") {
+        /* "Serious Open" card status half: effStatus not CLOSED — the same
+           resolver/condition S.sr uses, so card == list when combined with
+           the Risk=SERIOUS filter the card click also applies. */
+        if (effStatus(o) === "CLOSED") return false;
       } else if (fSt === "OVERDUE") {
         /* "Overdue" card counts isOD() — the one shared overdue rule (not
            closed, not awaiting-PMC-only, past due date vs today). Match the
@@ -7901,6 +7906,9 @@ function App(_refApp) {
     s: "Needs action"
   }, {
     l: "Serious Open",
+    /* Exact card equivalent: risk SERIOUS + effStatus not CLOSED. noScope: this
+       card links WITHOUT carrying the Reporting Period date range (per spec). */
+    nav: { st: "NOT_CLOSED", ri: "SERIOUS", noScope: true },
     v: S.sr,
     c: S.sr > 0 ? C.red : C.green,
     bg: S.sr > 0 ? C.redBg : "#fff",
@@ -8010,9 +8018,10 @@ function App(_refApp) {
           _f = qYearEff + "-" + String(_ms[0]).padStart(2,"0") + "-01";
           _t = qYearEff + "-" + String(_ms[_ms.length-1]).padStart(2,"0") + "-" + String(new Date(parseInt(qYearEff,10), _ms[_ms.length-1], 0).getDate()).padStart(2,"0");
         }
+        if (k.nav.noScope) { _f = ""; _t = ""; }   /* card explicitly unscoped */
         setFDFrom(_f); setFDTo(_t);
         setFDFromIn(_f); setFDToIn(_t);   /* keep the visible date inputs in sync */
-        setFR("ALL"); setFl("ALL"); setFAr("ALL"); setFF("ALL");
+        setFR(k.nav.ri || "ALL"); setFl("ALL"); setFAr("ALL"); setFF("ALL");
         setFCo("ALL"); setFPh("ALL"); setSr("");
         setView("list");
       } : undefined,
@@ -10259,7 +10268,7 @@ function App(_refApp) {
         k = _ref21[0],
         v = _ref21[1];
       return [k, v.label];
-    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"], ["OVERDUE", "Overdue"]]))
+    })).concat([["PENDING_GC", "Pending Verify (Awaiting GC)"], ["PENDING_PMC", "Pending PMC (Awaiting PMC)"], ["REJECTED", "Rejected"], ["OUTSTANDING", "Outstanding (Not Closed)"], ["APPROVED_CLOSED", "Approved Closed"], ["OVERDUE", "Overdue"], ["NOT_CLOSED", "Not Closed (Any Stage)"]]))
   }, {
     v: fRi,
     s: setFR,
