@@ -7948,11 +7948,16 @@ function App(_refApp) {
     s: clR + "% rate"
   }, {
     l: "Open",
-    nav: { st: "OUTSTANDING" },
-    v: S.outstanding,
-    c: S.outstanding > 0 ? C.red : C.green,
-    bg: S.outstanding > 0 ? C.redBg : "#fff",
-    s: "Not closed (incl. Rejected)"
+    /* STRICT OPEN (spec 2026-08-11): current workflow status Open ONLY —
+       Rejected / Pending / In Progress / Closed are all excluded. Rejected
+       records count solely in the Rejected card. S.open is the same
+       mutually-exclusive bucket the Closure chart's Open slice uses, and
+       the list's OPEN filter applies the identical exclusion. */
+    nav: { st: "OPEN" },
+    v: S.open,
+    c: S.open > 0 ? C.red : C.green,
+    bg: S.open > 0 ? C.redBg : "#fff",
+    s: "Open observations"
   }, {
     l: "Pending Verify",
     nav: { st: "PENDING_GC" },
