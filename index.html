@@ -1854,6 +1854,110 @@ function aggregateObservationsByQuarter(obsArr, period){
   var keys = Object.keys(buckets).sort();  /* chronological — "YYYY[-MM|-Qn]" sorts naturally */
   return keys.map(function(k){ return buckets[k]; });
 }
+/* ══ DETAIL RECURRENCE ANALYSIS — pure, read-only helpers ═══════════════════
+   classifyRecurringDetail(o): conservative rule-based grouping. The stored
+   hazard category (o.cat) decides first; description text (o.desc/o.rect) is
+   only INSPECTED (never modified) to refine or catch keyword matches. */
+function classifyRecurringDetail(o){
+  if(!o) return { key: "other", label: "Other" };
+  var cat = String(o.cat || "").toLowerCase();
+  var txt = (String(o.desc || "") + " " + String(o.rect || "")).toLowerCase();
+  var both = cat + " " + txt;
+  function G(k, l){ return { key: k, label: l }; }
+  /* category-first mapping (existing taxonomy → recurrence group) */
+  if(cat.indexOf("housekeeping") !== -1) return G("poor-housekeeping", "Poor Housekeeping");
+  if(cat.indexOf("working from height") !== -1 || cat.indexOf("work at height") !== -1){
+    return /harness|lanyard|lifeline|anchor|hook/.test(txt)
+      ? G("harness", "Safety Harness Non-compliance")
+      : G("working-at-height", "Working at Height");
+  }
+  if(cat.indexOf("ppe") !== -1) return G("ppe", "PPE Non-compliance");
+  if(cat.indexOf("electrical") !== -1) return /cable|wire|wiring|cord|extension/.test(txt)
+      ? G("cable-management", "Improper Cable Management") : G("electrical", "Electrical Safety");
+  if(cat.indexOf("signage") !== -1 || cat.indexOf("barricade") !== -1) return G("barricade", "Missing Barricade / Signage");
+  if(cat.indexOf("material storage") !== -1) return G("material-storage", "Material Storage");
+  if(cat.indexOf("access and egress") !== -1) return G("access", "Unsafe Access / Egress");
+  if(cat.indexOf("lifting") !== -1) return G("lifting", "Lifting Safety");
+  if(cat.indexOf("scaffold") !== -1) return G("scaffold", "Scaffold Safety");
+  if(cat.indexOf("hot work") !== -1) return G("hot-work", "Hot Work");
+  if(cat.indexOf("driving") !== -1 || cat.indexOf("traffic") !== -1) return G("traffic", "Traffic Management");
+  /* text fallback (same wording variants → one group) */
+  if(/harness|lanyard|lifeline/.test(both)) return G("harness", "Safety Harness Non-compliance");
+  if(/housekeep|untidy|debris|rubbish|garbage|litter/.test(both)) return G("poor-housekeeping", "Poor Housekeeping");
+  if(/cable|wiring|extension cord/.test(both)) return G("cable-management", "Improper Cable Management");
+  if(/barricade|signage|warning sign/.test(both)) return G("barricade", "Missing Barricade / Signage");
+  if(/helmet|glove|goggle|safety shoe|vest|ppe/.test(both)) return G("ppe", "PPE Non-compliance");
+  if(/scaffold/.test(both)) return G("scaffold", "Scaffold Safety");
+  if(/height|ladder|platform edge|opening/.test(both)) return G("working-at-height", "Working at Height");
+  if(/storage|stack/.test(both)) return G("material-storage", "Material Storage");
+  if(/lifting|crane|sling|rigg/.test(both)) return G("lifting", "Lifting Safety");
+  if(/electric|live wire|panel/.test(both)) return G("electrical", "Electrical Safety");
+  if(/weld|cutting|grind|spark|hot work/.test(both)) return G("hot-work", "Hot Work");
+  if(/access|egress|walkway|obstruct/.test(both)) return G("access", "Unsafe Access / Egress");
+  if(/vehicle|traffic|speed|reversing/.test(both)) return G("traffic", "Traffic Management");
+  return G("other", "Other");
+}
+/* buildRecurringAnalysis(filtered, allObs, wkPeriods, selIdx):
+   groups come from the ALREADY-FILTERED dashboard dataset (period + filters
+   respected); the 4-week sparkline/trend reads history from allObs with the
+   same classification, using the system's existing anchored week boundaries.
+   Read-only: nothing is written back to any record. */
+function buildRecurringAnalysis(filtered, allObs, wkPeriods, selIdx){
+  try {
+    var groups = {};
+    (filtered || []).forEach(function(o){
+      if(!o) return;
+      var g = classifyRecurringDetail(o);
+      if(g.key === "other") return;   /* catch-all excluded from Top-5 ranking */
+      var e = groups[g.key] || (groups[g.key] = { key: g.key, label: g.label, count: 0,
+        serious: 0, major: 0, companies: {}, areas: {}, observationIds: [] });
+      e.count++;
+      if(o.risk === "SERIOUS") e.serious++;
+      if(o.risk === "MAJOR") e.major++;
+      var co = o.company || "Unspecified";
+      e.companies[co] = (e.companies[co] || 0) + 1;
+      var pz = parseZone(o.zone || "");
+      var ar = (pz.area && pz.area !== "Other") ? pz.area : (pz.other || pz.floor || "Unspecified");
+      e.areas[ar] = (e.areas[ar] || 0) + 1;
+      if(o.id) e.observationIds.push(o.id);
+    });
+    /* 4 weekly buckets ending at the selected (or latest configured) week */
+    var wks = [];
+    if(wkPeriods && wkPeriods.length){
+      var end = (selIdx >= 0 && selIdx < wkPeriods.length) ? selIdx : wkPeriods.length - 1;
+      for(var i = Math.max(0, end - 3); i <= end; i++) wks.push(wkPeriods[i]);
+    }
+    var rows = Object.keys(groups).map(function(k){
+      var e = groups[k];
+      e.weeklyCounts = wks.map(function(p){
+        return (allObs || []).filter(function(o){
+          try { return weekPeriodMatch(o, p) && classifyRecurringDetail(o).key === k; }
+          catch(_){ return false; }
+        }).length;
+      });
+      var cw = e.weeklyCounts.length ? e.weeklyCounts[e.weeklyCounts.length - 1] : e.count;
+      var pw = e.weeklyCounts.length > 1 ? e.weeklyCounts[e.weeklyCounts.length - 2] : 0;
+      e.previousWeekCount = pw;
+      e.trendPercent = pw > 0 ? Math.round((cw - pw) / pw * 100) : (cw > 0 ? null /* NEW */ : 0);
+      e.companies = Object.keys(e.companies).map(function(n){ return { name: n, count: e.companies[n] }; })
+        .sort(function(a,b){ return b.count - a.count; });
+      e.areas = Object.keys(e.areas).map(function(n){ return { name: n, count: e.areas[n] }; })
+        .sort(function(a,b){ return b.count - a.count; });
+      return e;
+    });
+    /* recurrence threshold: ≥3, or ≥2 when the group contains Serious risk */
+    rows = rows.filter(function(e){ return e.count >= 3 || (e.serious > 0 && e.count >= 2); });
+    rows.sort(function(a,b){
+      if(b.count !== a.count) return b.count - a.count;
+      if(b.serious !== a.serious) return b.serious - a.serious;
+      if(b.major !== a.major) return b.major - a.major;
+      var ta = a.trendPercent === null ? 1e9 : a.trendPercent;
+      var tb = b.trendPercent === null ? 1e9 : b.trendPercent;
+      return tb - ta;
+    });
+    return rows;
+  } catch(e){ console.warn("[CTPA] recurrence analysis failed:", e && e.message); return []; }
+}
 function topKeyOf(map){
   var best = null, bn = -1;
   Object.keys(map || {}).forEach(function(k){ if(map[k] > bn){ bn = map[k]; best = k; } });
@@ -6364,6 +6468,11 @@ function App(_refApp) {
      120. Resets whenever any filter changes. Counts/exports still use the FULL
      filtered set; only how many cards are mounted at once changes. */
   var _visN = useState(60), visN = _visN[0], setVisN = _visN[1];
+  /* Transient recurrence-group filter (Detail Recurrence Analysis click-through).
+     Pure in-memory navigation state — never persisted; cleared via the list
+     chip or any dashboard-card navigation. */
+  var _rgf = useState(null), recurGrp = _rgf[0], setRecurGrp = _rgf[1];
+  var _rsh = useState(false), recurShowAll = _rsh[0], setRecurShowAll = _rsh[1];
   /* Excel export cut-off date (display/export-time filter only; never written back) */
   var _exc = useState(""), exCut = _exc[0], setExCut = _exc[1];
   var _useState39 = useState(""),
@@ -6662,6 +6771,9 @@ function App(_refApp) {
     return obs.filter(function (o) {
       /* REJECTED is an approval-workflow state (approvalStatus), not a stored
          status value — match it via effAp(), same source as the Rejected card. */
+      /* Transient recurrence-group filter: exact source-observation IDs from
+         the clicked Detail Recurrence row. Cleared → normal full list. */
+      if (recurGrp && recurGrp.ids.indexOf(o.id) === -1) return false;
       if (fSt === "REJECTED") {
         if (effAp(o) !== "REJECTED") return false;
       } else if (fSt === "OUTSTANDING") {
@@ -6730,7 +6842,7 @@ function App(_refApp) {
       }
       return true;
     });
-  }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo]);
+  }, [obs, fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo, recurGrp]);
   React.useEffect(function(){ setVisN(60); }, [fSt, fRi, fFl, fAr, fFc, fCo, fPh, fOT, srch, fDFrom, fDTo]);
   /* ══ SINGLE SOURCE OF TRUTH for all dashboard analytics ══
      dsObs = the selected reporting-period dataset (in-memory filter of obs).
@@ -6795,6 +6907,14 @@ function App(_refApp) {
     ids.forEach(function(id, i){ m[id] = i + 1; });
     return m;
   }, [obs]);
+  /* Detail Recurrence Analysis — computed once per data/period change (read-only) */
+  var recurAnalysis = useMemo(function(){
+    var selIdx = -1;
+    if (qPeriod === "WEEKLY" && qWeek) {
+      for (var i = 0; i < __wkPeriods.length; i++) { if (__wkPeriods[i].id === qWeek) { selIdx = i; break; } }
+    }
+    return buildRecurringAnalysis(dsObs, obs, __wkPeriods, selIdx);
+  }, [dsObs, obs, qPeriod, qWeek, __wkPeriods]);
   var S = useMemo(function () {
     return {
       n: dsObs.length,
@@ -8000,6 +8120,7 @@ function App(_refApp) {
          switch views. No save, no fetch, no write of any kind. Cards without an
          exact existing filter equivalent stay non-clickable. */
       onClick: k.nav ? function(){
+        setRecurGrp(null);   /* card navigation must not intersect a stale recurrence filter */
         setFS(k.nav.st || "ALL");
         setFOT(k.nav.ot || "ALL");
         /* FILTER PROPAGATION (dashboard → list): translate the ACTIVE Reporting
@@ -9902,7 +10023,68 @@ function App(_refApp) {
         fontWeight: 600
       }
     }, o.due));
-  })),   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
+  })),   /* ══ 3. DETAIL RECURRENCE ANALYSIS (TOP 5) — additive, read-only ══ */
+  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 } },
+      "3. DETAIL RECURRENCE ANALYSIS (TOP 5)"),
+    /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 10 } },
+      "Recurring issue groups in the current dashboard dataset (≥ 3 occurrences, or ≥ 2 with Serious risk) · trend vs previous week · click a row to view its source observations"),
+    recurAnalysis.length === 0
+      ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, padding: "10px 0" } },
+          "No recurring details meet the threshold in the selected period.")
+      : /*#__PURE__*/React.createElement("div", null,
+          /*#__PURE__*/React.createElement("div", { className: "mob-secondary", style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
+            /*#__PURE__*/React.createElement("span", null, "Rank"),
+            /*#__PURE__*/React.createElement("span", null, "Recurring Detail (Grouped)"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occurrences"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Trend (vs last week)")),
+          (recurShowAll ? recurAnalysis : recurAnalysis.slice(0, 5)).map(function(r, ri){
+            var maxWk = Math.max.apply(null, [1].concat(r.weeklyCounts || []));
+            var pts = (r.weeklyCounts || []).map(function(v, i, arr){
+              var n = arr.length > 1 ? arr.length - 1 : 1;
+              return (i / n * 56 + 2).toFixed(1) + "," + (16 - v / maxWk * 13 + 1).toFixed(1);
+            }).join(" ");
+            var trend = r.trendPercent === null
+              ? /*#__PURE__*/React.createElement("span", { style: { color: "#7C3AED", fontWeight: 800 } }, "NEW")
+              : r.trendPercent > 0
+                ? /*#__PURE__*/React.createElement("span", { style: { color: C.redDk, fontWeight: 800 } }, "↑ " + r.trendPercent + "%")
+                : r.trendPercent < 0
+                  ? /*#__PURE__*/React.createElement("span", { style: { color: C.greenDk, fontWeight: 800 } }, "↓ " + Math.abs(r.trendPercent) + "%")
+                  : /*#__PURE__*/React.createElement("span", { style: { color: C.slateMid, fontWeight: 700 } }, "— 0%");
+            var coStr = r.companies.slice(0, 3).map(function(c){ return c.name + " (" + c.count + ")"; }).join(", ")
+              + (r.companies.length > 3 ? "  +" + (r.companies.length - 3) + " more" : "");
+            var arStr = r.areas.slice(0, 3).map(function(a){ return a.name + " (" + a.count + ")"; }).join(", ")
+              + (r.areas.length > 3 ? "  +" + (r.areas.length - 3) + " more" : "");
+            return /*#__PURE__*/React.createElement("div", {
+              key: r.key,
+              onClick: function(){
+                /* temporary navigation filter: ONLY this group's source records */
+                setRecurGrp({ label: r.label, ids: r.observationIds.slice() });
+                setFS("ALL"); setFOT("ALL"); setFR("ALL"); setFl("ALL"); setFAr("ALL");
+                setFF("ALL"); setFCo("ALL"); setFPh("ALL"); setSr("");
+                setFDFrom(""); setFDTo(""); setFDFromIn(""); setFDToIn("");
+                setView("list");
+              },
+              title: "View the " + r.count + " source observations",
+              style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer" }
+            },
+              /*#__PURE__*/React.createElement("div", { style: { width: 22, height: 22, borderRadius: 7, background: ri === 0 ? C.redBg : "#F1F5F9", color: ri === 0 ? C.redDk : C.slate, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1),
+              /*#__PURE__*/React.createElement("div", null,
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, r.label,
+                  r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 2 } }, "Companies: " + coStr),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, "Areas: " + arStr)),
+              /*#__PURE__*/React.createElement("div", { style: { textAlign: "right" } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.text } }, r.count),
+                /*#__PURE__*/React.createElement("svg", { width: 60, height: 18, viewBox: "0 0 60 18", style: { display: "inline-block", marginTop: 2 } },
+                  /*#__PURE__*/React.createElement("polyline", { points: pts, fill: "none", stroke: "#00CC79", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }))),
+              /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
+          }),
+          recurAnalysis.length > 5 ? /*#__PURE__*/React.createElement("button", {
+            onClick: function(){ setRecurShowAll(!recurShowAll); },
+            style: { marginTop: 8, fontSize: 11, fontWeight: 700, color: C.blueDk || "#1D4ED8", background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }
+          }, recurShowAll ? "Show Top 5 only" : "View all recurring details →") : null)),
+  /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14, borderRadius: 14, boxShadow: "0 2px 10px rgba(15,23,42,0.06)" }) },
     (function(){
       var OP_C = "#EF4444", IP_C = "#F59E0B", PV_C = "#3B82F6", NO_C = "#E2E8F0";
@@ -10298,6 +10480,13 @@ function App(_refApp) {
   (fDFrom || fDTo) && /*#__PURE__*/React.createElement("span", {
     style: { fontSize: 10, fontWeight: 700, color: C.greenDk, background: C.greenBg, border: "1px solid " + C.green + "55", borderRadius: 7, padding: "5px 10px", alignSelf: "center" }
   }, "\ud83d\udcc5 " + (fDFrom && fDTo ? (fDFrom === fDTo ? fDFrom : fDFrom + " \u2192 " + fDTo) : fDFrom ? ("From " + fDFrom) : ("Until " + fDTo))),
+  /* Transient recurrence-group chip \u2014 visible while the Detail Recurrence
+     click-through filter is active; \u2715 restores the normal full list. */
+  recurGrp && /*#__PURE__*/React.createElement("span", {
+    onClick: function(){ setRecurGrp(null); },
+    title: "Clear the recurrence filter",
+    style: { fontSize: 10, fontWeight: 700, color: "#6D28D9", background: "#F3E8FF", border: "1px solid #C4B5FD", borderRadius: 7, padding: "6px 10px", cursor: "pointer", alignSelf: "center" }
+  }, "\u21bb Recurring: " + recurGrp.label + " (" + recurGrp.ids.length + ")  \u2715"),
   [{
     v: fSt,
     s: setFS,
