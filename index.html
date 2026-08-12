@@ -6177,29 +6177,51 @@ function AuthWrapper() {
 
   React.useEffect(function() {
     if (!supabaseClient) { setAuthLoading(false); return; }
+    /* RESILIENCE (approved fix): the restore chain previously had no catch/
+       timeout — a rejected getSession() (stale/invalid persisted token, iOS
+       Safari refresh hang) or a network-level profile-fetch rejection left
+       authLoading true forever ("Loading…" stuck). Failsafe rules:
+       - any rejection → log + show the login page (never infinite Loading);
+       - 10s timeout as last resort, CANCELLED on normal completion; a late
+         successful restore still applies (it only sets state, idempotent). */
+    var _lt = setTimeout(function(){
+      console.warn("[CTPA Auth] session restore did not settle within 10s — showing login page (a late restore will still apply)");
+      setAuthLoading(false);
+    }, 10000);
+    var done = function(){ clearTimeout(_lt); setAuthLoading(false); };
     /* Restore existing session */
     supabaseClient.auth.getSession().then(function(res) {
       var session = res.data && res.data.session;
       if (session) {
-        supabaseClient.from("ctpa_user_profiles").select("*").eq("id", session.user.id).single()
-          .then(function(res2) {
-            var profile = res2.data || { id: session.user.id, email: session.user.email, name: session.user.email, role: "viewer", company: "DayOne", status: "active" };
-            if (profile.status === "disabled") { supabaseClient.auth.signOut(); setAuthLoading(false); return; }
-            /* Re-claim on restore: the same device reuses its ACTIVE session
-               (no duplicate on refresh/reopen); a blocked device is signed out. */
-            ctpaClaimSession(supabaseClient).then(function(claim){
-              if (!claim.ok) {
-                window.CTPA_SESS_MSG = claim.reason === "DEVICE_LIMIT" ? SESS_MSG_LIMIT : SESS_MSG_EXPIRED;
-                supabaseClient.auth.signOut();
-                setAuthLoading(false);
-                return;
-              }
-              window.CTPA_AUTH = { session: session, profile: profile };
-              try { localStorage.setItem("ctpa_user", profile.name || session.user.email); } catch(_){}
-              setAuthSession(session); setAuthProfile(profile); setAuthLoading(false);
-            });
+        var proceed = function(profile) {
+          if (profile.status === "disabled") { supabaseClient.auth.signOut(); done(); return; }
+          /* Re-claim on restore: the same device reuses its ACTIVE session
+             (no duplicate on refresh/reopen); a blocked device is signed out. */
+          ctpaClaimSession(supabaseClient).then(function(claim){
+            if (!claim.ok) {
+              window.CTPA_SESS_MSG = claim.reason === "DEVICE_LIMIT" ? SESS_MSG_LIMIT : SESS_MSG_EXPIRED;
+              supabaseClient.auth.signOut();
+              done();
+              return;
+            }
+            window.CTPA_AUTH = { session: session, profile: profile };
+            try { localStorage.setItem("ctpa_user", profile.name || session.user.email); } catch(_){}
+            setAuthSession(session); setAuthProfile(profile); done();
           });
-      } else { setAuthLoading(false); }
+        };
+        var fallbackProfile = { id: session.user.id, email: session.user.email, name: session.user.email, role: "viewer", company: "DayOne", status: "active" };
+        supabaseClient.from("ctpa_user_profiles").select("*").eq("id", session.user.id).single()
+          .then(function(res2) { proceed(res2.data || fallbackProfile); })
+          .catch(function(err) {
+            /* network-level rejection (e.g. TypeError: Load failed) — same
+               fallback the res2.error path already used; never hang. */
+            console.error("[CTPA Auth] profile fetch failed:", err && err.message, "— using fallback profile");
+            proceed(fallbackProfile);
+          });
+      } else { done(); }
+    }).catch(function(err) {
+      console.error("[CTPA Auth] getSession() failed:", err && err.message, "— showing login page");
+      done();
     });
     /* Subscribe to auth changes */
     var sub = supabaseClient.auth.onAuthStateChange(function(event, session) {
