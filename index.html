@@ -6884,10 +6884,15 @@ function App(_refApp) {
            the Risk=SERIOUS filter the card click also applies. */
         if (effStatus(o) === "CLOSED") return false;
       } else if (fSt === "OVERDUE") {
-        /* "Overdue" card counts isOD() — the one shared overdue rule (not
-           closed, not awaiting-PMC-only, past due date vs today). Match the
-           SAME function here so the linked list always equals the card. */
+        /* "Overdue" card counts odScoped: isOD() plus, in a bounded window,
+           the due-date-within-window rule. The card's click-through sets
+           fDFrom+fDTo to the window bounds, so mirror that rule here: with a
+           full date window active, an item counts as overdue only if its due
+           date is on/before the window end. Cumulative navigation sets only
+           fDTo (no fDFrom), so it keeps the plain as-of-today isOD rule —
+           matching the card in that mode. */
         if (!isOD(o)) return false;
+        if (fDFrom && fDTo && !(o.due && o.due <= fDTo)) return false;
       } else if (fSt !== "ALL" && effStatus(o) !== fSt) return false;
       /* Keep the OPEN filter aligned with the Dashboard Open bucket:
          rejected records (status OPEN, approvalStatus REJECTED) are
@@ -6998,6 +7003,14 @@ function App(_refApp) {
     return m;
   }, [obs]);
   /* Detail Recurrence Analysis — computed once per data/period change (read-only) */
+  /* ONE shared overdue result: the Overdue KPI card AND the "Overdue —
+     Immediate Action Required" section both render exactly this list, so
+     their numbers can never diverge. Pipeline: selected-period dataset
+     (dsObs) → __odInPeriod (existing isOD SLA rule + the Selected-Week-Only
+     due-date bound). Read-only. */
+  var odScoped = useMemo(function(){
+    return dsObs.filter(function(o){ return __odInPeriod(o); });
+  }, [dsObs, qPeriod, qWeek, qCutEff, __wkPeriods]);
   var recurAnalysis = useMemo(function(){
     var selIdx = -1;
     if (qPeriod === "WEEKLY" && qWeek) {
@@ -8129,9 +8142,9 @@ function App(_refApp) {
   }, {
     l: "Overdue",
     nav: { st: "OVERDUE" },
-    v: S.od,
-    c: S.od > 0 ? C.red : C.green,
-    bg: S.od > 0 ? C.redBg : "#fff",
+    v: odScoped.length,
+    c: odScoped.length > 0 ? C.red : C.green,
+    bg: odScoped.length > 0 ? C.redBg : "#fff",
     s: "Needs action"
   }, {
     l: "Serious Open",
@@ -9368,11 +9381,20 @@ function App(_refApp) {
               uc = cnt(function(o){ return o.obsType === "UNSAFE_CON"; }),
               gd = cnt(function(o){ return o.obsType === "GOOD_OBS"; }),
               unTy = selCards.length - ua - uc - gd;
-          var op = cnt(function(o){ return effStatus(o) === "OPEN"; }),
+          /* ONE-DATASET RULE: tile status buckets now use the SAME definitions
+             as the main summary cards (strict Open excl. Rejected; Pending GC
+             and Pending PMC as distinct approval stages; Rejected separate).
+             Records whose stored status/approval fields contradict each other
+             (e.g. status PENDING_VERIFY with approvalStatus OPEN) fall into
+             the visible "Odd Status" remainder instead of silently inflating
+             a bucket — surfaced, not hidden. Read-only; nothing written. */
+          var op = cnt(function(o){ return effStatus(o) === "OPEN" && effAp(o) !== "REJECTED"; }),
               ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
-              pv = cnt(function(o){ return effStatus(o) === "PENDING_VERIFY"; }),
+              pgcT = cnt(function(o){ return effAp(o) === "PENDING REVIEW"; }),
+              ppmcT = cnt(function(o){ return effAp(o) === "PENDING PMC APPROVAL"; }),
+              rjT = cnt(function(o){ return effAp(o) === "REJECTED"; }),
               cl = cnt(function(o){ return effStatus(o) === "CLOSED"; }),
-              unSt = selCards.length - op - ipg - pv - cl;
+              unSt = selCards.length - op - ipg - pgcT - ppmcT - rjT - cl;
           var sr = cnt(function(o){ return o.risk === "SERIOUS"; }),
               mj = cnt(function(o){ return o.risk === "MAJOR"; }),
               mn = cnt(function(o){ return o.risk === "MINOR"; }),
@@ -9411,7 +9433,7 @@ function App(_refApp) {
           var METRICS = [
             ["Total OBS", selCards.length, C.text, { st: "ALL" }], ["Unsafe Act", ua, UA_C, { ot: "UNSAFE_ACT" }], ["Unsafe Cond", uc, "#B45309", { ot: "UNSAFE_CON" }], ["Good OBS", gd, GD_C, { ot: "GOOD_OBS" }]]
             .concat(unTy > 0 ? [["Untyped", unTy, UN_C]] : [])
-            .concat([["Open", op, UA_C, { st: "STATUS_OPEN" }], ["In Progress", ipg, "#2563EB", { st: "IN_PROGRESS" }], ["Pending Verify", pv, C.amber, { st: "PENDING_VERIFY" }], ["Closed", cl, GD_C, { st: "CLOSED" }]])
+            .concat([["Open", op, UA_C, { st: "OPEN" }], ["In Progress", ipg, "#2563EB", { st: "IN_PROGRESS" }], ["Pending GC", pgcT, C.amber, { st: "PENDING_GC" }], ["Pending PMC", ppmcT, "#2563EB", { st: "PENDING_PMC" }], ["Rejected", rjT, "#7C3AED", { st: "REJECTED" }], ["Closed", cl, GD_C, { st: "CLOSED" }]])
             .concat(unSt > 0 ? [["Odd Status", unSt, UN_C]] : [])
             .concat([["Serious", sr, UA_C, { ri: "SERIOUS" }], ["Major", mj, "#B45309", { ri: "MAJOR" }], ["Minor", mn, C.textMid, { ri: "MINOR" }]])
             .concat(unRk > 0 ? [["No Risk Set", unRk, UN_C]] : [])
@@ -10070,9 +10092,7 @@ function App(_refApp) {
       color: C.redDk,
       marginBottom: 8
     }
-  }, "Overdue \u2014 Immediate Action Required (", dsObs.filter(function (o) { return __odInPeriod(o); }).length, ")"), dsObs.filter(function (o) {
-    return __odInPeriod(o);
-  }).map(function (o) {
+  }, "Overdue \u2014 Immediate Action Required (", odScoped.length, ")"), odScoped.map(function (o) {
     var rk = RISK[o.risk || "MINOR"];
     return /*#__PURE__*/React.createElement("div", {
       key: o.id,
