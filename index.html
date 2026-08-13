@@ -8150,7 +8150,10 @@ function App(_refApp) {
     l: "Serious Open",
     /* Exact card equivalent: risk SERIOUS + effStatus not CLOSED. noScope: this
        card links WITHOUT carrying the Reporting Period date range (per spec). */
-    nav: { st: "NOT_CLOSED", ri: "SERIOUS", noScope: true },
+    /* Scope-carrying like every other card (2026-08-14 consistency spec —
+       supersedes the earlier unscoped behavior): card count == click-through
+       list in every reporting mode. */
+    nav: { st: "NOT_CLOSED", ri: "SERIOUS" },
     v: S.sr,
     c: S.sr > 0 ? C.red : C.green,
     bg: S.sr > 0 ? C.redBg : "#fff",
@@ -8356,22 +8359,34 @@ function App(_refApp) {
     }
   }, /*#__PURE__*/React.createElement(Donut, {
     size: 140,
+    /* ONE bucket system: the donut slices now use exactly the same six
+       buckets (and values) as the legend beside them — previously the
+       slices used 4 effStatus buckets while the legend showed 6 approval-
+       stage buckets, so the graphic and its own legend could disagree. */
     data: [{
       label: "Closed",
-      v: S.closed,
+      v: S.apApproved,
       color: C.green
-    }, {
-      label: "In Prog",
-      v: S.ip,
-      color: C.amber
     }, {
       label: "Open",
       v: S.open,
       color: C.red
     }, {
-      label: "P.Verify",
-      v: S.pv,
+      label: "In Progress",
+      v: S.ip,
+      color: C.amber
+    }, {
+      label: "Pending GC",
+      v: S.apPendingGC,
+      color: "#0EA5E9"
+    }, {
+      label: "Pending PMC",
+      v: S.apPendingPMC,
       color: C.blue
+    }, {
+      label: "Rejected",
+      v: S.apRejected,
+      color: "#7C3AED"
     }].filter(function (d) {
       return d.v > 0;
     }),
