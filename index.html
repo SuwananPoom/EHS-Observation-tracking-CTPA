@@ -6937,6 +6937,17 @@ function App(_refApp) {
   for(var __wi = 0; __wi < __wkPeriods.length; __wi++){ if(__wkPeriods[__wi].id === qWeek){ __wkSelApp = __wkPeriods[__wi]; break; } }
   /* Effective cumulative cut-off: explicit date, else the selected week's end date */
   var qCutEff = (qPeriod === "WEEKLY" && qCutMode === "CUM") ? (qCut || (__wkSelApp ? __wkSelApp.endDate : "")) : "";
+  /* Overdue-SECTION predicate (display-only, Selected-Week-Only rule): in
+     Weekly + selected week (non-cumulative) mode an item counts as overdue
+     for the section ONLY if its due date falls within/before the selected
+     week — an item due AFTER the week was not overdue during that week.
+     All other modes (incl. Cumulative to Cut-off) keep the existing isOD
+     rule unchanged. Does not affect the Overdue KPI card or isOD itself. */
+  var __odInPeriod = function(o){
+    if (!isOD(o)) return false;
+    if (qPeriod === "WEEKLY" && qWeek && !qCutEff && __wkSelApp) return !!o.due && o.due <= __wkSelApp.endDate;
+    return true;
+  };
   var dsObs = useMemo(function(){
     if(qPeriod === "WEEKLY"){
       /* CUMULATIVE MODE: everything from project start through the cut-off date.
@@ -10059,8 +10070,8 @@ function App(_refApp) {
       color: C.redDk,
       marginBottom: 8
     }
-  }, "Overdue \u2014 Immediate Action Required (", S.od, ")"), dsObs.filter(function (o) {
-    return isOD(o);
+  }, "Overdue \u2014 Immediate Action Required (", dsObs.filter(function (o) { return __odInPeriod(o); }).length, ")"), dsObs.filter(function (o) {
+    return __odInPeriod(o);
   }).map(function (o) {
     var rk = RISK[o.risk || "MINOR"];
     return /*#__PURE__*/React.createElement("div", {
