@@ -971,6 +971,7 @@ function cloudLoad(){
     .then(function(r){
       console.log("[CTPA] cloudLoad ← HTTP", r.status, r.statusText);
       if(!r.ok){
+        _ctpaCloudStatus(false, r.status);
         return r.text().then(function(t){
           var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
           console.error("[CTPA] cloudLoad SELECT failed | status:", r.status,
@@ -995,10 +996,25 @@ function cloudLoad(){
       if(!result){
         console.warn("[CTPA] cloudLoad ← row bkk22 NOT found in table", CLOUD.table,
           "— confirm row exists: SELECT id FROM ctpa_state WHERE id='bkk22'");
+      } else {
+        _ctpaCloudStatus(true, 200);
       }
       return result;
     })
-    .catch(function(e){ console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message, e); return null; });
+    .catch(function(e){
+      console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message, e);
+      _ctpaCloudStatus(false, 0);
+      return null;
+    });
+}
+/* ── Cloud reachability signal (display-only). Broadcasts cloudLoad outcome so
+   the UI can show "server temporarily unreachable — showing cached data"
+   instead of a silent zero. No data or sync behavior is changed. ── */
+function _ctpaCloudStatus(up, status){
+  try {
+    window.__ctpaCloudDown = up ? null : { status: status, at: Date.now() };
+    window.dispatchEvent(new CustomEvent("ctpa-cloud-status", { detail: { up: up, status: status } }));
+  } catch(_){}
 }
 /* stripPhotos: remove base64 src from photo arrays before sending to Supabase.
    Keeps metadata (id, name, at, count) but drops the data URI (can be 50-500 KB per photo).
@@ -6031,7 +6047,17 @@ function LoginPage(_ref) {
     supabaseClient.auth.signInWithPassword({ email: email.trim(), password: pw })
       .then(function(result) {
         setBusy(false);
-        if (result.error) { setErr(result.error.message || "Login failed"); return; }
+        if (result.error) {
+          /* Human-readable message instead of supabase-js's raw JSON.stringify
+             fallback ("{}") when the auth service answers 5xx with an empty
+             body (seen during the 2026-08-12 service outage). Real auth
+             messages (invalid credentials etc.) pass through unchanged. */
+          var _em = result.error.message;
+          if (!_em || _em === "{}" || _em.charAt(0) === "{") {
+            _em = "เข้าสู่ระบบไม่ได้ชั่วคราว — เซิร์ฟเวอร์ขัดข้อง (HTTP " + (result.error.status || "?") + ") กรุณาลองใหม่อีกครั้งใน 1–2 นาที / Sign-in service temporarily unavailable, please retry shortly.";
+          }
+          setErr(_em); return;
+        }
         var session = result.data.session;
         var user    = result.data.user;
         /* Fetch profile from ctpa_user_profiles */
@@ -6515,6 +6541,16 @@ function App(_refApp) {
      Pure in-memory navigation state — never persisted; cleared via the list
      chip or any dashboard-card navigation. */
   var _rgf = useState(null), recurGrp = _rgf[0], setRecurGrp = _rgf[1];
+  /* Cloud reachability banner state (display-only): set by cloudLoad's
+     broadcast; shows "server unreachable — cached data" for ALL users
+     instead of a silent zero, clears automatically on the next good read. */
+  var _cds = useState(null), cloudDown = _cds[0], setCloudDown = _cds[1];
+  React.useEffect(function(){
+    var h = function(ev){ setCloudDown(ev.detail && ev.detail.up ? null : { status: ev.detail && ev.detail.status }); };
+    window.addEventListener("ctpa-cloud-status", h);
+    if (window.__ctpaCloudDown) setCloudDown({ status: window.__ctpaCloudDown.status });
+    return function(){ window.removeEventListener("ctpa-cloud-status", h); };
+  }, []);
   var _rsh = useState(false), recurShowAll = _rsh[0], setRecurShowAll = _rsh[1];
   /* Excel export cut-off date (display/export-time filter only; never written back) */
   var _exc = useState(""), exCut = _exc[0], setExCut = _exc[1];
@@ -7976,6 +8012,20 @@ function App(_refApp) {
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCE4 Last Write: ", lastWriteTime ? lastWriteTime.toLocaleTimeString() : "None this session"),
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCCA Cloud Records: ", cloudObsCount !== null ? cloudObsCount : "\u2014"),
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCF1 Device: ", (function(){ try { return localStorage.getItem("ctpa_user") || "Unknown"; } catch(e){ return "Unknown"; } })())
+  ),
+  /* ── Server-unreachable banner (all users, display-only) ── */
+  cloudDown && /*#__PURE__*/React.createElement("div", {
+    style: { background: "#FEF3C7", borderBottom: "2px solid #F59E0B", padding: "9px 14px",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap",
+      fontSize: 12, fontWeight: 700, color: "#92400E", textAlign: "center" }
+  },
+    "⚠️ เซิร์ฟเวอร์ขัดข้องชั่วคราว" + (cloudDown.status ? " (HTTP " + cloudDown.status + ")" : "") +
+    " — กำลังแสดงข้อมูลแคชในเครื่อง ข้อมูลจริงปลอดภัยและจะกลับมาอัตโนมัติ / Server temporarily unreachable — showing locally cached data; your data is safe.",
+    /*#__PURE__*/React.createElement("button", {
+      onClick: function(){ window.location.reload(); },
+      style: { fontSize: 11, fontWeight: 800, padding: "4px 12px", borderRadius: 7,
+        border: "1px solid #F59E0B", background: "#fff", color: "#92400E", cursor: "pointer" }
+    }, "↻ ลองใหม่ / Retry")
   ),
   /*#__PURE__*/React.createElement("div", {
     style: {
