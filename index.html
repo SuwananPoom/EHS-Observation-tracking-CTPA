@@ -1124,7 +1124,24 @@ function cloudMergeSave(localArr, deletedIds){
   (deletedIds || []).forEach(function(id){ if(id) delSet[id] = true; });
   console.log("[CTPA] cloudMergeSave start | local obs:", localArr.length, "| deletedIds:", Object.keys(delSet));
   return cloudLoad().then(function(row){
-    var cloudArr = (row && row.data && Array.isArray(row.data)) ? row.data : [];
+    /* ═══ SAVE-ABORT GUARD (post-incident 2026-08-13) ═══════════════════════
+       The 13 Aug data loss happened when a pre-read failed during a service
+       outage and an (almost) empty merge base overwrote the full dataset.
+       Rule: if the cloud pre-read fails, times out, or cannot be verified,
+       the save ABORTS — nothing is ever written on an unverified base. */
+    if(!row || !Array.isArray(row.data)){
+      __lastCloudSaveErr = "Save blocked: cloud data could not be safely verified. No changes were written. / บันทึกถูกระงับ — ตรวจสอบข้อมูลบนคลาวด์ไม่ได้ ยังไม่มีการเขียนใด ๆ กรุณาลองใหม่";
+      console.error("[CTPA][guard] pre-read failed/unverified — SAVE ABORTED, nothing written");
+      return { ok: false, aborted: true, merged: localArr };
+    }
+    var cloudArr = row.data;
+    /* Empty-cloud sanity: an empty cloud array while this device holds a real
+       dataset is indistinguishable from a broken read — never trust it. */
+    if(cloudArr.length === 0 && localArr.length > 5){
+      __lastCloudSaveErr = "Save blocked: cloud returned an empty dataset that contradicts this device. No changes were written.";
+      console.error("[CTPA][guard] empty cloud vs", localArr.length, "local records — SAVE ABORTED");
+      return { ok: false, aborted: true, merged: localArr };
+    }
     console.log("[CTPA] cloudMergeSave | cloud obs:", cloudArr.length);
     /* Build ID set from localArr */
     var localIdSet = {};
@@ -1155,6 +1172,14 @@ function cloudMergeSave(localArr, deletedIds){
     });
     console.log("[CTPA] cloudMergeSave | merged obs:", merged.length,
       "(local:", localArr.length, "+ cloud-only:", cloudOnly.length, ")");
+    /* SHRINK GUARD: the merged result may never hold fewer records than the
+       cloud currently has, beyond explicitly-deleted IDs. A shrink beyond
+       that means a stale/partial device state — abort instead of writing. */
+    if(merged.length < cloudArr.length - Object.keys(delSet).length){
+      __lastCloudSaveErr = "Save blocked: result would remove " + (cloudArr.length - merged.length) + " records not marked for deletion. No changes were written.";
+      console.error("[CTPA][guard] shrink detected (cloud", cloudArr.length, "→ merged", merged.length, ") — SAVE ABORTED");
+      return { ok: false, aborted: true, merged: localArr };
+    }
     return cloudSave(merged).then(function(ok){
       if(!ok) return { ok: false, merged: merged };
       /* READ-BACK VERIFICATION: re-read the row and confirm the most recently edited
@@ -1176,10 +1201,13 @@ function cloudMergeSave(localArr, deletedIds){
     });
   }).catch(function(e){
     console.error("[CTPA] cloudMergeSave ERROR:", e && e.message);
-    /* Fall back to direct save so data is not lost */
-    return cloudSave(localArr).then(function(ok){
-      return { ok: ok, merged: localArr };
-    });
+    /* SAVE-ABORT GUARD: the old fallback here performed a raw direct save of
+       the local state — on an unverified base that is exactly the overwrite
+       that destroyed the dataset on 13 Aug. Errors now ABORT the save; the
+       user's edits stay on this device and can be retried when cloud reads
+       work again. */
+    __lastCloudSaveErr = "Save blocked: cloud state could not be verified (" + ((e && e.message) || "error") + "). No changes were written. / บันทึกถูกระงับ ยังไม่มีการเขียนใด ๆ กรุณาลองใหม่";
+    return { ok: false, aborted: true, merged: localArr };
   });
 }
 
