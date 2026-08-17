@@ -6580,6 +6580,9 @@ function App(_refApp) {
     return function(){ window.removeEventListener("ctpa-cloud-status", h); };
   }, []);
   var _rsh = useState(false), recurShowAll = _rsh[0], setRecurShowAll = _rsh[1];
+  /* Weekly comparison chart/table: long lists collapse to the latest 5 weeks
+     by default (display-only; View all expands). */
+  var _wksa = useState(false), wkShowAll = _wksa[0], setWkShowAll = _wksa[1];
   /* Excel export cut-off date (display/export-time filter only; never written back) */
   var _exc = useState(""), exCut = _exc[0], setExCut = _exc[1];
   var _useState39 = useState(""),
@@ -9534,6 +9537,14 @@ function App(_refApp) {
             else visKeys = allKeys;   /* YEARLY: chart shows all years; summary above uses selected year */
             vis = series.filter(function(r){ return visKeys.indexOf(r.key) !== -1; });
           }
+          /* COLLAPSE (display-only): when the period list is long (All Weeks /
+             cumulative), show only the LATEST 5 by default; "View all" expands.
+             Slicing happens AFTER the full list is built, so nothing is
+             recalculated — the first visible row shows Prev "—", the same rule
+             the table already applies to the first period of any selection. */
+          var visFullLen = vis.length;
+          var wkCollapsible = vis.length > 5;
+          if (wkCollapsible && !wkShowAll) vis = vis.slice(-5);
           var maxTot = vis.reduce(function(m, r){ return Math.max(m, r.total); }, 1);
           return /*#__PURE__*/React.createElement("div", { style: { marginTop: 12 } },
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 800, color: C.text, marginBottom: 8 } },
@@ -9770,6 +9781,12 @@ function App(_refApp) {
                     /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: valCol2 } }, pvr ? (pvr.total === 0 ? (r.total > 0 ? "—" : "0%") : ((pc > 0 ? "+" : "") + pc.toFixed(1) + "%")) : "—"),
                     /*#__PURE__*/React.createElement("td", { style: { padding: "5px 8px", fontWeight: 700, color: dirCol2 } }, word));
                 })))),
+            wkCollapsible ? /*#__PURE__*/React.createElement("button", {
+              onClick: function(){ setWkShowAll(!wkShowAll); },
+              style: { display: "block", width: "100%", marginTop: 8, padding: "9px 0", borderRadius: 9,
+                border: "1.5px dashed " + C.border, background: "#fff", color: C.blueDk || "#1D4ED8",
+                fontSize: 11, fontWeight: 700, cursor: "pointer" }
+            }, wkShowAll ? "Show latest 5 weeks only ↑" : "View all " + visFullLen + " periods →") : null,
             /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slate, marginTop: 6 } },
               "Note: an increase in observations is not automatically good or bad — it may reflect more reporting activity or more findings. All figures are computed in memory from existing records and are never saved back to the database.")
           );
