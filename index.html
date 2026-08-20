@@ -954,13 +954,91 @@ function cloudCheck(){
     .catch(function(e){ console.warn("[CTPA] cloudCheck network error:", e && e.message); return false; });
 }
 function cloudHeaders(){
-  /* Send both apikey and Authorization headers for all key formats.
-     Supabase REST API requires Authorization: Bearer for RLS policies. */
+  /* ROOT-CAUSE FIX (HTTP 500 / 57014 statement timeout, 2026-08-15):
+     PostgREST runs each request as the role implied by the bearer token.
+     Sending the ANON key made every query run as `anon`, whose
+     statement_timeout is 3s; the signed-in user's JWT runs as
+     `authenticated`, whose timeout is 8s. The bkk22 payload is ~2.6 MB
+     (1,600+ observations), so detoast+serialize regularly exceeded 3s →
+     "canceling statement due to statement timeout" → HTTP 500.
+     Using the real session token gives 2.7x the time budget, is more
+     correct security-wise, and changes no schema, RLS, or data.
+     Falls back to the anon key when signed out (login page, first load). */
+  var tok = CLOUD.key;
+  try {
+    var s = window.CTPA_AUTH && window.CTPA_AUTH.session;
+    if (s && s.access_token) tok = s.access_token;
+  } catch(_){}
   return {
     "apikey": CLOUD.key,
-    "Authorization": "Bearer " + CLOUD.key,
+    "Authorization": "Bearer " + tok,
     "Content-Type": "application/json"
   };
+}
+
+/* ══════════ CLOUD SAFETY CORE (post-incident hardening 2026-08-15) ══════════
+   One authoritative record of what the cloud last told us, so a FAILED read is
+   never mistaken for "the cloud is empty" — the misreading that wiped local
+   caches and set up the 13 Aug overwrite.
+   Statuses: SUCCESS_WITH_DATA · SUCCESS_EMPTY · SERVER_ERROR · NETWORK_ERROR
+             · TIMEOUT · AUTH_ERROR · UNKNOWN_ERROR · UNKNOWN (startup) */
+var CTPA_CLOUD = {
+  status: "UNKNOWN",
+  recordCount: null,          /* null = unknown/unreadable — NEVER 0 on failure */
+  lastVerifiedRead: null,     /* Date of the last confirmed successful read */
+  lastVerifiedCount: null,    /* count at that read — integrity baseline */
+  writeEnabled: false,        /* Task 3: global write lock, opened only by a verified read */
+  lastError: null,            /* { status, code, message, details, hint, op, at, retry } */
+  integrityAlert: null,       /* Task 11: set when a count collapse is detected */
+  writeBusy: false            /* Task 6: single-flight mutex */
+};
+function ctpaCloudFail(kind, info){
+  CTPA_CLOUD.status = kind;
+  CTPA_CLOUD.recordCount = null;           /* Task 2: unknown, not zero */
+  CTPA_CLOUD.writeEnabled = false;         /* Task 3: lock writes on any read failure */
+  CTPA_CLOUD.lastError = Object.assign({ at: new Date().toISOString() }, info || {});
+  console.error("[CTPA][cloud]", kind, CTPA_CLOUD.lastError);
+  try { _ctpaCloudStatus(false, (info && info.status) || 0); } catch(_){}
+}
+function ctpaCloudOk(count){
+  CTPA_CLOUD.status = count > 0 ? "SUCCESS_WITH_DATA" : "SUCCESS_EMPTY";
+  CTPA_CLOUD.recordCount = count;
+  CTPA_CLOUD.lastVerifiedRead = new Date();
+  CTPA_CLOUD.lastVerifiedCount = count;
+  CTPA_CLOUD.writeEnabled = true;          /* only a verified read opens the lock */
+  CTPA_CLOUD.lastError = null;
+  try { _ctpaCloudStatus(true, 200); } catch(_){}
+}
+/* Task 4/5/11 — the last gate before any cloud write. Returns {ok, reason}. */
+function validateStateBeforeCloudWrite(nextArr, cloudArr, deletedCount){
+  if (CTPA_CLOUD.writeEnabled !== true || CTPA_CLOUD.status.indexOf("SUCCESS") !== 0)
+    return { ok: false, reason: "Cloud writes are locked — the last cloud read did not succeed (" + CTPA_CLOUD.status + ")." };
+  if (!Array.isArray(nextArr))
+    return { ok: false, reason: "Payload is not a valid observation array." };
+  if (!Array.isArray(cloudArr))
+    return { ok: false, reason: "Cloud state could not be verified before writing." };
+  if (nextArr.length === 0 && cloudArr.length > 0)
+    return { ok: false, reason: "Refusing to write an empty state over " + cloudArr.length + " cloud records." };
+  var allowedLoss = Math.max(0, deletedCount || 0);
+  var loss = cloudArr.length - nextArr.length;
+  if (loss > allowedLoss) {
+    var pct = cloudArr.length ? Math.round(loss / cloudArr.length * 100) : 100;
+    return { ok: false, reason: "Mass-deletion guard: this write would remove " + loss + " records (" + pct + "%) that were not marked for deletion." };
+  }
+  return { ok: true };
+}
+/* Task 7 — READ-only exponential backoff. Never retries writes. */
+function ctpaReadWithRetry(fn, delays){
+  var waits = delays || [2000, 5000, 10000, 30000];
+  function attempt(i){
+    return fn().then(function(res){
+      if (res || i >= waits.length) return res;
+      console.warn("[CTPA][retry] read attempt " + (i + 1) + " failed — retrying in " + waits[i] + "ms");
+      if (CTPA_CLOUD.lastError) CTPA_CLOUD.lastError.retry = i + 1;
+      return new Promise(function(r){ setTimeout(r, waits[i]); }).then(function(){ return attempt(i + 1); });
+    });
+  }
+  return attempt(0);
 }
 function cloudLoad(){
   if(!cloudOn()) return Promise.resolve(null);
@@ -971,14 +1049,19 @@ function cloudLoad(){
     .then(function(r){
       console.log("[CTPA] cloudLoad ← HTTP", r.status, r.statusText);
       if(!r.ok){
-        _ctpaCloudStatus(false, r.status);
         return r.text().then(function(t){
           var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
-          console.error("[CTPA] cloudLoad SELECT failed | status:", r.status,
-            "| code:", parsed && parsed.code,
-            "| message:", parsed && parsed.message || t.slice(0,300),
-            "| hint:", parsed && parsed.hint,
-            "| details:", parsed && parsed.details);
+          var code = parsed && parsed.code;
+          /* Classify precisely (Task 2): 57014 = Postgres statement timeout. */
+          var kind = code === "57014" ? "TIMEOUT"
+                   : (r.status === 401 || r.status === 403) ? "AUTH_ERROR"
+                   : r.status >= 500 ? "SERVER_ERROR" : "UNKNOWN_ERROR";
+          ctpaCloudFail(kind, {
+            op: "READ ctpa_state", endpoint: "GET /rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data",
+            status: r.status, code: code,
+            message: (parsed && parsed.message) || String(t).slice(0, 300),
+            details: parsed && parsed.details, hint: parsed && parsed.hint
+          });
           return null;
         });
       }
@@ -994,16 +1077,40 @@ function cloudLoad(){
         "| data length:", rows[0] && Array.isArray(rows[0].data) ? rows[0].data.length : "(not array)");
       var result = rows[0] || null;
       if(!result){
-        console.warn("[CTPA] cloudLoad ← row bkk22 NOT found in table", CLOUD.table,
-          "— confirm row exists: SELECT id FROM ctpa_state WHERE id='bkk22'");
+        /* Row genuinely absent — a real condition, but NOT a verified empty
+           dataset: treat as unreadable so writes stay locked. */
+        ctpaCloudFail("UNKNOWN_ERROR", {
+          op: "READ ctpa_state", status: 200, code: "ROW_NOT_FOUND",
+          message: "Row '" + CLOUD.row + "' not found in " + CLOUD.table
+        });
+      } else if (Array.isArray(result.data)) {
+        /* Task 11: integrity baseline — a collapse vs the last verified count
+           raises a CRITICAL alert and keeps writes locked. */
+        var n = result.data.length, prev = CTPA_CLOUD.lastVerifiedCount;
+        if (prev !== null && prev >= 20 && n < Math.max(1, Math.floor(prev * 0.5))) {
+          CTPA_CLOUD.integrityAlert = "CRITICAL: cloud record count dropped from " + prev + " to " + n +
+            ". Cloud writes are locked pending manual review.";
+          ctpaCloudFail("UNKNOWN_ERROR", {
+            op: "READ ctpa_state integrity check", status: 200, code: "INTEGRITY_DROP",
+            message: CTPA_CLOUD.integrityAlert
+          });
+          return result;
+        }
+        CTPA_CLOUD.integrityAlert = null;
+        ctpaCloudOk(n);
       } else {
-        _ctpaCloudStatus(true, 200);
+        ctpaCloudFail("UNKNOWN_ERROR", {
+          op: "READ ctpa_state", status: 200, code: "BAD_PAYLOAD",
+          message: "row.data is not an array (type=" + typeof result.data + ")"
+        });
       }
       return result;
     })
     .catch(function(e){
-      console.error("[CTPA] cloudLoad NETWORK ERROR:", e && e.message, e);
-      _ctpaCloudStatus(false, 0);
+      var msg = (e && e.message) || "network failure";
+      ctpaCloudFail(/timeout|abort/i.test(msg) ? "TIMEOUT" : "NETWORK_ERROR", {
+        op: "READ ctpa_state", status: 0, code: "FETCH_FAILED", message: msg
+      });
       return null;
     });
 }
@@ -1118,7 +1225,19 @@ function cloudSave(arr){
    Merge rule: localArr is authoritative for obs IDs it contains (edits/deletes/status).
    Cloud obs with IDs not in localArr are preserved (added by other devices).
    deletedIds: array of obs IDs intentionally deleted — NEVER re-added from cloud. */
+/* Task 6 — WRITE MUTEX. Every cloud write funnels through cloudMergeSave;
+   this queue serialises them so two saves (autosave + manual + unload +
+   visibilitychange) can never interleave read-modify-write cycles and clobber
+   each other. Each waiter re-runs the full pre-read → validate → write cycle,
+   so the second write sees the first one's result. */
+var __ctpaWriteChain = Promise.resolve();
 function cloudMergeSave(localArr, deletedIds){
+  var run = function(){ return _cloudMergeSaveInner(localArr, deletedIds); };
+  var queued = __ctpaWriteChain.then(run, run);
+  __ctpaWriteChain = queued.catch(function(){});   /* a failure must not break the chain */
+  return queued;
+}
+function _cloudMergeSaveInner(localArr, deletedIds){
   if(!cloudOn()) return Promise.resolve({ ok: false, merged: localArr });
   var delSet = {};
   (deletedIds || []).forEach(function(id){ if(id) delSet[id] = true; });
@@ -1172,12 +1291,12 @@ function cloudMergeSave(localArr, deletedIds){
     });
     console.log("[CTPA] cloudMergeSave | merged obs:", merged.length,
       "(local:", localArr.length, "+ cloud-only:", cloudOnly.length, ")");
-    /* SHRINK GUARD: the merged result may never hold fewer records than the
-       cloud currently has, beyond explicitly-deleted IDs. A shrink beyond
-       that means a stale/partial device state — abort instead of writing. */
-    if(merged.length < cloudArr.length - Object.keys(delSet).length){
-      __lastCloudSaveErr = "Save blocked: result would remove " + (cloudArr.length - merged.length) + " records not marked for deletion. No changes were written.";
-      console.error("[CTPA][guard] shrink detected (cloud", cloudArr.length, "→ merged", merged.length, ") — SAVE ABORTED");
+    /* Tasks 4+5 — full pre-write validation: write lock, payload sanity,
+       empty-state protection and mass-deletion protection in one gate. */
+    var _v = validateStateBeforeCloudWrite(merged, cloudArr, Object.keys(delSet).length);
+    if(!_v.ok){
+      __lastCloudSaveErr = "Save blocked: " + _v.reason + " No changes were written. / บันทึกถูกระงับ ยังไม่มีการเขียนใด ๆ";
+      console.error("[CTPA][guard] pre-write validation FAILED —", _v.reason);
       return { ok: false, aborted: true, merged: localArr };
     }
     return cloudSave(merged).then(function(ok){
@@ -6722,9 +6841,11 @@ function App(_refApp) {
     var pull = function(opts){
       var isForcePull = opts && opts.force;
       if(!cloudOn()) return Promise.resolve(false);
-      return cloudLoad().then(function(row){
+      /* Task 7 — READ-only exponential backoff (2s → 5s → 10s → 30s). Reads are
+         idempotent and safe to retry; writes are never retried automatically. */
+      return ctpaReadWithRetry(function(){ return cloudLoad(); }).then(function(row){
         setLastSynced(new Date());
-        setSyncErr(null);
+        if (CTPA_CLOUD.status.indexOf("SUCCESS") === 0) setSyncErr(null);
         /* GUARD: do not let a background poll overwrite local edits that are still being
            saved or were just saved. A pull firing mid-save reads stale cloud data (the
            PATCH hasn't landed / replica lag) and would revert the user's edit on screen.
@@ -6798,18 +6919,36 @@ function App(_refApp) {
             return withCache;
           });
         } else {
-          /* Cloud row is empty/null/missing — diagnose and log the exact reason */
-          var reason = !row ? "cloudLoad returned null (HTTP error — see console errors above)"
-            : !row.data ? "row exists but 'data' field is null or undefined"
-            : !Array.isArray(row.data) ? "row.data is not an array (type=" + typeof row.data + ")"
-            : "row.data array is empty (length=0)";
-          console.warn("[CTPA] pull(): cloud data unusable —", reason);
-          /* Supabase returned empty — do NOT auto-restore from localStorage.
-             If Supabase is empty, the UI must show 0 observations (go-live state). */
-          console.log("[CTPA] pull(): Supabase has 0 observations — showing empty list");
-          setObs([]);
-          try { localStorage.setItem(SKEY, JSON.stringify([])); } catch(_){}
-          setCloudObsCount(0);
+          /* ══ READ-ONLY FAIL-SAFE (post-incident fix 2026-08-15) ══
+             This branch previously treated ANY unusable response — including an
+             HTTP 500 timeout — as "Supabase has 0 observations", then called
+             setObs([]) and OVERWROTE THE LOCAL CACHE WITH AN EMPTY ARRAY. That
+             destroyed the device's last copy and produced exactly the empty
+             state that overwrote the cloud on 13 Aug.
+             Now: a CONFIRMED empty cloud (verified read, data === []) is the only
+             case allowed to show an empty list; any failure preserves the cache,
+             keeps showing it, and locks cloud writes. */
+          var confirmedEmpty = !!row && Array.isArray(row.data) && row.data.length === 0
+                               && CTPA_CLOUD.status === "SUCCESS_EMPTY";
+          if (confirmedEmpty) {
+            console.log("[CTPA] pull(): cloud verified EMPTY — showing empty list");
+            setObs([]);
+            try { localStorage.setItem(SKEY, JSON.stringify([])); } catch(_){}
+            setCloudObsCount(0);
+          } else {
+            var reason = !row ? "cloudLoad returned null (" + CTPA_CLOUD.status + " — see diagnostics)"
+              : !row.data ? "row exists but 'data' is null/undefined"
+              : !Array.isArray(row.data) ? "row.data is not an array (type=" + typeof row.data + ")"
+              : "unverified empty payload";
+            console.error("[CTPA] pull(): READ-ONLY SAFE MODE —", reason,
+              "| local cache PRESERVED, cloud writes LOCKED");
+            CTPA_CLOUD.writeEnabled = false;
+            setCloudObsCount(null);      /* Task 2: unknown, never a false 0 */
+            setSyncErr("Cloud connection unavailable. The application is in READ-ONLY SAFE MODE. " +
+              "Cached data remains available for viewing. Cloud writes and synchronisation are " +
+              "temporarily disabled to protect production data.");
+            /* local state and localStorage are deliberately left untouched */
+          }
         }
         return true;
       }).catch(function(e){
@@ -8065,7 +8204,28 @@ function App(_refApp) {
     ),
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCE5 Last Read: ", lastSynced ? lastSynced.toLocaleTimeString() : "Never"),
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCE4 Last Write: ", lastWriteTime ? lastWriteTime.toLocaleTimeString() : "None this session"),
-    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCCA Cloud Records: ", cloudObsCount !== null ? cloudObsCount : "\u2014"),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCCA Cloud Records: ",
+      cloudObsCount !== null ? cloudObsCount
+        : /*#__PURE__*/React.createElement("strong", { style: { color: "#B45309" } }, "Unable to read")),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\u2601\uFE0F Cloud: ",
+      /*#__PURE__*/React.createElement("strong", {
+        style: { color: CTPA_CLOUD.status.indexOf("SUCCESS") === 0 ? C.greenDk : CTPA_CLOUD.status === "UNKNOWN" ? C.slate : "#B45309" }
+      }, CTPA_CLOUD.status.indexOf("SUCCESS") === 0 ? "Healthy" : CTPA_CLOUD.status === "UNKNOWN" ? "Checking\u2026"
+         : (CTPA_CLOUD.status === "NETWORK_ERROR" ? "Offline" : "Degraded (" + CTPA_CLOUD.status + ")"))),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDD12 Cloud Write: ",
+      /*#__PURE__*/React.createElement("strong", { style: { color: CTPA_CLOUD.writeEnabled ? C.greenDk : "#B45309" } },
+        CTPA_CLOUD.writeEnabled ? "Enabled" : "Locked")),
+    /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\u2705 Last Verified Read: ",
+      CTPA_CLOUD.lastVerifiedRead ? CTPA_CLOUD.lastVerifiedRead.toLocaleString() + " (" + CTPA_CLOUD.lastVerifiedCount + " records)" : "never"),
+    CTPA_CLOUD.lastError ? /*#__PURE__*/React.createElement("span", { className: "sb-detail", style: { color: "#B91C1C" } },
+      "\u26A0\uFE0F " + (CTPA_CLOUD.lastError.op || "operation") + " \u2192 HTTP " + CTPA_CLOUD.lastError.status +
+      (CTPA_CLOUD.lastError.code ? " [" + CTPA_CLOUD.lastError.code + "] " : " ") +
+      (CTPA_CLOUD.lastError.message || "").slice(0, 120) +
+      (CTPA_CLOUD.lastError.hint ? " \u00B7 hint: " + CTPA_CLOUD.lastError.hint : "") +
+      (CTPA_CLOUD.lastError.retry ? " \u00B7 retries: " + CTPA_CLOUD.lastError.retry : "") +
+      " \u00B7 " + CTPA_CLOUD.lastError.at) : null,
+    CTPA_CLOUD.integrityAlert ? /*#__PURE__*/React.createElement("span", { className: "sb-detail", style: { color: "#B91C1C", fontWeight: 800 } },
+      "\uD83D\uDEA8 " + CTPA_CLOUD.integrityAlert) : null,
     /*#__PURE__*/React.createElement("span", { className: "sb-detail" }, "\uD83D\uDCF1 Device: ", (function(){ try { return localStorage.getItem("ctpa_user") || "Unknown"; } catch(e){ return "Unknown"; } })())
   ),
   /* ── Server-unreachable banner (all users, display-only) ── */
@@ -8074,13 +8234,17 @@ function App(_refApp) {
       display: "flex", alignItems: "center", justifyContent: "center", gap: 10, flexWrap: "wrap",
       fontSize: 12, fontWeight: 700, color: "#92400E", textAlign: "center" }
   },
-    "⚠️ เซิร์ฟเวอร์ขัดข้องชั่วคราว" + (cloudDown.status ? " (HTTP " + cloudDown.status + ")" : "") +
-    " — กำลังแสดงข้อมูลแคชในเครื่อง ข้อมูลจริงปลอดภัยและจะกลับมาอัตโนมัติ / Server temporarily unreachable — showing locally cached data; your data is safe.",
+    /* Task 15 — honest wording: we do NOT claim the cloud data is safe (we
+       cannot read it); we state exactly what is protected and what is paused. */
+    "⚠️ เชื่อมต่อคลาวด์ไม่ได้" + (cloudDown.status ? " (HTTP " + cloudDown.status + ")" : "") +
+    " — ระบบอยู่ในโหมดอ่านอย่างเดียวเพื่อป้องกันข้อมูล ดูข้อมูลแคชได้ตามปกติ แต่การบันทึกและซิงก์ถูกระงับชั่วคราว / " +
+    "Cloud connection unavailable. The application is in READ-ONLY SAFE MODE. Cached data remains available for viewing. " +
+    "Cloud writes and synchronisation are temporarily disabled to protect production data.",
     /*#__PURE__*/React.createElement("button", {
       onClick: function(){ window.location.reload(); },
       style: { fontSize: 11, fontWeight: 800, padding: "4px 12px", borderRadius: 7,
         border: "1px solid #F59E0B", background: "#fff", color: "#92400E", cursor: "pointer" }
-    }, "↻ ลองใหม่ / Retry")
+    }, "↻ เชื่อมต่อคลาวด์อีกครั้ง / Retry Cloud Connection")
   ),
   /*#__PURE__*/React.createElement("div", {
     style: {
