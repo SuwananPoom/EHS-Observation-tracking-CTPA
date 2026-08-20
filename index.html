@@ -7207,13 +7207,22 @@ function App(_refApp) {
   var S = useMemo(function () {
     return {
       n: dsObs.length,
+      /* MUTUAL EXCLUSIVITY (completed 2026-08-15): the Closure Status chart
+         renders six buckets from these values, so a record must land in
+         exactly one. A record whose stored status is OPEN or IN_PROGRESS but
+         which already carries an approval stage (Pending GC / Pending PMC /
+         Approved Closed / Rejected) belongs to that stage — counting it here
+         too made the donut sum exceed Total by one. Same rule already applied
+         to the Reporting Period tiles. */
       open: dsObs.filter(function (o) {
-        /* Rejected records carry status OPEN; exclude them here so the
-           Open and Rejected buckets stay mutually exclusive (Issue #2). */
-        return effStatus(o) === "OPEN" && effAp(o) !== "REJECTED";
+        var a = effAp(o);
+        return effStatus(o) === "OPEN" && a !== "REJECTED" && a !== "PENDING REVIEW"
+          && a !== "PENDING PMC APPROVAL" && a !== "APPROVED CLOSED";
       }).length,
       ip: dsObs.filter(function (o) {
-        return effStatus(o) === "IN_PROGRESS";
+        var a = effAp(o);
+        return effStatus(o) === "IN_PROGRESS" && a !== "REJECTED" && a !== "PENDING REVIEW"
+          && a !== "PENDING PMC APPROVAL" && a !== "APPROVED CLOSED";
       }).length,
       pv: dsObs.filter(function (o) {
         return effStatus(o) === "PENDING_VERIFY";
