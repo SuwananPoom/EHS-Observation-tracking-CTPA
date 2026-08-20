@@ -1668,7 +1668,14 @@ function apOf(o) {
        workflow field) must not be counted as approval-Open — otherwise it appears in
        BOTH the Closed and Open cards (Closed + Open > Total). Fall through so the
        status-based rule below classifies it as APPROVED CLOSED. Data is not modified. */
-    if (!(o.status === "CLOSED" && o.approvalStatus === "OPEN")) return o.approvalStatus;
+    /* FIX B (re-applied 2026-08-15): the same staleness applies when the stored
+       status is PENDING_VERIFY but approvalStatus was never synced off "OPEN"
+       (e.g. the status was changed from the Edit form, which writes only
+       `status`). Such a record belongs in the GC review queue, not in a
+       no-man's-land between the status- and approval-based buckets. Falling
+       through lets the status-based rule below classify it as PENDING REVIEW.
+       Generic pattern — no IDs hard-coded; stored data is never modified. */
+    if (!((o.status === "CLOSED" || o.status === "PENDING_VERIFY") && o.approvalStatus === "OPEN")) return o.approvalStatus;
   }
   if (!o) return "OPEN";
   if (o.status === "CLOSED") return "APPROVED CLOSED";
@@ -1701,6 +1708,9 @@ function isUnapprovedClosed(o){
    (awaiting GC). Raw apOf/stored values are never modified. */
 function effAp(o){
   if(!APPROVAL_ENABLED) return null;
+  /* GOOD OBSERVATION RULE — see effStatus: closed on creation, never in any
+     approval stage (no Pending GC / Pending PMC / Rejected for a Good OBS). */
+  if(o && o.obsType === "GOOD_OBS") return "APPROVED CLOSED";
   var ap = apOf(o);
   /* EVIDENCE RULE: without an After photo a record cannot hold any closure-
      workflow stage — it resolves to OPEN (After photo required, workflow
@@ -1732,6 +1742,12 @@ function effAp(o){
    Read-only derivation — never written back; stored records stay untouched. */
 function effStatus(o){
   if(!o) return "OPEN";
+  /* GOOD OBSERVATION RULE (spec 2026-08-15): a Good Observation records a
+     POSITIVE finding — there is no corrective action to verify and nothing for
+     GC/PMC to approve, so it is complete the moment it is raised. It therefore
+     never enters the approval workflow and never counts as outstanding or
+     overdue. Display-level only: stored fields are never rewritten. */
+  if(o.obsType === "GOOD_OBS") return "CLOSED";
   /* EVIDENCE RULE: no After photo → cannot be (or stay) Closed / Pending Verify.
      Such records show as IN_PROGRESS until a new After photo restarts the
      workflow (photo → Pending Verify → GC → PMC → Approved Closed). */
@@ -7263,6 +7279,15 @@ function App(_refApp) {
     var nx = obs.map(function (o) {
       return o.id === id ? _objectSpread(_objectSpread({}, o), {}, {
         status: ns,
+        /* SOURCE FIX (2026-08-15): this control used to write `status` only,
+           leaving approvalStatus stuck on "OPEN". A record with
+           status=PENDING_VERIFY + approvalStatus=OPEN matches neither the
+           status-based nor the approval-based buckets and lands in "Odd
+           Status" (OBS-1464/1522/1524 were created exactly this way).
+           Sync only that bug-producing transition; any real workflow stage
+           (PENDING PMC APPROVAL / APPROVED CLOSED / REJECTED) is preserved. */
+        approvalStatus: (ns === "PENDING_VERIFY" && (!o.approvalStatus || o.approvalStatus === "OPEN"))
+          ? "PENDING REVIEW" : o.approvalStatus,
         rev: Date.now(),
         closed:   ns === "CLOSED" ? (o.status === "CLOSED" ? o.closed : td()) : o.closed,
         closedBy: ns === "CLOSED" ? (o.status === "CLOSED" ? o.closedBy : (ctpaUser() || "Manager")) : ""
@@ -8780,7 +8805,7 @@ function App(_refApp) {
         fontWeight: 700,
         color: v.color
       }
-    }, open, " open / ", tot)), /*#__PURE__*/React.createElement("div", {
+    }, open, " outstanding / ", tot)), /*#__PURE__*/React.createElement("div", {
       style: {
         height: 7,
         background: C.border,
@@ -9598,8 +9623,15 @@ function App(_refApp) {
              (e.g. status PENDING_VERIFY with approvalStatus OPEN) fall into
              the visible "Odd Status" remainder instead of silently inflating
              a bucket — surfaced, not hidden. Read-only; nothing written. */
+          /* MUTUAL EXCLUSIVITY FIX (2026-08-15): a record whose stored status is
+             IN_PROGRESS but which already carries an approval stage (e.g.
+             PENDING PMC APPROVAL) was counted in BOTH In Progress and the
+             approval bucket, so the Odd Status remainder was under-reported.
+             In Progress now means "in progress and not in any approval stage". */
           var op = cnt(function(o){ return effStatus(o) === "OPEN" && effAp(o) !== "REJECTED"; }),
-              ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"; }),
+              ipg = cnt(function(o){ return effStatus(o) === "IN_PROGRESS"
+                        && effAp(o) !== "PENDING REVIEW" && effAp(o) !== "PENDING PMC APPROVAL"
+                        && effAp(o) !== "APPROVED CLOSED" && effAp(o) !== "REJECTED"; }),
               pgcT = cnt(function(o){ return effAp(o) === "PENDING REVIEW"; }),
               ppmcT = cnt(function(o){ return effAp(o) === "PENDING PMC APPROVAL"; }),
               rjT = cnt(function(o){ return effAp(o) === "REJECTED"; }),
@@ -12100,6 +12132,15 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
     }
   }, "Closure Workflow"), function () {
     if (!APPROVAL_ENABLED) return null;
+    /* GOOD OBSERVATION: positive finding — nothing to verify or approve, so the
+       approval controls are replaced by a short explanatory note. No approval
+       action can be taken on a Good OBS. */
+    if (det && det.obsType === "GOOD_OBS") {
+      return /*#__PURE__*/React.createElement("div", {
+        style: { background: C.greenBg, border: "1px solid " + C.green + "55", borderRadius: 9,
+          padding: "10px 12px", fontSize: 11, color: C.greenDk, fontWeight: 600 }
+      }, "✔ Good Observation — recorded as a positive finding. No corrective action or GC/PMC approval is required; it is complete on submission. / บันทึกเป็นสิ่งที่ดี ไม่ต้องแก้ไขหรือขออนุมัติ ถือว่าเสร็จสมบูรณ์");
+    }
     var ap = effAp(det);
     var A = APPROVAL[ap] || APPROVAL["OPEN"];
     var signRow = function signRow(label, by, date) {
