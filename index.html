@@ -967,13 +967,53 @@ function cloudHeaders(){
   var tok = CLOUD.key;
   try {
     var s = window.CTPA_AUTH && window.CTPA_AUTH.session;
-    if (s && s.access_token) tok = s.access_token;
+    if (s && s.access_token) {
+      /* Requirement 3: never deliberately send an EXPIRED token. `expires_at`
+         is a unix timestamp in seconds; keep a 10s safety margin for clock
+         skew and flight time. If it has expired (and a refresh has not landed
+         yet) fall back to the publishable key: the request then runs as `anon`
+         with the shorter statement timeout, which may be slow but is a normal
+         request — far better than a guaranteed 401 that trips SAFE MODE. */
+      var expMs = s.expires_at ? (s.expires_at * 1000) : 0;
+      if (!expMs || (expMs - Date.now()) > 10000) {
+        tok = s.access_token;
+      } else {
+        console.warn("[CTPA][auth] stored access token expired — using publishable key for this request; a refresh has been requested");
+        try { ctpaEnsureFreshSession(); } catch(_){}
+      }
+    }
   } catch(_){}
   return {
     "apikey": CLOUD.key,
     "Authorization": "Bearer " + tok,
     "Content-Type": "application/json"
   };
+}
+
+/* Requirement 4 — verify/refresh session validity BEFORE an authenticated
+   request. Resolves true always: a refresh failure must never block or alter
+   the read path, and must never touch observation data. Read-only by nature:
+   it only asks supabase-js for a current session (which auto-refreshes). */
+function ctpaEnsureFreshSession(){
+  try {
+    if (!supabaseClient) return Promise.resolve(false);
+    var s = window.CTPA_AUTH && window.CTPA_AUTH.session;
+    if (!s || !s.access_token) return Promise.resolve(false);   /* signed out — nothing to refresh */
+    var expMs = s.expires_at ? (s.expires_at * 1000) : 0;
+    if (expMs && (expMs - Date.now()) > 60000) return Promise.resolve(false); /* still valid > 60s */
+    return supabaseClient.auth.getSession().then(function(res){
+      var ns = res && res.data && res.data.session;
+      if (ns && ns.access_token && ns.access_token !== s.access_token) {
+        window.CTPA_AUTH = { session: ns, profile: (window.CTPA_AUTH || {}).profile || null };
+        console.log("[CTPA][auth] session refreshed before request — new token adopted");
+        return true;
+      }
+      return false;
+    }).catch(function(e){
+      console.warn("[CTPA][auth] session refresh failed:", e && e.message, "— continuing in safe mode");
+      return false;   /* Requirement 5: fail safely, never clear or replace data */
+    });
+  } catch(_){ return Promise.resolve(false); }
 }
 
 /* ══════════ CLOUD SAFETY CORE (post-incident hardening 2026-08-15) ══════════
@@ -6417,6 +6457,27 @@ function AuthWrapper() {
       if (event === "SIGNED_OUT" || !session) {
         window.CTPA_AUTH = { session: null, profile: null };
         setAuthSession(null); setAuthProfile(null);
+        return;
+      }
+      /* ROOT-CAUSE FIX (2026-08-24): this handler previously ignored every
+         event except SIGNED_OUT, so window.CTPA_AUTH.session kept the ORIGINAL
+         access token for the life of the page. Since cloudHeaders() uses that
+         token as the bearer, once it expired (default 1h — e.g. across a phone
+         screen-lock or a backgrounded tab) every data request returned 401 and
+         the app fell into READ-ONLY SAFE MODE, so observations "disappeared"
+         from the UI while the server data was perfectly intact.
+         supabase-js refreshes the token internally and reports it here
+         (TOKEN_REFRESHED / SIGNED_IN / INITIAL_SESSION / USER_UPDATED); we now
+         keep the stored session in step with it. The profile is preserved —
+         this never re-reads or rewrites any observation data. */
+      if (session.access_token) {
+        var _prof = (window.CTPA_AUTH && window.CTPA_AUTH.profile) || null;
+        window.CTPA_AUTH = { session: session, profile: _prof };
+        if (event === "TOKEN_REFRESHED" || event === "SIGNED_IN") {
+          /* Requirement 6: after a successful refresh, ask the app to re-read
+             the server dataset. This is a READ only — it can never write. */
+          try { window.dispatchEvent(new CustomEvent("ctpa-session-refreshed")); } catch(_){}
+        }
       }
     });
     return function() { if (sub && sub.data && sub.data.subscription) sub.data.subscription.unsubscribe(); };
@@ -6857,9 +6918,14 @@ function App(_refApp) {
     var pull = function(opts){
       var isForcePull = opts && opts.force;
       if(!cloudOn()) return Promise.resolve(false);
+      /* Requirement 4 — make sure the session/token is current BEFORE reading
+         (covers resume-from-screen-lock, where the stored token may have
+         expired while the tab was suspended). Never blocks: resolves either
+         way, and touches no observation data. */
+      return ctpaEnsureFreshSession().then(function(){
       /* Task 7 — READ-only exponential backoff (2s → 5s → 10s → 30s). Reads are
          idempotent and safe to retry; writes are never retried automatically. */
-      return ctpaReadWithRetry(function(){ return cloudLoad(); }).then(function(row){
+      return ctpaReadWithRetry(function(){ return cloudLoad(); }); }).then(function(row){
         setLastSynced(new Date());
         if (CTPA_CLOUD.status.indexOf("SUCCESS") === 0) setSyncErr(null);
         /* GUARD: do not let a background poll overwrite local edits that are still being
@@ -6986,8 +7052,22 @@ function App(_refApp) {
     var focused = true;
     var onFocus = function(){ focused = true; pull(); };
     var onBlur  = function(){ focused = false; };
+    /* Requirement 6 — when supabase-js hands us a refreshed token (typically on
+       resume from screen-lock/background), re-read the server dataset so the
+       UI recovers by itself instead of sitting in SAFE MODE. READ ONLY. */
+    var onSessRefresh = function(){
+      console.log("[CTPA][auth] session refreshed — reloading dataset from server");
+      pull({ force: true });
+    };
+    /* Resume triggers: iOS Safari often fires visibilitychange/pageshow rather
+       than focus when returning from a locked screen or the app switcher. */
+    var onVisResume = function(){ if (!document.hidden) { focused = true; pull(); } };
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur",  onBlur);
+    window.addEventListener("ctpa-session-refreshed", onSessRefresh);
+    document.addEventListener("visibilitychange", onVisResume);
+    window.addEventListener("pageshow", onVisResume);
+    window.addEventListener("online", onVisResume);
     var iv = setInterval(function(){
       cloudCheck().then(function(changed){ if(changed) pull(); });
     }, focused ? 60000 : 300000);
@@ -7001,6 +7081,10 @@ function App(_refApp) {
     return function(){
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur",  onBlur);
+      window.removeEventListener("ctpa-session-refreshed", onSessRefresh);
+      document.removeEventListener("visibilitychange", onVisResume);
+      window.removeEventListener("pageshow", onVisResume);
+      window.removeEventListener("online", onVisResume);
       clearInterval(iv);
       stopRealtime();
     };
