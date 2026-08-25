@@ -1073,6 +1073,16 @@ function ctpaReadWithRetry(fn, delays){
   function attempt(i){
     return fn().then(function(res){
       if (res || i >= waits.length) return res;
+      /* LOAD PROTECTION (2026-08-24): if the failure was a TIMEOUT (Postgres
+         57014 or a gateway 504) the query itself is too heavy for the time
+         budget — retrying immediately only adds load and makes the timeout
+         more likely for everyone. Stop here and let the normal 60s poll try
+         again later. Transient network/5xx blips still retry as before. */
+      if (CTPA_CLOUD.status === "TIMEOUT" ||
+          (CTPA_CLOUD.lastError && (CTPA_CLOUD.lastError.status === 504 || CTPA_CLOUD.lastError.status === 408))) {
+        console.warn("[CTPA][retry] read timed out — NOT retrying immediately (avoids adding load); next scheduled poll will retry");
+        return res;
+      }
       console.warn("[CTPA][retry] read attempt " + (i + 1) + " failed — retrying in " + waits[i] + "ms");
       if (CTPA_CLOUD.lastError) CTPA_CLOUD.lastError.retry = i + 1;
       return new Promise(function(r){ setTimeout(r, waits[i]); }).then(function(){ return attempt(i + 1); });
@@ -1093,7 +1103,9 @@ function cloudLoad(){
           var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
           var code = parsed && parsed.code;
           /* Classify precisely (Task 2): 57014 = Postgres statement timeout. */
-          var kind = code === "57014" ? "TIMEOUT"
+          /* 57014 = Postgres statement timeout; 504/408 = gateway/request
+             timeout — both mean "the read took too long", not "server broken". */
+          var kind = (code === "57014" || r.status === 504 || r.status === 408) ? "TIMEOUT"
                    : (r.status === 401 || r.status === 403) ? "AUTH_ERROR"
                    : r.status >= 500 ? "SERVER_ERROR" : "UNKNOWN_ERROR";
           ctpaCloudFail(kind, {
@@ -6915,9 +6927,34 @@ function App(_refApp) {
       setObs([]);
     }
     /* ----- CLOUD SYNC: pull latest, then keep refreshing ----- */
+    /* ── READ AMPLIFICATION GUARD (fix for HTTP 504, 2026-08-24) ──────────
+       Returning to the tab fires focus AND visibilitychange (and pageshow on
+       iOS), so a single resume triggered 2-3 concurrent pulls — each one a
+       full ~2.8 MB read that can itself retry up to 5 times. Together with the
+       60s poll this saturated the database and produced Gateway Timeouts.
+       Now: only ONE read may be in flight (later callers join the same
+       promise), and automatic reads are throttled. A forced read (Sync button,
+       realtime change, post-refresh reload) bypasses the throttle but still
+       joins an in-flight read instead of starting a second one.
+       READ-side only — no write path, no data, no photo is touched. */
+    var _pullInFlight = null, _lastPullAt = 0, PULL_MIN_GAP = 8000;
     var pull = function(opts){
       var isForcePull = opts && opts.force;
       if(!cloudOn()) return Promise.resolve(false);
+      if(_pullInFlight){
+        console.log("[CTPA] pull(): joined the read already in flight (no duplicate request)");
+        return _pullInFlight;
+      }
+      if(!isForcePull && (Date.now() - _lastPullAt) < PULL_MIN_GAP){
+        console.log("[CTPA] pull(): throttled — a read completed less than " + (PULL_MIN_GAP/1000) + "s ago");
+        return Promise.resolve(false);
+      }
+      _lastPullAt = Date.now();
+      var _done = function(v){ _pullInFlight = null; _lastPullAt = Date.now(); return v; };
+      return (_pullInFlight = _pullInner(opts).then(_done, function(e){ _done(); throw e; }));
+    };
+    var _pullInner = function(opts){
+      var isForcePull = opts && opts.force;
       /* Requirement 4 — make sure the session/token is current BEFORE reading
          (covers resume-from-screen-lock, where the stored token may have
          expired while the tab was suspended). Never blocks: resolves either
