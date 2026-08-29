@@ -8924,32 +8924,32 @@ function App(_refApp) {
     return /*#__PURE__*/React.createElement("div", {
       key: k,
       style: {
-        marginBottom: 11
+        marginBottom: 14
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
         display: "flex",
         justifyContent: "space-between",
         alignItems: "baseline",
-        marginBottom: 3
+        marginBottom: 4
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 600,
         color: v.text
       }
     }, v.label), /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: 700,
         color: v.color
       }
-    }, "Closed ", closed, " / ", tot)), /*#__PURE__*/React.createElement("div", {
+    }, "Closed ", closed, " / Total ", tot)), /*#__PURE__*/React.createElement("div", {
       style: {
-        height: 5,
+        height: 9,
         background: C.border,
-        borderRadius: 3,
+        borderRadius: 5,
         overflow: "hidden"
       }
     }, /*#__PURE__*/React.createElement("div", {
@@ -8957,10 +8957,53 @@ function App(_refApp) {
         height: "100%",
         width: (tot ? Math.round(closed / tot * 100) : 0) + "%",
         background: v.color,
-        borderRadius: 3
+        borderRadius: 5
       }
     })));
-  }))), /*#__PURE__*/React.createElement("div", {
+  }), function () {
+    var _aTot = dsObs.length;
+    var _aClosed = dsObs.filter(function (o) {
+      return effStatus(o) === "CLOSED";
+    }).length;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 2
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "baseline",
+        marginBottom: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: C.text
+      }
+    }, "Total"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        fontWeight: 700,
+        color: C.text
+      }
+    }, "Closed ", _aClosed, " / Total ", _aTot)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 9,
+        background: C.border,
+        borderRadius: 5,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: "100%",
+        width: (_aTot ? Math.round(_aClosed / _aTot * 100) : 0) + "%",
+        background: C.slate,
+        borderRadius: 5
+      }
+    })));
+  }())), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 14
     }
