@@ -8893,135 +8893,74 @@ function App(_refApp) {
     style: {
       color: C.green
     }
-  }, Math.round(S.good / S.n * 100), "%"))))), function () {
-    var _kpiTot = dsObs.length;
-    var _kpiClosed = dsObs.filter(function (o) {
-      return effStatus(o) === "CLOSED";
+  }, Math.round(S.good / S.n * 100), "%"))))), /*#__PURE__*/React.createElement("div", {
+    style: _objectSpread(_objectSpread({}, crd), {}, {
+      fontFamily: "'Inter', system-ui, sans-serif",
+      background: "#ffffff"
+    })
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      fontWeight: 700,
+      color: C.text
+    }
+  }, "Risk Level"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 9.5,
+      fontWeight: 500,
+      color: C.slate,
+      marginBottom: 10
+    }
+  }, "Observation Closure"), Object.entries(RISK).map(function (_ref8) {
+    var _ref9 = _slicedToArray(_ref8, 2),
+      k = _ref9[0],
+      v = _ref9[1];
+    var closed = dsObs.filter(function (o) {
+      return o.risk === k && effStatus(o) === "CLOSED";
     }).length;
-    var _kpiPct = _kpiTot ? Math.round(_kpiClosed / _kpiTot * 100) : 0;
-    var _kpiScore = (_kpiTot ? _kpiClosed / _kpiTot * 10 : 0).toFixed(1);
-    var _kpiC = "#00CC79";
+    var tot = dsObs.filter(function (o) {
+      return o.risk === k;
+    }).length;
     return /*#__PURE__*/React.createElement("div", {
-      style: _objectSpread(_objectSpread({}, crd), {}, {
-        fontFamily: "'Inter', system-ui, sans-serif",
-        background: "#ffffff"
-      })
+      key: k,
+      style: {
+        marginBottom: 11
+      }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 12,
-        fontWeight: 700,
-        color: C.text
-      }
-    }, "Risk Level Performance"), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 9.5,
-        fontWeight: 500,
-        color: C.slate,
-        marginBottom: 10
-      }
-    }, "Observation Closure Performance"), Object.entries(RISK).map(function (_ref8) {
-      var _ref9 = _slicedToArray(_ref8, 2),
-        k = _ref9[0],
-        v = _ref9[1];
-      var closed = dsObs.filter(function (o) {
-        return o.risk === k && effStatus(o) === "CLOSED";
-      }).length;
-      var tot = dsObs.filter(function (o) {
-        return o.risk === k;
-      }).length;
-      var pct = tot ? Math.round(closed / tot * 100) : 0;
-      var score = (tot ? closed / tot * 10 : 0).toFixed(1);
-      return /*#__PURE__*/React.createElement("div", {
-        key: k,
-        style: {
-          marginBottom: 9
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: 3
-        }
-      }, /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 11,
-          fontWeight: 600,
-          color: v.text
-        }
-      }, v.label), /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 10,
-          fontWeight: 600,
-          color: C.slate
-        }
-      }, "Closed ", closed, " / ", tot, /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 12,
-          fontWeight: 800,
-          color: v.color,
-          marginLeft: 8
-        }
-      }, score, /*#__PURE__*/React.createElement("span", {
-        style: {
-          fontSize: 9,
-          fontWeight: 600,
-          color: C.slate
-        }
-      }, " / 10")))), /*#__PURE__*/React.createElement("div", {
-        style: {
-          height: 5,
-          background: C.border,
-          borderRadius: 3,
-          overflow: "hidden"
-        }
-      }, /*#__PURE__*/React.createElement("div", {
-        style: {
-          height: "100%",
-          width: pct + "%",
-          background: v.color,
-          borderRadius: 3
-        }
-      })));
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        marginTop: 10,
-        padding: "8px 10px",
-        borderRadius: 8,
-        background: "rgba(0,204,121,0.08)",
-        border: "1px solid rgba(0,204,121,0.35)",
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "center"
+        alignItems: "baseline",
+        marginBottom: 3
       }
-    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
-        fontSize: 10,
+        fontSize: 11,
+        fontWeight: 600,
+        color: v.text
+      }
+    }, v.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
         fontWeight: 700,
-        color: _kpiC,
-        textTransform: "uppercase",
-        letterSpacing: "0.03em"
+        color: v.color
       }
-    }, "Overall KPI"), /*#__PURE__*/React.createElement("div", {
+    }, "Closed ", closed, " / ", tot)), /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 10,
-        fontWeight: 600,
-        color: C.slate
+        height: 5,
+        background: C.border,
+        borderRadius: 3,
+        overflow: "hidden"
       }
-    }, "Closed ", _kpiClosed, " / ", _kpiTot, " · ", _kpiPct, "% Closure")), /*#__PURE__*/React.createElement("div", {
+    }, /*#__PURE__*/React.createElement("div", {
       style: {
-        fontSize: 18,
-        fontWeight: 800,
-        color: _kpiC
+        height: "100%",
+        width: (tot ? Math.round(closed / tot * 100) : 0) + "%",
+        background: v.color,
+        borderRadius: 3
       }
-    }, _kpiScore, /*#__PURE__*/React.createElement("span", {
-      style: {
-        fontSize: 10,
-        fontWeight: 600,
-        color: C.slate
-      }
-    }, " / 10"))));
-  }()), /*#__PURE__*/React.createElement("div", {
+    })));
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 14
     }
