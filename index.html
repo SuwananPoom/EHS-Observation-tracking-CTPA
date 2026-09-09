@@ -57,6 +57,8 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   [style*="grid-template-columns"]:not(.kpigrid){grid-template-columns:1fr!important;gap:12px!important}
   /* only the small dashboard KPI tiles stay 2-up (compact) */
   .kpigrid{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  /* recurring table keeps its 10 columns on tablets (scrolls in its own box) */
+  .rct-grid{grid-template-columns:34px 1.8fr 1.2fr 55px 1fr 60px 65px 50px 74px 65px!important;gap:8px!important}
   .kpigrid>div{padding:10px 11px!important;border-radius:11px!important}
   .kpigrid>div>div:nth-child(2){font-size:21px!important}
   .hidesm{display:none!important}
@@ -129,6 +131,15 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   .recur-occ>div{font-size:14px!important;margin-top:0!important}
   .recur-trend{flex:0 0 auto;margin-left:auto;display:flex!important;align-items:center;gap:6px;text-align:right!important;padding-top:0!important}
   .recur-trend::before{content:"Trend:";font-size:10px;font-weight:700;color:#64748B}
+  /* Recurring table cells — mobile stacked layout with inline labels */
+  .rct-co{flex:1 1 100%;min-width:0;text-align:left!important}
+  .rct-dates{flex:1 1 100%;font-size:10px!important;color:#64748B;text-align:left!important}
+  .rct-occ,.rct-open,.rct-trend,.rct-score,.rct-status,.rct-review{flex:0 0 auto;display:flex!important;align-items:center;gap:4px;text-align:left!important;font-size:12px!important}
+  .rct-occ::before{content:"Occurrences:";font-size:10px;font-weight:700;color:#64748B}
+  .rct-open::before{content:"Open:";font-size:10px;font-weight:700;color:#64748B}
+  .rct-trend::before{content:"Trend:";font-size:10px;font-weight:700;color:#64748B}
+  .rct-score::before{content:"Score:";font-size:10px;font-weight:700;color:#64748B}
+  .rct-review::before{content:"Review:";font-size:10px;font-weight:700;color:#64748B}
 }
 </style>
 </head>
@@ -10829,10 +10840,11 @@ function App(_refApp) {
       }
     }, o.due));
   })),   /* ══ RECURRING ISSUE & ROOT CAUSE ANALYSIS — the primary recurring view ══
-     UI-only: renders the EXISTING buildRecurringClusters() output (scoring,
-     hierarchy, reviewer priority and traceability unchanged). Visual design
-     carried over from the retired "Detail Recurrence Analysis (Top 5)" card;
-     that card's functions are kept in code but no longer rendered. */
+     UI-only management TABLE over the EXISTING buildRecurringClusters()
+     output (scoring, hierarchy, reviewer priority, traceability unchanged).
+     Pastel Top-5 rank colors kept; desktop = 10 aligned columns, tablet
+     scrolls the table in its own box, ≤600px stacks each row into a compact
+     labelled card via the .rct-* / .recur-* CSS. */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 } },
       "RECURRING ISSUE & ROOT CAUSE ANALYSIS"),
@@ -10841,7 +10853,19 @@ function App(_refApp) {
     recurClusters.length === 0
       ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, padding: "10px 0" } },
           "No recurring clusters (score ≥ 70) in the selected period.")
-      : /*#__PURE__*/React.createElement("div", null,
+      : /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
+          /*#__PURE__*/React.createElement("div", { style: { minWidth: 860 } },
+          /*#__PURE__*/React.createElement("div", { className: "recur-head rct-grid", style: { display: "grid", gridTemplateColumns: "34px 1.8fr 1.2fr 55px 1fr 60px 65px 50px 74px 65px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
+            /*#__PURE__*/React.createElement("span", null, "Rank"),
+            /*#__PURE__*/React.createElement("span", null, "Recurring Issue / Root Cause"),
+            /*#__PURE__*/React.createElement("span", null, "Contractors · Areas"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occur."),
+            /*#__PURE__*/React.createElement("span", null, "First → Last"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Open Actions"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Trend 30d"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Score"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, "Status"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Needs Review")),
           (recurShowAll ? recurClusters : recurClusters.slice(0, 5)).map(function(r, ri){
             var trend = r.trend === null
               ? /*#__PURE__*/React.createElement("span", { style: { color: "#7C3AED", fontWeight: 800 } }, "NEW")
@@ -10853,13 +10877,13 @@ function App(_refApp) {
             var rcTitle = r.rootCause === "Pending EHS Review"
               ? "Root Cause Pending Review"
               : (r.status === "CONFIRMED" && r.reviewedCount > 0) ? "Confirmed Root Cause" : "Probable Root Cause";
-            var coStr = r.companies.slice(0, 3).map(function(c){ return c.name + " (" + c.count + ")"; }).join(", ")
-              + (r.companies.length > 3 ? "  +" + (r.companies.length - 3) + " more" : "");
-            var arStr = r.areas.slice(0, 3).map(function(a){ return a.name + " (" + a.count + ")"; }).join(", ")
-              + (r.areas.length > 3 ? "  +" + (r.areas.length - 3) + " more" : "");
+            var coStr = r.companies.slice(0, 2).map(function(c){ return c.name + " (" + c.count + ")"; }).join(", ")
+              + (r.companies.length > 2 ? " +" + (r.companies.length - 2) : "");
+            var arStr = r.areas.slice(0, 2).map(function(a){ return a.name + " (" + a.count + ")"; }).join(", ")
+              + (r.areas.length > 2 ? " +" + (r.areas.length - 2) : "");
             return /*#__PURE__*/React.createElement("div", {
               key: r.clusterId,
-              className: "recur-row",
+              className: "recur-row rct-grid",
               onClick: function(){
                 setRecurGrp({ label: r.label, ids: r.ids.slice() });
                 setFS("ALL"); setFOT("ALL"); setFR("ALL"); setFl("ALL"); setFAr("ALL");
@@ -10868,8 +10892,8 @@ function App(_refApp) {
                 setView("list");
               },
               title: r.clusterId + " · view the " + r.count + " source observations",
-              style: { display: "grid", gridTemplateColumns: "34px 1fr 100px 120px", gap: 8, alignItems: "start", padding: "10px 8px", borderBottom: "1px solid #EEF2F7", cursor: "pointer",
-                borderRadius: 10,
+              style: { display: "grid", gridTemplateColumns: "34px 1.8fr 1.2fr 55px 1fr 60px 65px 50px 74px 65px", gap: 8, alignItems: "center", padding: "8px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer",
+                borderRadius: 8, fontSize: 11,
                 background: ri === 0 ? "#FFF1F2" : ri === 1 ? "#FFF7ED" : ri === 2 ? "#FFFBEB" : ri === 3 ? "#EFF6FF" : ri === 4 ? "#ECFDF5" : "transparent" }
             },
               /*#__PURE__*/(function(){
@@ -10877,30 +10901,30 @@ function App(_refApp) {
                 var bFg = r.serious > 0 ? C.redDk : "#C2410C";
                 return React.createElement("div", { className: "recur-rank", style: { width: 22, height: 22, borderRadius: 7, background: bBg, color: bFg, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1);
               })(),
-              /*#__PURE__*/React.createElement("div", { className: "recur-main" },
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, r.label,
-                  r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null,
-                  /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "1px 6px",
-                    background: r.status === "CONFIRMED" ? C.redBg : "#FEF3C7",
-                    color: r.status === "CONFIRMED" ? C.redDk : "#92400E" } },
-                    r.status === "CONFIRMED" ? "CONFIRMED RECURRING" : "REVIEW")),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 3, fontWeight: 600 } }, rcTitle + ": " + r.rootCause),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 2 } }, "Companies: " + coStr),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, "Areas: " + arStr),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginTop: 2 } },
-                  "First → Last: " + r.first + " → " + r.last +
-                  " · Open Actions: " + r.openActions +
-                  (r.reviewNeeded > 0 ? " · Needs review: " + r.reviewNeeded + " obs" : ""))),
-              /*#__PURE__*/React.createElement("div", { className: "recur-occ", style: { textAlign: "right" } },
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.text } }, r.count),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slateMid, marginTop: 1 } }, "Score ",
-                  /*#__PURE__*/React.createElement("b", { style: { color: r.score >= 85 ? C.redDk : "#B45309", fontSize: 11 } }, r.score))),
-              /*#__PURE__*/React.createElement("div", { className: "recur-trend", style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
+              /*#__PURE__*/React.createElement("div", { className: "recur-main", style: { minWidth: 0 } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, lineHeight: 1.35 } }, r.label,
+                  r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px", whiteSpace: "nowrap" } }, "SERIOUS ×" + r.serious) : null),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 1 } }, rcTitle + ": " + r.rootCause)),
+              /*#__PURE__*/React.createElement("div", { className: "rct-co", style: { fontSize: 10, color: C.textMid, minWidth: 0 } },
+                /*#__PURE__*/React.createElement("div", null, coStr),
+                /*#__PURE__*/React.createElement("div", { style: { color: C.slateMid } }, arStr)),
+              /*#__PURE__*/React.createElement("div", { className: "rct-occ", style: { textAlign: "right", fontSize: 15, fontWeight: 800, color: C.text } }, r.count),
+              /*#__PURE__*/React.createElement("div", { className: "rct-dates", style: { fontSize: 10, color: C.textMid, whiteSpace: "nowrap" } }, r.first + " → " + r.last),
+              /*#__PURE__*/React.createElement("div", { className: "rct-open", style: { textAlign: "right", fontWeight: 700, fontSize: 12, color: r.openActions > 0 ? C.redDk : C.greenDk, justifyContent: "flex-end" } }, r.openActions),
+              /*#__PURE__*/React.createElement("div", { className: "rct-trend", style: { textAlign: "right", fontSize: 11, justifyContent: "flex-end" } }, trend),
+              /*#__PURE__*/React.createElement("div", { className: "rct-score", style: { textAlign: "right", fontWeight: 800, fontSize: 13, color: r.score >= 85 ? C.redDk : "#B45309", justifyContent: "flex-end" } }, r.score),
+              /*#__PURE__*/React.createElement("div", { className: "rct-status", style: { textAlign: "center", justifyContent: "flex-start" } },
+                /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap",
+                  background: r.status === "CONFIRMED" ? C.redBg : "#FEF3C7",
+                  color: r.status === "CONFIRMED" ? C.redDk : "#92400E" } },
+                  r.status === "CONFIRMED" ? "CONFIRMED" : "REVIEW")),
+              /*#__PURE__*/React.createElement("div", { className: "rct-review", style: { textAlign: "right", fontSize: 11, fontWeight: 700, color: r.reviewNeeded > 0 ? "#B45309" : C.slateMid, justifyContent: "flex-end" } },
+                r.reviewNeeded > 0 ? r.reviewNeeded + " obs" : "—"));
           }),
           recurClusters.length > 5 ? /*#__PURE__*/React.createElement("button", {
             onClick: function(){ setRecurShowAll(!recurShowAll); },
             style: { marginTop: 8, fontSize: 11, fontWeight: 700, color: C.blueDk || "#1D4ED8", background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }
-          }, recurShowAll ? "Show Top 5 only ↑" : "View all recurring details →") : null)),
+          }, recurShowAll ? "Show Top 5 only ↑" : "View all recurring details →") : null))),
   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14, borderRadius: 14, boxShadow: "0 2px 10px rgba(15,23,42,0.06)" }) },
     (function(){
