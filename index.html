@@ -2117,6 +2117,30 @@ function aggregateObservationsByQuarter(obsArr, period){
    through the normal single-record edit path) ALWAYS overrides the AI result
    — see effClass().  Nothing in this engine writes to any record. */
 var CTPA_TAXO = [
+  /* ── CONTROL-FAILURE categories: checked with the highest weight. The rule
+     is "what control is missing / failed / not verified?" — never "what
+     equipment is mentioned?". Equipment words are context only. ── */
+  { p:"Permit to Work", catHint:/permit to work|\bptw\b/i, mech:[
+    { sub:"PTW Not Available / Not Verified", control:true,
+      mech:"Work activity performed without confirmed authorization and without effective PTW communication/control",
+      rc:"Inadequate PTW communication / supervisor verification",
+      need:[/\bptw\b|permit to work|work permit|\bpermit\b/i,
+            /\bno\b|not (available|kept|applied|approved|display|present|obtain|sign|verif|aware|know|confirm)|did ?n[o']t know|unaware|without|missing|expired|not on (site|the)/i] } ] },
+  { p:"Training & Competency", catHint:/training|competenc/i, mech:[
+    { sub:"Unlicensed / Untrained Operator", control:true,
+      mech:"Task performed by a person without the required competency or license",
+      rc:"Competency verification gap before task assignment",
+      need:[/unlicensed|no licen[cs]e|not (trained|certified|competent|authoriz)|without (a )?(licen[cs]e|certificate|training|authoriz)|expired (licen[cs]e|certificate)|untrained/i] } ] },
+  { p:"Mobile Equipment (HRA)", catHint:/mobile equipment/i, hra:true, mech:[
+    { sub:"Defective Mobile Equipment", mech:"Loss of control from a defective plant condition",
+      rc:"Pre-use inspection regime gap",
+      need:[/forklift|excavator|truck|boom lift|scissor lift|telehandler|vehicle|\bplant\b|loader|dozer/i,
+            /damag|defect|broken|faulty|leak|worn|brake|no (horn|light|alarm|seat ?belt|reverse alarm)|horn not|light not|tyre|tire/i] } ] },
+  { p:"Material Handling (HRA)", catHint:/material handling/i, hra:true, mech:[
+    { sub:"Unstable / Unsecured Load", mech:"Struck by a shifting or falling load during handling",
+      rc:"Load securing & handling method gap",
+      need:[/carry(ing)?|transport|handling|\bload\b|pallet|moving material/i,
+            /unstable|unsecure|not secured|lean(ing)?|overload|topple|shift(ing)?|fall(ing)? (off|over)|imbalance|one side/i] } ] },
   { p:"Electrical Safety (HRA)", catHint:/electrical|energy isolation/i, hra:true, mech:[
     { sub:"Damaged Electrical Cable", mech:"Contact with damaged / exposed live parts",
       rc:"Inadequate inspection & maintenance of temporary electrical equipment",
@@ -2169,11 +2193,14 @@ var CTPA_TAXO = [
       rc:"Scaffold inspection & tagging regime gap",
       need:[/scaffold|scaff ?tag|toe ?board|ledger|transom|brace/i,
             /\bno\b|without|missing|incomplete|damag|not (inspect|tag)|untag|red tag|loose/i] } ] },
-  { p:"Lifting Operations (HRA)", catHint:/lifting/i, hra:true, mech:[
-    { sub:"Unsafe Lifting Practice", mech:"Dropped load / crush during lifting",
+  { p:"Lifting Operations (HRA)", catHint:/lifting operations/i, hra:true, mech:[
+    /* word-boundary anchored: "forklift" must NEVER satisfy this — a forklift
+       is mobile equipment, not a lifting operation. Requires REAL lifting
+       evidence (crane / rigging / suspended load / lifting gear or plan). */
+    { sub:"Unsafe Lifting Practice", mech:"Dropped load / crush during a lifting operation",
       rc:"Lift plan & rigging inspection gap",
-      need:[/lift|crane|sling|rigg|shackle|hoist|\bload\b|boom|outrigger/i,
-            /\bno\b|without|damag|under (the )?(load|boom)|unsafe|not (certif|inspect)|exceed|swing|suspended load/i] } ] },
+      need:[/\blifting\b|\blifted\b|\bcrane\b|\bsling(s)?\b|rigging|rigger|shackle|hoist|suspended load|tandem lift|outrigger/i,
+            /\bno\b|without|damag|under (the )?(load|boom)|unsafe|not (certif|inspect)|exceed|swing|suspended load|no lift plan/i] } ] },
   { p:"Hot Work", catHint:/hot work/i, mech:[
     { sub:"Uncontrolled Hot Work", mech:"Fire / burn from sparks and heat",
       rc:"Hot-work permit & fire-watch control gap",
@@ -2224,8 +2251,11 @@ function ctpaClassify(o){
     t.mech.forEach(function(mm){
       var ok = mm.need.every(function(re){ return re.test(txt); });
       if(ok){
-        var pts = mm.need.length >= 2 ? 50 : 34;   /* single-pattern detectors count less */
-        add(t.p, pts, "hazard mechanism: " + mm.mech);
+        /* CLASSIFICATION PRIORITY: an explicit CONTROL FAILURE (PTW missing,
+           unlicensed operator, ...) outweighs any equipment/activity
+           mechanism — equipment words are context, never the decision. */
+        var pts = mm.control ? 62 : (mm.need.length >= 2 ? 50 : 34);
+        add(t.p, pts, (mm.control ? "control failure: " : "hazard mechanism: ") + mm.mech);
         if(!mechHit[t.p] || pts > mechHit[t.p].pts) mechHit[t.p] = { pts: pts, mm: mm };
       }
     });
@@ -2235,10 +2265,19 @@ function ctpaClassify(o){
     if(t.hra && o.risk === "SERIOUS") add(t.p, 4, "risk: Serious (HRA-weighted)");
     if(t.p.indexOf("Electrical") === 0 && /utility|substation|power house|genset/i.test(zone)) add(t.p, 4, "area: " + zone);
   });
+  /* activity / equipment CONTEXT — recorded for information, never a signal */
+  var _CTX = [[/forklift|telehandler/i, "Forklift Operation"], [/\bcrane\b|\blifting\b|rigging/i, "Lifting / Crane Operation"],
+    [/scaffold/i, "Scaffolding"], [/weld|cutting|grind|torch/i, "Hot Work"], [/excavat|trench/i, "Excavation"],
+    [/electric|cable|power|panel/i, "Electrical / Temporary Power"], [/height|roof|ladder|platform/i, "Work at Height"],
+    [/vehicle|truck|driving/i, "Vehicle Operation"]];
+  var ctx = [];
+  _CTX.forEach(function(cc){ if(cc[0].test(txt)) ctx.push(cc[1]); });
+  var ctxStr = ctx.slice(0, 2).join(" · ") || "—";
   var ranked = Object.keys(scores).map(function(p){ return { p: p, s: scores[p] }; })
     .sort(function(a, b){ return b.s - a.s; });
   if(!ranked.length){
-    return { primary: storedCat || "Unclassified", sub: "General", mechanism: "—", rootCause: "—",
+    return { primary: storedCat || "Unclassified", sub: "General", mechanism: "—",
+      rootCause: "Pending EHS Review", context: ctxStr,
       confidence: storedCat ? 70 : 30, reviewRequired: true, source: "AI",
       reason: "No classification signals found in the text; the stored category is kept but needs review." };
   }
@@ -2248,18 +2287,23 @@ function ctpaClassify(o){
   var mh = mechHit[top.p], mm = mh ? mh.mm : null, conf;
   if(mh){
     conf = Math.min(96, Math.round(46 + top.s * 0.35 + Math.max(0, top.s - second) * 0.35));
+    /* an explicit control failure is the decision — context cannot dilute it */
+    if(mm && mm.control) conf = Math.max(conf, 86);
   } else {
     /* no mechanism evidence for the winner — it rests on the reporter category.
        A competing mechanism elsewhere (score ≥ 30) means the text disagrees
        with the selected category → force manual review. */
     conf = second >= 30 ? 62 : 82;
-    mm = t0 ? t0.mech[0] : null;
   }
   var reason = (why[top.p] || []).join("; ");
   if(ranked[1] && ranked[1].s >= 30) reason += " · competing signal: " + ranked[1].p + " (" + ranked[1].s + " vs " + top.s + ")";
+  if(ctx.length) reason += " · activity context: " + ctxStr;
+  /* NO EVIDENCE → NO GENERATED ROOT CAUSE: a category-only match must not
+     invent a mechanism or root cause ("no lift plan" etc.). */
   return { primary: top.p, sub: mm ? mm.sub : "General",
-    mechanism: (mh && mm) ? mm.mech : (mm ? mm.mech + " (assumed from category)" : "—"),
-    rootCause: mm ? mm.rc : "—",
+    mechanism: mh ? mm.mech : "Not determined from the text — pending EHS review",
+    rootCause: mh ? mm.rc : "Pending EHS Review",
+    context: ctxStr,
     confidence: conf, reviewRequired: conf < 80, source: "AI", reason: reason };
 }
 /* effClass(o): the classification the system ACTS on.
@@ -2268,7 +2312,7 @@ function effClass(o){
   var ai = ctpaClassify(o) || {};
   if(o && o.reviewClass && o.reviewClass.primary){
     return { primary: o.reviewClass.primary, sub: o.reviewClass.sub || ai.sub || "General",
-      mechanism: ai.mechanism, rootCause: o.reviewClass.rootCause || ai.rootCause,
+      mechanism: ai.mechanism, context: ai.context, rootCause: o.reviewClass.rootCause || ai.rootCause,
       confidence: 100, reviewRequired: false, source: "REVIEWER",
       reviewedBy: o.reviewClass.by || "", reviewedAt: o.reviewClass.at || "",
       reason: "Reviewer-approved classification (overrides AI).", ai: ai };
@@ -12509,6 +12553,7 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
         (!reviewed && cls.reviewRequired) ? /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, fontWeight: 800, color: "#92400E", background: "#FEF3C7", borderRadius: 6, padding: "1px 7px" } }, "⚠ MANUAL REVIEW REQUIRED") : null),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, fontWeight: 700, color: C.text } }, cls.primary + " → " + cls.sub),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.textMid, marginTop: 3 } }, "Hazard mechanism: " + cls.mechanism),
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.textMid } }, "Activity context: " + (cls.context || "—")),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.textMid } }, "Likely root cause: " + cls.rootCause),
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginTop: 4 } }, "Reason: " + cls.reason),
       canReview ? /*#__PURE__*/React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap", alignItems: "center" } },
