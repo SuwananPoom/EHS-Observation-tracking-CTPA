@@ -57,6 +57,8 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   [style*="grid-template-columns"]:not(.kpigrid){grid-template-columns:1fr!important;gap:12px!important}
   /* only the small dashboard KPI tiles stay 2-up (compact) */
   .kpigrid{grid-template-columns:1fr 1fr!important;gap:8px!important}
+  /* recurring-cluster table keeps its columns and scrolls sideways in its own box */
+  .clu-grid{grid-template-columns:1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px!important;gap:8px!important}
   .kpigrid>div{padding:10px 11px!important;border-radius:11px!important}
   .kpigrid>div>div:nth-child(2){font-size:21px!important}
   .hidesm{display:none!important}
@@ -2409,6 +2411,10 @@ function buildRecurringClusters(filtered){
       if(!o || o.obsType === "GOOD_OBS") return;
       var c = effClass(o);
       if(!c || !c.primary || c.primary === "Unclassified") return;
+      /* "General" = no mechanism evidence (root cause pending review):
+         category-only repetition is NOT a root-cause cluster — it stays in
+         the Top-5 category card above, not in this customer-facing table. */
+      if(c.sub === "General") return;
       var k = c.primary + "|" + c.sub;
       var b = blocks[k] || (blocks[k] = { primary: c.primary, sub: c.sub, items: [] });
       b.items.push({ o: o, c: c, tok: _ctpaTok(o.desc) });
@@ -10904,7 +10910,7 @@ function App(_refApp) {
           "No recurring clusters (score ≥ 70) in the selected period.")
       : /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
           /*#__PURE__*/React.createElement("div", { style: { minWidth: 900 } },
-            /*#__PURE__*/React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
+            /*#__PURE__*/React.createElement("div", { className: "clu-grid", style: { display: "grid", gridTemplateColumns: "1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
               /*#__PURE__*/React.createElement("span", null, "Recurring Issue / Root Cause"),
               /*#__PURE__*/React.createElement("span", null, "Contractors · Areas"),
               /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occur."),
@@ -10932,6 +10938,7 @@ function App(_refApp) {
                   setView("list");
                 },
                 title: r.clusterId + " · view the " + r.count + " observations",
+                className: "clu-grid",
                 style: { display: "grid", gridTemplateColumns: "1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer", fontSize: 11 }
               },
                 /*#__PURE__*/React.createElement("div", null,
