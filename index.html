@@ -57,8 +57,6 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   [style*="grid-template-columns"]:not(.kpigrid){grid-template-columns:1fr!important;gap:12px!important}
   /* only the small dashboard KPI tiles stay 2-up (compact) */
   .kpigrid{grid-template-columns:1fr 1fr!important;gap:8px!important}
-  /* recurring-cluster table keeps its columns and scrolls sideways in its own box */
-  .clu-grid{grid-template-columns:1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px!important;gap:8px!important}
   .kpigrid>div{padding:10px 11px!important;border-radius:11px!important}
   .kpigrid>div>div:nth-child(2){font-size:21px!important}
   .hidesm{display:none!important}
@@ -2445,19 +2443,25 @@ function buildRecurringClusters(filtered){
       if(score < 70) return;
       var c30 = dates.filter(function(d){ return d >= d30; }).length;
       var cPrev = dates.filter(function(d){ return d >= d60 && d < d30; }).length;
+      var reviewNeeded = b.items.filter(function(it){ return it.c.reviewRequired; }).length;
       rows.push({
         clusterId: "RC-" + k.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48),
         label: b.sub + " — " + b.primary.replace(" (HRA)", ""),
         primary: b.primary, sub: b.sub, rootCause: rc.top, count: n,
         serious: b.items.filter(function(it){ return it.o.risk === "SERIOUS"; }).length,
-        companies: Object.keys(co.map).sort(function(a, bb){ return co.map[bb] - co.map[a]; }),
-        areas: Object.keys(ar.map).sort(function(a, bb){ return ar.map[bb] - ar.map[a]; }),
+        companies: Object.keys(co.map).sort(function(a, bb){ return co.map[bb] - co.map[a]; })
+          .map(function(nm){ return { name: nm, count: co.map[nm] }; }),
+        areas: Object.keys(ar.map).sort(function(a, bb){ return ar.map[bb] - ar.map[a]; })
+          .map(function(nm){ return { name: nm, count: ar.map[nm] }; }),
         first: dates[0] || "—", last: dates[dates.length - 1] || "—",
         openActions: b.items.filter(function(it){ return effStatus(it.o) !== "CLOSED"; }).length,
         trend: cPrev > 0 ? Math.round((c30 - cPrev) / cPrev * 100) : (c30 > 0 ? null : 0),
         score: Math.min(100, score),
-        status: score >= 85 ? "CONFIRMED" : "POTENTIAL",
-        reviewNeeded: b.items.filter(function(it){ return it.c.reviewRequired; }).length,
+        /* STATUS SAFETY: high similarity alone is not confirmation — every
+           source classification must be approved (nothing pending review). */
+        status: (score >= 85 && reviewNeeded === 0) ? "CONFIRMED" : "REVIEW",
+        reviewNeeded: reviewNeeded,
+        reviewedCount: b.items.filter(function(it){ return it.c.source === "REVIEWER"; }).length,
         ids: b.items.map(function(it){ return it.o.id; })
       });
     });
@@ -7573,13 +7577,9 @@ function App(_refApp) {
   var odScoped = useMemo(function(){
     return dsObs.filter(function(o){ return __odInPeriod(o); });
   }, [dsObs, qPeriod, qWeek, qCutEff, __wkPeriods]);
-  var recurAnalysis = useMemo(function(){
-    var selIdx = -1;
-    if (qPeriod === "WEEKLY" && qWeek) {
-      for (var i = 0; i < __wkPeriods.length; i++) { if (__wkPeriods[i].id === qWeek) { selIdx = i; break; } }
-    }
-    return buildRecurringAnalysis(dsObs, obs, __wkPeriods, selIdx);
-  }, [dsObs, obs, qPeriod, qWeek, __wkPeriods]);
+  /* (2026-09-12) The old "Detail Recurrence Analysis (Top 5)" card was retired
+     from the UI; buildRecurringAnalysis/classifyRecurringDetail stay in code
+     but are no longer computed here. Clusters are now the primary view. */
   var recurClusters = useMemo(function(){ return buildRecurringClusters(dsObs); }, [dsObs]);
   var S = useMemo(function () {
     return {
@@ -10828,140 +10828,79 @@ function App(_refApp) {
         fontWeight: 600
       }
     }, o.due));
-  })),   /* ══ 3. DETAIL RECURRENCE ANALYSIS (TOP 5) — additive, read-only ══ */
+  })),   /* ══ RECURRING ISSUE & ROOT CAUSE ANALYSIS — the primary recurring view ══
+     UI-only: renders the EXISTING buildRecurringClusters() output (scoring,
+     hierarchy, reviewer priority and traceability unchanged). Visual design
+     carried over from the retired "Detail Recurrence Analysis (Top 5)" card;
+     that card's functions are kept in code but no longer rendered. */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 } },
-      "DETAIL RECURRENCE ANALYSIS (TOP 5)"),
+      "RECURRING ISSUE & ROOT CAUSE ANALYSIS"),
     /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 10 } },
-      "Recurring issue groups in the current dashboard dataset (≥ 3 occurrences, or ≥ 2 with Serious risk) · trend vs previous week · click a row to view its source observations"),
-    recurAnalysis.length === 0
+      "Score = 30% description similarity + 20% category + 20% root cause + 10% contractor + 10% area + 10% activity · CONFIRMED needs score ≥ 85 with all source classifications approved · click a row to view its source observations"),
+    recurClusters.length === 0
       ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, padding: "10px 0" } },
-          "No recurring details meet the threshold in the selected period.")
+          "No recurring clusters (score ≥ 70) in the selected period.")
       : /*#__PURE__*/React.createElement("div", null,
-          /*#__PURE__*/React.createElement("div", { className: "recur-head", style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
-            /*#__PURE__*/React.createElement("span", null, "Rank"),
-            /*#__PURE__*/React.createElement("span", null, "Recurring Detail (Grouped)"),
-            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occurrences"),
-            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Trend (vs last week)")),
-          (recurShowAll ? recurAnalysis : recurAnalysis.slice(0, 5)).map(function(r, ri){
-            var maxWk = Math.max.apply(null, [1].concat(r.weeklyCounts || []));
-            var pts = (r.weeklyCounts || []).map(function(v, i, arr){
-              var n = arr.length > 1 ? arr.length - 1 : 1;
-              return (i / n * 56 + 2).toFixed(1) + "," + (16 - v / maxWk * 13 + 1).toFixed(1);
-            }).join(" ");
-            var trend = r.trendPercent === null
+          (recurShowAll ? recurClusters : recurClusters.slice(0, 5)).map(function(r, ri){
+            var trend = r.trend === null
               ? /*#__PURE__*/React.createElement("span", { style: { color: "#7C3AED", fontWeight: 800 } }, "NEW")
-              : r.trendPercent > 0
-                ? /*#__PURE__*/React.createElement("span", { style: { color: C.redDk, fontWeight: 800 } }, "↑ " + r.trendPercent + "%")
-                : r.trendPercent < 0
-                  ? /*#__PURE__*/React.createElement("span", { style: { color: C.greenDk, fontWeight: 800 } }, "↓ " + Math.abs(r.trendPercent) + "%")
+              : r.trend > 0
+                ? /*#__PURE__*/React.createElement("span", { style: { color: C.redDk, fontWeight: 800 } }, "↑ " + r.trend + "%")
+                : r.trend < 0
+                  ? /*#__PURE__*/React.createElement("span", { style: { color: C.greenDk, fontWeight: 800 } }, "↓ " + Math.abs(r.trend) + "%")
                   : /*#__PURE__*/React.createElement("span", { style: { color: C.slateMid, fontWeight: 700 } }, "— 0%");
+            var rcTitle = r.rootCause === "Pending EHS Review"
+              ? "Root Cause Pending Review"
+              : (r.status === "CONFIRMED" && r.reviewedCount > 0) ? "Confirmed Root Cause" : "Probable Root Cause";
             var coStr = r.companies.slice(0, 3).map(function(c){ return c.name + " (" + c.count + ")"; }).join(", ")
               + (r.companies.length > 3 ? "  +" + (r.companies.length - 3) + " more" : "");
             var arStr = r.areas.slice(0, 3).map(function(a){ return a.name + " (" + a.count + ")"; }).join(", ")
               + (r.areas.length > 3 ? "  +" + (r.areas.length - 3) + " more" : "");
             return /*#__PURE__*/React.createElement("div", {
-              key: r.key,
+              key: r.clusterId,
               className: "recur-row",
               onClick: function(){
-                /* temporary navigation filter: ONLY this group's source records */
-                setRecurGrp({ label: r.label, ids: r.observationIds.slice() });
+                setRecurGrp({ label: r.label, ids: r.ids.slice() });
                 setFS("ALL"); setFOT("ALL"); setFR("ALL"); setFl("ALL"); setFAr("ALL");
                 setFF("ALL"); setFCo("ALL"); setFPh("ALL"); setSr("");
                 setFDFrom(""); setFDTo(""); setFDFromIn(""); setFDToIn("");
                 setView("list");
               },
-              title: "View the " + r.count + " source observations",
-              /* UI only: subtle pastel background per Top-5 rank (rows beyond 5 stay plain) */
-              style: { display: "grid", gridTemplateColumns: "34px 1fr 90px 110px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer",
+              title: r.clusterId + " · view the " + r.count + " source observations",
+              style: { display: "grid", gridTemplateColumns: "34px 1fr 100px 120px", gap: 8, alignItems: "start", padding: "10px 8px", borderBottom: "1px solid #EEF2F7", cursor: "pointer",
                 borderRadius: 10,
                 background: ri === 0 ? "#FFF1F2" : ri === 1 ? "#FFF7ED" : ri === 2 ? "#FFFBEB" : ri === 3 ? "#EFF6FF" : ri === 4 ? "#ECFDF5" : "transparent" }
             },
               /*#__PURE__*/(function(){
-                /* rank badge colored by the group's HIGHEST risk: Serious → red,
-                   Major → orange, else (Minor) → green */
-                var bBg = r.serious > 0 ? C.redBg : r.major > 0 ? "#FFEDD5" : C.greenBg;
-                var bFg = r.serious > 0 ? C.redDk : r.major > 0 ? "#C2410C" : C.greenDk;
+                var bBg = r.serious > 0 ? C.redBg : "#FFEDD5";
+                var bFg = r.serious > 0 ? C.redDk : "#C2410C";
                 return React.createElement("div", { className: "recur-rank", style: { width: 22, height: 22, borderRadius: 7, background: bBg, color: bFg, fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" } }, ri + 1);
               })(),
               /*#__PURE__*/React.createElement("div", { className: "recur-main" },
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text } }, r.label,
-                  r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 2 } }, "Companies: " + coStr),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, "Areas: " + arStr)),
-              /*#__PURE__*/React.createElement("div", { className: "recur-occ", style: { textAlign: "right" } },
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.text } }, r.count),
-                /*#__PURE__*/React.createElement("svg", { width: 60, height: 18, viewBox: "0 0 60 18", style: { display: "inline-block", marginTop: 2 } },
-                  /*#__PURE__*/React.createElement("polyline", { points: pts, fill: "none", stroke: "#00CC79", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" }))),
-              /*#__PURE__*/React.createElement("div", { className: "recur-trend", style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
-          }),
-          recurAnalysis.length > 5 ? /*#__PURE__*/React.createElement("button", {
-            onClick: function(){ setRecurShowAll(!recurShowAll); },
-            style: { marginTop: 8, fontSize: 11, fontWeight: 700, color: C.blueDk || "#1D4ED8", background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }
-          }, recurShowAll ? "Show Top 5 only" : "View all recurring details →") : null)),
-  /* ══ 3b. RECURRING ISSUE CLUSTERS (root-cause based) — additive, read-only ══ */
-  /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14 }) },
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 4 } },
-      "RECURRING ISSUE CLUSTERS (ROOT-CAUSE BASED)"),
-    /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 10 } },
-      "Grouped by effective classification (reviewer-approved first) · Score = 30% description similarity + 20% category + 20% root cause + 10% contractor + 10% area + 10% activity · ≥85 Confirmed, 70–84 Potential (EHS review) · click a row to view its observations"),
-    recurClusters.length === 0
-      ? /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: C.slateMid, padding: "10px 0" } },
-          "No recurring clusters (score ≥ 70) in the selected period.")
-      : /*#__PURE__*/React.createElement("div", { style: { overflowX: "auto" } },
-          /*#__PURE__*/React.createElement("div", { style: { minWidth: 900 } },
-            /*#__PURE__*/React.createElement("div", { className: "clu-grid", style: { display: "grid", gridTemplateColumns: "1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px", gap: 8, padding: "4px 6px", fontSize: 9, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "2px solid #E2E8F0" } },
-              /*#__PURE__*/React.createElement("span", null, "Recurring Issue / Root Cause"),
-              /*#__PURE__*/React.createElement("span", null, "Contractors · Areas"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Occur."),
-              /*#__PURE__*/React.createElement("span", null, "First → Last"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Open Actions"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Trend 30d"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Score"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, "Status"),
-              /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Needs Review")),
-            recurClusters.slice(0, 10).map(function(r){
-              var trend = r.trend === null
-                ? /*#__PURE__*/React.createElement("span", { style: { color: "#7C3AED", fontWeight: 800 } }, "NEW")
-                : r.trend > 0
-                  ? /*#__PURE__*/React.createElement("span", { style: { color: C.redDk, fontWeight: 800 } }, "↑ " + r.trend + "%")
-                  : r.trend < 0
-                    ? /*#__PURE__*/React.createElement("span", { style: { color: C.greenDk, fontWeight: 800 } }, "↓ " + Math.abs(r.trend) + "%")
-                    : /*#__PURE__*/React.createElement("span", { style: { color: C.slateMid, fontWeight: 700 } }, "— 0%");
-              return /*#__PURE__*/React.createElement("div", {
-                key: r.clusterId,
-                onClick: function(){
-                  setRecurGrp({ label: r.label, ids: r.ids.slice() });
-                  setFS("ALL"); setFOT("ALL"); setFR("ALL"); setFl("ALL"); setFAr("ALL");
-                  setFF("ALL"); setFCo("ALL"); setFPh("ALL"); setSr("");
-                  setFDFrom(""); setFDTo(""); setFDFromIn(""); setFDToIn("");
-                  setView("list");
-                },
-                title: r.clusterId + " · view the " + r.count + " observations",
-                className: "clu-grid",
-                style: { display: "grid", gridTemplateColumns: "1.6fr 1.2fr 60px 1fr 90px 90px 55px 70px 70px", gap: 8, alignItems: "start", padding: "9px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer", fontSize: 11 }
-              },
-                /*#__PURE__*/React.createElement("div", null,
-                  /*#__PURE__*/React.createElement("div", { style: { fontWeight: 700, color: C.text, fontSize: 12 } }, r.label,
-                    r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null),
-                  /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginTop: 2 } }, "Root cause: " + r.rootCause)),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } },
-                  r.companies.slice(0, 3).join(", ") + (r.companies.length > 3 ? " +" + (r.companies.length - 3) : ""),
-                  /*#__PURE__*/React.createElement("div", { style: { color: C.slateMid } },
-                    r.areas.slice(0, 3).join(", ") + (r.areas.length > 3 ? " +" + (r.areas.length - 3) : ""))),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", fontWeight: 800, fontSize: 14, color: C.text } }, r.count),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, r.first + " → " + r.last),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", fontWeight: 700, color: r.openActions > 0 ? C.redDk : C.greenDk } }, r.openActions),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "right" } }, trend),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", fontWeight: 800, fontSize: 13, color: r.score >= 85 ? C.redDk : "#B45309" } }, r.score),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "center" } },
-                  /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 6,
+                  r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px" } }, "SERIOUS ×" + r.serious) : null,
+                  /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, borderRadius: 6, padding: "1px 6px",
                     background: r.status === "CONFIRMED" ? C.redBg : "#FEF3C7",
                     color: r.status === "CONFIRMED" ? C.redDk : "#92400E" } },
-                    r.status === "CONFIRMED" ? "RECURRING" : "REVIEW")),
-                /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", color: r.reviewNeeded > 0 ? "#B45309" : C.slateMid, fontWeight: 700 } },
-                  r.reviewNeeded > 0 ? r.reviewNeeded + " obs" : "—"));
-            })))),
+                    r.status === "CONFIRMED" ? "CONFIRMED RECURRING" : "REVIEW")),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 3, fontWeight: 600 } }, rcTitle + ": " + r.rootCause),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 2 } }, "Companies: " + coStr),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid } }, "Areas: " + arStr),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginTop: 2 } },
+                  "First → Last: " + r.first + " → " + r.last +
+                  " · Open Actions: " + r.openActions +
+                  (r.reviewNeeded > 0 ? " · Needs review: " + r.reviewNeeded + " obs" : ""))),
+              /*#__PURE__*/React.createElement("div", { className: "recur-occ", style: { textAlign: "right" } },
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 16, fontWeight: 800, color: C.text } }, r.count),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: C.slateMid, marginTop: 1 } }, "Score ",
+                  /*#__PURE__*/React.createElement("b", { style: { color: r.score >= 85 ? C.redDk : "#B45309", fontSize: 11 } }, r.score))),
+              /*#__PURE__*/React.createElement("div", { className: "recur-trend", style: { textAlign: "right", fontSize: 12, paddingTop: 2 } }, trend));
+          }),
+          recurClusters.length > 5 ? /*#__PURE__*/React.createElement("button", {
+            onClick: function(){ setRecurShowAll(!recurShowAll); },
+            style: { marginTop: 8, fontSize: 11, fontWeight: 700, color: C.blueDk || "#1D4ED8", background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }
+          }, recurShowAll ? "Show Top 5 only ↑" : "View all recurring details →") : null)),
   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14, borderRadius: 14, boxShadow: "0 2px 10px rgba(15,23,42,0.06)" }) },
     (function(){
