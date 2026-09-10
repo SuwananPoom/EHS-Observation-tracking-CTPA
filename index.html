@@ -7144,16 +7144,6 @@ function App(_refApp) {
     return function(){ window.removeEventListener("ctpa-cloud-status", h); };
   }, []);
   var _rsh = useState(false), recurShowAll = _rsh[0], setRecurShowAll = _rsh[1];
-  /* Improvement plans (additive prevention layer) — read once, edited via overlay */
-  var _imp = useState(null), impPlans = _imp[0], setImpPlans = _imp[1];
-  var _pv = useState(null), planView = _pv[0], setPlanView = _pv[1];
-  var _pt = useState("OVERVIEW"), planTab = _pt[0], setPlanTab = _pt[1];
-  var _pd = useState(null), planDraft = _pd[0], setPlanDraft = _pd[1];
-  React.useEffect(function(){
-    var on = true;
-    ctpaPlanLoadAll().then(function(m){ if(on) setImpPlans(m); });
-    return function(){ on = false; };
-  }, []);
   /* Weekly comparison chart/table: long lists collapse to the latest 5 weeks
      by default (display-only; View all expands). */
   var _wksa = useState(false), wkShowAll = _wksa[0], setWkShowAll = _wksa[1];
@@ -11002,26 +10992,7 @@ function App(_refApp) {
               /*#__PURE__*/React.createElement("div", { className: "recur-main", style: { minWidth: 0 } },
                 /*#__PURE__*/React.createElement("div", { style: { fontSize: 12, fontWeight: 700, color: C.text, lineHeight: 1.35 } }, r.label,
                   r.serious > 0 ? /*#__PURE__*/React.createElement("span", { style: { marginLeft: 6, fontSize: 9, fontWeight: 800, color: C.redDk, background: C.redBg, borderRadius: 6, padding: "1px 6px", whiteSpace: "nowrap" } }, "SERIOUS ×" + r.serious) : null),
-                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 1 } }, rcTitle + ": " + r.rootCause),
-                /*#__PURE__*/(function(){
-                  /* compact Improvement Status indicator + entry to the plan overlay */
-                  var pl = impPlans && impPlans[r.clusterId];
-                  var ind = ctpaPlanIndicator(pl);
-                  var indC = ind === "ASSESSED" ? { bg: C.greenBg, fg: C.greenDk }
-                    : ind === "JUSTIFICATION REQUIRED" ? { bg: C.redBg, fg: C.redDk }
-                    : { bg: "#F1F5F9", fg: "#64748B" };
-                  return React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 3, flexWrap: "wrap" } },
-                    React.createElement("span", { style: { fontSize: 8.5, fontWeight: 800, padding: "1px 6px", borderRadius: 5, background: indC.bg, color: indC.fg, whiteSpace: "nowrap" } }, ind),
-                    React.createElement("button", {
-                      onClick: function(e){
-                        e.stopPropagation();
-                        setPlanDraft(JSON.parse(JSON.stringify(pl || ctpaEmptyPlan(r.clusterId, r.label))));
-                        setPlanTab(pl ? "OVERVIEW" : "PREVENTION ASSESSMENT");
-                        setPlanView({ cluster: r });
-                      },
-                      style: { fontSize: 9, fontWeight: 700, padding: "1px 8px", borderRadius: 5, border: "1px solid #CBD5E1", background: "#fff", color: C.textMid, cursor: "pointer" }
-                    }, "Prevention Assessment →"));
-                })()),
+                /*#__PURE__*/React.createElement("div", { style: { fontSize: 10, color: C.textMid, marginTop: 1 } }, rcTitle + ": " + r.rootCause)),
               /*#__PURE__*/React.createElement("div", { className: "rct-co", style: { fontSize: 10, color: C.textMid, minWidth: 0 } },
                 /*#__PURE__*/React.createElement("div", null, coStr),
                 /*#__PURE__*/React.createElement("div", { style: { color: C.slateMid } }, arStr)),
@@ -11044,154 +11015,6 @@ function App(_refApp) {
             onClick: function(){ setRecurShowAll(!recurShowAll); },
             style: { marginTop: 8, fontSize: 11, fontWeight: 700, color: C.blueDk || "#1D4ED8", background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }
           }, recurShowAll ? "Show Top 5 only ↑" : "View all recurring details →") : null))),
-  /* ══ RECURRING ISSUE IMPROVEMENT PLAN — additive overlay (5 tabs) ══ */
-  planView && planDraft && (function(){
-    var r = planView.cluster;
-    var canEdit = isAdmin() || (typeof canSeeReporting === "function" && canSeeReporting());
-    var strat = ctpaPlanStrategy(planDraft);
-    var eff = ctpaPlanEffect(planDraft, r.dates);
-    var saved = impPlans && impPlans[r.clusterId];
-    var ind = ctpaPlanIndicator(saved);
-    function upd(patch){ setPlanDraft(Object.assign({}, planDraft, patch)); }
-    function updHoc(i, patch){
-      var h = planDraft.hoc.slice(); h[i] = Object.assign({}, h[i], patch); upd({ hoc: h });
-    }
-    function updAct(i, patch){
-      var a = planDraft.actions.slice(); a[i] = Object.assign({}, a[i], patch); upd({ actions: a });
-    }
-    function doSave(){
-      if(strat && strat.needJustification && !(planDraft.justification || "").trim()){
-        toast$("HIGHER-LEVEL CONTROL JUSTIFICATION REQUIRED — explain why Elimination / Substitution / Engineering controls are not reasonably practicable", "err");
-        setPlanTab("PREVENTION ASSESSMENT");
-        return;
-      }
-      var who = (window.CTPA_AUTH && window.CTPA_AUTH.profile && window.CTPA_AUTH.profile.name) || (function(){ try { return localStorage.getItem("ctpa_user") || "EHS"; } catch(_){ return "EHS"; } })();
-      var p = Object.assign({}, planDraft, { history: (planDraft.history || []).concat([{ at: nowStamp(), by: who, note: "Prevention assessment saved" }]) });
-      ctpaPlanSave(r.clusterId, p).then(function(ok){
-        if(ok){
-          setImpPlans(Object.assign({}, impPlans, (function(){ var o = {}; o[r.clusterId] = p; return o; })()));
-          setPlanDraft(p);
-          toast$("Prevention assessment saved", "ok");
-          try { logEvent("PREVENTION_ASSESSMENT", r.clusterId, "Assessment saved by " + who + " for " + r.label); } catch(_){}
-        } else toast$("Could not save plan — check the connection and retry", "err");
-      });
-    }
-    var secH = { fontSize: 10, fontWeight: 800, color: C.slate, textTransform: "uppercase", letterSpacing: "0.05em", margin: "14px 0 6px" };
-    var inp = { fontSize: 12, padding: "6px 9px", borderRadius: 8, border: "1.5px solid #CBD5E1", background: "#fff", width: "100%", boxSizing: "border-box" };
-    var kv = function(k, v){ return React.createElement("div", { style: { display: "flex", gap: 8, fontSize: 11, padding: "3px 0" } },
-      React.createElement("span", { style: { color: C.slate, minWidth: 170, fontWeight: 600 } }, k),
-      React.createElement("span", { style: { color: C.text } }, v || "Not Identified")); };
-    var tabs = ["OVERVIEW", "SOURCE OBSERVATIONS", "PREVENTION ASSESSMENT", "IMPROVEMENT PLAN", "HISTORY"];
-    return React.createElement("div", { style: { position: "fixed", inset: 0, background: "rgba(15,23,42,0.45)", zIndex: 9000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "24px 10px", overflowY: "auto" },
-      onClick: function(){ setPlanView(null); } },
-      React.createElement("div", { style: { background: "#fff", borderRadius: 14, width: "100%", maxWidth: 860, padding: "18px 20px", boxShadow: "0 8px 40px rgba(15,23,42,0.25)", margin: "0 auto" },
-        onClick: function(e){ e.stopPropagation(); } },
-        React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 4 } },
-          React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 10, fontWeight: 800, color: C.slate, letterSpacing: "0.05em" } }, "RECURRING ISSUE PREVENTION ANALYSIS"),
-            React.createElement("div", { style: { fontSize: 14, fontWeight: 800, color: C.text, marginTop: 2 } }, r.label)),
-          React.createElement("button", { onClick: function(){ setPlanView(null); },
-            style: { fontSize: 16, fontWeight: 700, border: "none", background: "none", color: C.slate, cursor: "pointer", padding: 4 } }, "✕")),
-        React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", borderBottom: "2px solid #E2E8F0", margin: "8px 0 12px" } },
-          tabs.map(function(t){ return React.createElement("button", { key: t,
-            onClick: function(){ setPlanTab(t); },
-            style: { fontSize: 10.5, fontWeight: 700, padding: "7px 11px", border: "none", cursor: "pointer", borderRadius: "8px 8px 0 0",
-              background: planTab === t ? C.greenBg : "transparent", color: planTab === t ? C.greenDk : C.slate,
-              borderBottom: planTab === t ? "2px solid " + C.green : "2px solid transparent", marginBottom: -2 } }, t); })),
-
-        planTab === "OVERVIEW" && React.createElement("div", null,
-          React.createElement("div", { style: secH }, "Recurring Issue Summary"),
-          kv("Recurring Issue", r.label), kv("Probable Root Cause", r.rootCause),
-          kv("Recurring Score / Status", r.score + " · " + r.status),
-          kv("Occurrences", String(r.count) + (r.serious ? " (Serious ×" + r.serious + ")" : "")),
-          kv("First → Last Detected", r.first + " → " + r.last),
-          kv("Open Actions (observations)", String(r.openActions)),
-          kv("Classification QA", (r.count - r.reviewNeeded) + " approved" + (r.reviewNeeded ? ", " + r.reviewNeeded + " pending review" : "")),
-          React.createElement("div", { style: secH }, "Responsible Party Analysis"),
-          kv("Responsible Contractor", r.companies.map(function(c){ return c.name + " (" + c.count + ")"; }).join(", ")),
-          kv("Responsible Subcontractor", null),
-          kv("Responsible Team", null),
-          kv("Responsible Supervisor", null),
-          kv("Area / Building", r.areas.map(function(a){ return a.name + " (" + a.count + ")"; }).join(", ")),
-          kv("Activity", (r.activities || []).join(", ")),
-          kv("Related Observations", String(r.count)),
-          React.createElement("div", { style: secH }, "Assessment Status"),
-          React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: ind === "ASSESSED" ? C.greenDk : ind === "JUSTIFICATION REQUIRED" ? C.redDk : C.text } }, ind)),
-
-        planTab === "SOURCE OBSERVATIONS" && React.createElement("div", null,
-          React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 8 } },
-            "Source observations in this cluster · Classification QA: " + (r.count - r.reviewNeeded) + " approved" + (r.reviewNeeded ? ", " + r.reviewNeeded + " pending review" : "") + " · click to open the observation"),
-          r.ids.map(function(id){
-            var o = obs.find(function(x){ return x.id === id; });
-            if(!o) return null;
-            return React.createElement("div", { key: id,
-              onClick: function(){ setPlanView(null); setDet(o); setView("detail"); },
-              style: { display: "flex", gap: 10, padding: "8px 6px", borderBottom: "1px solid #EEF2F7", cursor: "pointer", alignItems: "baseline" } },
-              React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: C.green, minWidth: 74 } }, o.id),
-              React.createElement("span", { style: { fontSize: 10, color: C.slate, minWidth: 74 } }, (o.date || "").slice(0, 10)),
-              React.createElement("span", { style: { fontSize: 11, color: C.text, flex: 1 } }, String(o.desc || "").slice(0, 110)),
-              React.createElement("span", { style: { fontSize: 9.5, fontWeight: 700, color: effStatus(o) === "CLOSED" ? C.greenDk : C.redDk } }, effStatus(o)));
-          })),
-
-        planTab === "PREVENTION ASSESSMENT" && React.createElement("div", null,
-          React.createElement("div", { style: secH }, "Hierarchy of Controls Assessment (strongest → weakest)"),
-          React.createElement("div", { style: { fontSize: 10, color: C.slateMid, marginBottom: 8 } },
-            "Consider each level top-down. Training and Toolbox Talks are Administrative Controls — they are not the default answer; the selected control must address the root cause: " + r.rootCause),
-          planDraft.hoc.map(function(h, i){
-            var lv = HOC_LEVELS[i];
-            return React.createElement("div", { key: h.level, style: { border: "1px solid #E2E8F0", borderRadius: 10, padding: "10px 12px", marginBottom: 8, background: i < 3 ? "#F0FDF4" : i === 3 ? "#FFFBEB" : "#F8FAFC" } },
-              React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" } },
-                React.createElement("span", { style: { fontSize: 11, fontWeight: 800, color: C.text } }, (i + 1) + ". " + h.level),
-                React.createElement("select", { value: h.decision, disabled: !canEdit,
-                  onChange: function(e){ updHoc(i, { decision: e.target.value }); },
-                  style: { fontSize: 11, padding: "4px 8px", borderRadius: 7, border: "1.5px solid #CBD5E1", width: "auto" } },
-                  React.createElement("option", { value: "" }, "— decision —"),
-                  React.createElement("option", { value: "YES" }, i === 4 ? "Applicable" : "YES"),
-                  React.createElement("option", { value: "NO" }, "NO"),
-                  React.createElement("option", { value: "NOT_PRACTICABLE" }, "Not Practicable"))),
-              React.createElement("div", { style: { fontSize: 10, color: C.slateMid, margin: "4px 0 6px" } }, lv.q),
-              h.decision === "YES" && React.createElement("input", { placeholder: "Proposed control…", value: h.control || "", disabled: !canEdit,
-                onChange: function(e){ updHoc(i, { control: e.target.value }); }, style: Object.assign({}, inp, { marginBottom: 5 }) }),
-              (h.decision === "NO" || h.decision === "NOT_PRACTICABLE") && React.createElement("input", { placeholder: "Reason / justification…", value: h.reason || "", disabled: !canEdit,
-                onChange: function(e){ updHoc(i, { reason: e.target.value }); }, style: inp }));
-          }),
-          strat && strat.needJustification && React.createElement("div", { style: { border: "1.5px solid " + C.red, background: C.redBg, borderRadius: 10, padding: "10px 12px", margin: "4px 0 10px" } },
-            React.createElement("div", { style: { fontSize: 10.5, fontWeight: 800, color: C.redDk, marginBottom: 5 } }, "⚠ HIGHER-LEVEL CONTROL JUSTIFICATION REQUIRED"),
-            React.createElement("div", { style: { fontSize: 10, color: C.redDk, marginBottom: 6 } }, "This plan relies on Administrative Controls / PPE only. Explain why Elimination, Substitution or Engineering Controls are not reasonably practicable:"),
-            React.createElement("textarea", { rows: 2, value: planDraft.justification || "", disabled: !canEdit,
-              onChange: function(e){ upd({ justification: e.target.value }); }, style: inp })),
-          strat && (strat.primary || strat.residual) && React.createElement("div", { style: { border: "1px solid " + C.green, background: C.greenBg, borderRadius: 10, padding: "10px 12px", marginBottom: 12 } },
-            React.createElement("div", { style: { fontSize: 10.5, fontWeight: 800, color: C.greenDk, marginBottom: 5 } }, "PREVENTION STRATEGY"),
-            strat.primary && React.createElement("div", { style: { fontSize: 11, marginBottom: 3 } },
-              React.createElement("b", null, "PRIMARY CONTROL — " + strat.primary.level + ": "), strat.primary.control || "—"),
-            strat.supporting && React.createElement("div", { style: { fontSize: 11, marginBottom: 3 } },
-              React.createElement("b", null, "SUPPORTING CONTROL — ADMINISTRATIVE: "), strat.supporting.control || "—"),
-            strat.residual && React.createElement("div", { style: { fontSize: 11 } },
-              React.createElement("b", null, "RESIDUAL CONTROL — PPE: "), strat.residual.control || "Existing mandatory PPE")),
-          null),
-
-
-        planTab === "IMPROVEMENT PLAN" && React.createElement("div", { style: { textAlign: "center", padding: "34px 10px" } },
-          React.createElement("div", { style: { fontSize: 26, marginBottom: 8 } }, "\uD83D\uDEA7"),
-          React.createElement("div", { style: { fontSize: 13, fontWeight: 800, color: C.text } }, "IMPROVEMENT PLAN"),
-          React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "#B45309", background: "#FEF3C7", display: "inline-block", padding: "3px 12px", borderRadius: 99, margin: "8px 0" } }, "Coming Soon \u00B7 Future Phase"),
-          React.createElement("div", { style: { fontSize: 11, color: C.slateMid, maxWidth: 460, margin: "0 auto", lineHeight: 1.7 } },
-            "Action planning, owners, due dates, evidence, verification and effectiveness monitoring will be activated in a future release. The current release covers analysis and prevention assessment only.")),
-
-        planTab === "HISTORY" && React.createElement("div", null,
-          React.createElement("div", { style: secH }, "Plan History"),
-          (planDraft.history && planDraft.history.length)
-            ? planDraft.history.slice().reverse().map(function(h, i){
-                return React.createElement("div", { key: i, style: { fontSize: 11, padding: "5px 0", borderBottom: "1px solid #EEF2F7" } },
-                  React.createElement("b", null, h.at), " · ", h.by, " — ", h.note); })
-            : React.createElement("div", { style: { fontSize: 11, color: C.slateMid } }, "No history yet — the plan has not been saved.")),
-
-        React.createElement("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, borderTop: "1px solid #E2E8F0", paddingTop: 12 } },
-          React.createElement("button", { onClick: function(){ setPlanView(null); },
-            style: { fontSize: 11, fontWeight: 700, padding: "8px 16px", borderRadius: 8, border: "1.5px solid #CBD5E1", background: "#fff", color: C.textMid, cursor: "pointer" } }, "Close"),
-          canEdit && React.createElement("button", { onClick: doSave,
-            style: { fontSize: 11, fontWeight: 700, padding: "8px 18px", borderRadius: 8, border: "none", background: C.green, color: "#fff", cursor: "pointer" } }, "💾 Save Prevention Assessment"))));
-  })(),
   /* ══ Open Observations by Contractor (read-only; derives from dsObs) ══ */
   /*#__PURE__*/React.createElement("div", { style: _ctpaAssign({}, crd, { marginBottom: 14, borderRadius: 14, boxShadow: "0 2px 10px rgba(15,23,42,0.06)" }) },
     (function(){
