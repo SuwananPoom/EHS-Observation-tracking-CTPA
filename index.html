@@ -139,7 +139,7 @@ html,body{max-width:100%;overflow-x:hidden;-webkit-text-size-adjust:100%}
   .rct-open::before{content:"Open:";font-size:10px;font-weight:700;color:#64748B}
   .rct-trend::before{content:"Trend:";font-size:10px;font-weight:700;color:#64748B}
   .rct-score::before{content:"Score:";font-size:10px;font-weight:700;color:#64748B}
-  .rct-review::before{content:"Review:";font-size:10px;font-weight:700;color:#64748B}
+  .rct-review::before{content:"Source review:";font-size:10px;font-weight:700;color:#64748B}
 }
 </style>
 </head>
@@ -10863,9 +10863,9 @@ function App(_refApp) {
             /*#__PURE__*/React.createElement("span", null, "First → Last"),
             /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Open Actions"),
             /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Trend 30d"),
-            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Score"),
-            /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" } }, "Status"),
-            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" } }, "Needs Review")),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" }, title: "Recurring similarity score based on Description, Category, Root Cause, Contractor, Area and Activity." }, "Score"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "center" }, title: "Recurring cluster validation status." }, "Status"),
+            /*#__PURE__*/React.createElement("span", { style: { textAlign: "right" }, title: "Source observations requiring classification validation. ✓ means all source classifications are approved." }, "Source Review")),
           (recurShowAll ? recurClusters : recurClusters.slice(0, 5)).map(function(r, ri){
             var trend = r.trend === null
               ? /*#__PURE__*/React.createElement("span", { style: { color: "#7C3AED", fontWeight: 800 } }, "NEW")
@@ -10912,14 +10912,24 @@ function App(_refApp) {
               /*#__PURE__*/React.createElement("div", { className: "rct-dates", style: { fontSize: 10, color: C.textMid, whiteSpace: "nowrap" } }, r.first + " → " + r.last),
               /*#__PURE__*/React.createElement("div", { className: "rct-open", style: { textAlign: "right", fontWeight: 700, fontSize: 12, color: r.openActions > 0 ? C.redDk : C.greenDk, justifyContent: "flex-end" } }, r.openActions),
               /*#__PURE__*/React.createElement("div", { className: "rct-trend", style: { textAlign: "right", fontSize: 11, justifyContent: "flex-end" } }, trend),
-              /*#__PURE__*/React.createElement("div", { className: "rct-score", style: { textAlign: "right", fontWeight: 800, fontSize: 13, color: r.score >= 85 ? C.redDk : "#B45309", justifyContent: "flex-end" } }, r.score),
-              /*#__PURE__*/React.createElement("div", { className: "rct-status", style: { textAlign: "center", justifyContent: "flex-start" } },
+              /*#__PURE__*/React.createElement("div", { className: "rct-score", title: "Recurring similarity score based on Description, Category, Root Cause, Contractor, Area and Activity.", style: { textAlign: "right", fontWeight: 800, fontSize: 13, color: r.score >= 85 ? C.redDk : "#B45309", justifyContent: "flex-end" } }, r.score),
+              /*#__PURE__*/React.createElement("div", { className: "rct-status",
+                title: r.status === "CONFIRMED"
+                  ? "Recurring cluster validation status: score ≥ 85 and all source classifications approved."
+                  : (r.score >= 85
+                      ? "Recurring cluster validation status: similarity is high, but " + r.reviewNeeded + " source classification(s) still require review."
+                      : "Recurring cluster validation status: score 70–84 — EHS must validate whether these belong to one recurring cluster."),
+                style: { textAlign: "center", justifyContent: "flex-start" } },
                 /*#__PURE__*/React.createElement("span", { style: { fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 6, whiteSpace: "nowrap",
                   background: r.status === "CONFIRMED" ? C.redBg : "#FEF3C7",
                   color: r.status === "CONFIRMED" ? C.redDk : "#92400E" } },
                   r.status === "CONFIRMED" ? "CONFIRMED" : "REVIEW")),
-              /*#__PURE__*/React.createElement("div", { className: "rct-review", style: { textAlign: "right", fontSize: 11, fontWeight: 700, color: r.reviewNeeded > 0 ? "#B45309" : C.slateMid, justifyContent: "flex-end" } },
-                r.reviewNeeded > 0 ? r.reviewNeeded + " obs" : "—"));
+              /*#__PURE__*/React.createElement("div", { className: "rct-review",
+                title: r.reviewNeeded > 0
+                  ? r.reviewNeeded + " source observation(s) still require classification validation."
+                  : "All source classifications approved",
+                style: { textAlign: "right", fontSize: 11, fontWeight: 700, color: r.reviewNeeded > 0 ? "#B45309" : C.greenDk, justifyContent: "flex-end" } },
+                r.reviewNeeded > 0 ? r.reviewNeeded + " obs" : "✓"));
           }),
           recurClusters.length > 5 ? /*#__PURE__*/React.createElement("button", {
             onClick: function(){ setRecurShowAll(!recurShowAll); },
