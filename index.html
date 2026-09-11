@@ -1282,6 +1282,46 @@ function cloudSave(arr){
   });
 }
 
+/* ══ PHASE 2 DUAL-WRITE (2026-09-11) — mirror saves into ctpa_observations ══
+   After ctpa_state is written, upsert the CHANGED observations (by rev) into
+   the new row-per-observation table so it stays in step. Fire-and-forget:
+   any failure here NEVER affects the primary save or the UI. The app still
+   READS from ctpa_state — this only keeps the new table warm for Phase 3.
+   Photos are stripped to match ctpa_state (references kept, base64 dropped). */
+var __ctpaObsRevCache = null;   /* id -> rev; null until first sync */
+function ctpaDualWriteObs(finalArr, delSet){
+  if(!cloudOn()) return;
+  try {
+    var stripped = stripPhotos(finalArr || []);
+    var firstSync = (__ctpaObsRevCache === null);
+    if(firstSync) __ctpaObsRevCache = {};
+    var changed = [];
+    stripped.forEach(function(o){
+      if(!o || !o.id) return;
+      var rev = o.rev || 0;
+      if(firstSync || __ctpaObsRevCache[o.id] !== rev) changed.push(o);
+    });
+    var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_observations";
+    /* chunked upsert so a first full sync (~2k rows) never sends one huge body */
+    function flush(list){
+      if(!list.length) return;
+      var chunk = list.splice(0, 400);
+      var rows = chunk.map(function(o){ return { id: o.id, site: "bkk22", obs: o, rev: (o.rev || 0) }; });
+      fetch(base + "?on_conflict=id", {
+        method: "POST",
+        headers: Object.assign({}, cloudHeaders(), { "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
+        body: JSON.stringify(rows), cache: "no-store"
+      }).then(function(r){
+        if(r.ok){ chunk.forEach(function(o){ __ctpaObsRevCache[o.id] = o.rev || 0; }); flush(list); }
+      }).catch(function(){});
+    }
+    flush(changed.slice());
+    Object.keys(delSet || {}).forEach(function(id){
+      fetch(base + "?id=eq." + encodeURIComponent(id), { method: "DELETE", headers: cloudHeaders(), cache: "no-store" })
+        .then(function(){ if(__ctpaObsRevCache) delete __ctpaObsRevCache[id]; }).catch(function(){});
+    });
+  } catch(e){ console.warn("[CTPA] dual-write skipped:", e && e.message); }
+}
 /* cloudMergeSave: read current cloud data → merge localArr into it → write back.
    Prevents one device from overwriting observations added by other devices.
    Merge rule: localArr is authoritative for obs IDs it contains (edits/deletes/status).
@@ -1363,6 +1403,8 @@ function _cloudMergeSaveInner(localArr, deletedIds){
     }
     return cloudSave(merged).then(function(ok){
       if(!ok) return { ok: false, merged: merged };
+      /* Phase 2: mirror the successful write into ctpa_observations (non-blocking) */
+      try { ctpaDualWriteObs(merged, delSet); } catch(_){}
       /* READ-BACK VERIFICATION: re-read the row and confirm the most recently edited
          record actually landed with its rev. Success is only reported after Supabase
          holds the submitted values; otherwise ok:false so the UI shows a save error
