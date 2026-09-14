@@ -1288,37 +1288,46 @@ function cloudSave(arr){
    any failure here NEVER affects the primary save or the UI. The app still
    READS from ctpa_state — this only keeps the new table warm for Phase 3.
    Photos are stripped to match ctpa_state (references kept, base64 dropped). */
-var __ctpaObsRevCache = null;   /* id -> rev; null until first sync */
+var __ctpaObsSigCache = null;   /* id -> content signature; null until first sync */
+/* fast, stable string signature of the stripped observation object — used to
+   detect ANY content change, including edits that do not bump rev (e.g. a
+   rejectedBy field added in place, or a photo url refreshed on the reference). */
+function ctpaObsSig(o){
+  try { return JSON.stringify(o); } catch(_){ return String((o && o.rev) || Math.random()); }
+}
 function ctpaDualWriteObs(finalArr, delSet){
   if(!cloudOn()) return;
   try {
     var stripped = stripPhotos(finalArr || []);
-    var firstSync = (__ctpaObsRevCache === null);
-    if(firstSync) __ctpaObsRevCache = {};
+    var firstSync = (__ctpaObsSigCache === null);
+    if(firstSync) __ctpaObsSigCache = {};
     var changed = [];
     stripped.forEach(function(o){
       if(!o || !o.id) return;
-      var rev = o.rev || 0;
-      if(firstSync || __ctpaObsRevCache[o.id] !== rev) changed.push(o);
+      var sig = ctpaObsSig(o);
+      /* CONTENT-HASH DIFF (2026-09-14): compare the full stripped object, not
+         just rev — catches same-rev field mutations the rev diff missed. */
+      if(firstSync || __ctpaObsSigCache[o.id] !== sig){ o.__sig = sig; changed.push(o); }
     });
     var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/ctpa_observations";
     /* chunked upsert so a first full sync (~2k rows) never sends one huge body */
     function flush(list){
       if(!list.length) return;
       var chunk = list.splice(0, 400);
-      var rows = chunk.map(function(o){ return { id: o.id, site: "bkk22", obs: o, rev: (o.rev || 0) }; });
+      var rows = chunk.map(function(o){ var c = {}; for(var k in o){ if(k !== "__sig") c[k] = o[k]; }
+        return { id: o.id, site: "bkk22", obs: c, rev: (o.rev || 0) }; });
       fetch(base + "?on_conflict=id", {
         method: "POST",
         headers: Object.assign({}, cloudHeaders(), { "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
         body: JSON.stringify(rows), cache: "no-store"
       }).then(function(r){
-        if(r.ok){ chunk.forEach(function(o){ __ctpaObsRevCache[o.id] = o.rev || 0; }); flush(list); }
+        if(r.ok){ chunk.forEach(function(o){ __ctpaObsSigCache[o.id] = o.__sig; delete o.__sig; }); flush(list); }
       }).catch(function(){});
     }
     flush(changed.slice());
     Object.keys(delSet || {}).forEach(function(id){
       fetch(base + "?id=eq." + encodeURIComponent(id), { method: "DELETE", headers: cloudHeaders(), cache: "no-store" })
-        .then(function(){ if(__ctpaObsRevCache) delete __ctpaObsRevCache[id]; }).catch(function(){});
+        .then(function(){ if(__ctpaObsSigCache) delete __ctpaObsSigCache[id]; }).catch(function(){});
     });
   } catch(e){ console.warn("[CTPA] dual-write skipped:", e && e.message); }
 }
