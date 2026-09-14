@@ -1100,7 +1100,80 @@ function ctpaReadWithRetry(fn, delays){
   }
   return attempt(0);
 }
-function cloudLoad(){
+/* ══ PHASE 3 — ROW-PER-OBSERVATION PRIMARY (flag-gated, 2026-09-14) ════════
+   CTPA_ROWS_PRIMARY = false → behaviour unchanged (ctpa_state blob primary,
+                               rows mirrored by ctpaDualWriteObs)
+   CTPA_ROWS_PRIMARY = true  → reads are paginated from ctpa_observations and
+                               writes are per-row upserts (no single-row lock
+                               contention on the 3.4 MB blob); ctpa_state is
+                               kept as a throttled, non-blocking rollback copy.
+   ROLLBACK = set the flag back to false. No data path is destructive. */
+var CTPA_ROWS_PRIMARY = false;
+var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 500;
+function cloudLoad(){ return CTPA_ROWS_PRIMARY ? cloudLoadRows() : cloudLoadBlob(); }
+function cloudLoadRows(){
+  if(!cloudOn()) return Promise.resolve(null);
+  var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CTPA_ROWS_TABLE;
+  var out = [];
+  function failKind(r, code){
+    return (code === "57014" || r.status === 504 || r.status === 408) ? "TIMEOUT"
+         : (r.status === 401 || r.status === 403) ? "AUTH_ERROR"
+         : r.status >= 500 ? "SERVER_ERROR" : "UNKNOWN_ERROR";
+  }
+  function page(offset){
+    var u = base + "?site=eq.bkk22&select=obs&order=id.asc&limit=" + CTPA_ROWS_PAGE + "&offset=" + offset;
+    return fetch(u, { headers: cloudHeaders(), cache: "no-store" }).then(function(r){
+      if(!r.ok){
+        return r.text().then(function(t){
+          var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
+          var code = parsed && parsed.code;
+          ctpaCloudFail(failKind(r, code), { op: "READ " + CTPA_ROWS_TABLE, endpoint: "GET /rest/v1/" + CTPA_ROWS_TABLE + " offset=" + offset,
+            status: r.status, code: code, message: (parsed && parsed.message) || String(t).slice(0, 300) });
+          return null;
+        });
+      }
+      return r.json().then(function(rows){
+        if(!Array.isArray(rows)){
+          ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 200, code: "BAD_PAYLOAD", message: "page is not an array" });
+          return null;
+        }
+        rows.forEach(function(x){ if(x && x.obs && x.obs.id) out.push(x.obs); });
+        if(rows.length < CTPA_ROWS_PAGE) return out;
+        return page(offset + CTPA_ROWS_PAGE);
+      });
+    });
+  }
+  console.log("[CTPA] cloudLoadRows → GET paginated (" + CTPA_ROWS_PAGE + "/page)");
+  return page(0).then(function(arr){
+    if(!arr) return null;
+    /* same ordering the blob merge produced: newest OBS number first */
+    arr.sort(function(a, b){
+      var na = parseInt((a.id || "").replace(/[^0-9]/g, ""), 10) || 0, nb = parseInt((b.id || "").replace(/[^0-9]/g, ""), 10) || 0;
+      return nb - na;
+    });
+    var n = arr.length, prev = CTPA_CLOUD.lastVerifiedCount;
+    console.log("[CTPA] cloudLoadRows ← rows:", n);
+    if (prev !== null && prev >= 20 && n < Math.max(1, Math.floor(prev * 0.5))) {
+      CTPA_CLOUD.integrityAlert = "CRITICAL: cloud record count dropped from " + prev + " to " + n + ". Cloud writes are locked pending manual review.";
+      ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE + " integrity check", status: 200, code: "INTEGRITY_DROP", message: CTPA_CLOUD.integrityAlert });
+      return { data: arr };
+    }
+    if(n === 0){
+      /* a populated production table returning 0 rows is an RLS/table fault,
+         never a verified empty dataset — keep writes locked */
+      ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 200, code: "EMPTY_ROWS", message: "0 rows returned — treated as unverified" });
+      return { data: arr };
+    }
+    CTPA_CLOUD.integrityAlert = null;
+    ctpaCloudOk(n);
+    return { data: arr };
+  }).catch(function(e){
+    var msg = (e && e.message) || "network failure";
+    ctpaCloudFail(/timeout|abort/i.test(msg) ? "TIMEOUT" : "NETWORK_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 0, code: "FETCH_FAILED", message: msg });
+    return null;
+  });
+}
+function cloudLoadBlob(){
   if(!cloudOn()) return Promise.resolve(null);
   /* NOTE: updated_at does NOT exist in production ctpa_state — select only 'data' */
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data";
@@ -1292,8 +1365,21 @@ var __ctpaObsSigCache = null;   /* id -> content signature; null until first syn
 /* fast, stable string signature of the stripped observation object — used to
    detect ANY content change, including edits that do not bump rev (e.g. a
    rejectedBy field added in place, or a photo url refreshed on the reference). */
+/* canonical (sorted-key) serialisation: PostgREST returns jsonb with its own
+   key order, local objects keep insertion order — a plain stringify would
+   report every row as changed. */
+function ctpaCanon(v){
+  if(v === null || typeof v !== "object") return JSON.stringify(v);
+  if(Array.isArray(v)) return "[" + v.map(ctpaCanon).join(",") + "]";
+  var keys = Object.keys(v).sort(), parts = [];
+  for(var i = 0; i < keys.length; i++){
+    if(keys[i] === "__sig" || v[keys[i]] === undefined) continue;
+    parts.push(JSON.stringify(keys[i]) + ":" + ctpaCanon(v[keys[i]]));
+  }
+  return "{" + parts.join(",") + "}";
+}
 function ctpaObsSig(o){
-  try { return JSON.stringify(o); } catch(_){ return String((o && o.rev) || Math.random()); }
+  try { return ctpaCanon(o); } catch(_){ return String((o && o.rev) || Math.random()); }
 }
 function ctpaDualWriteObs(finalArr, delSet){
   if(!cloudOn()) return;
@@ -1330,6 +1416,66 @@ function ctpaDualWriteObs(finalArr, delSet){
         .then(function(){ if(__ctpaObsSigCache) delete __ctpaObsSigCache[id]; }).catch(function(){});
     });
   } catch(e){ console.warn("[CTPA] dual-write skipped:", e && e.message); }
+}
+/* ── Phase 3 PRIMARY write (rows mode): upsert only rows whose content differs
+   from the pre-read, delete tombstones. AWAITED — this is the real save. ── */
+function ctpaRowsWrite(merged, cloudById, delSet){
+  var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CTPA_ROWS_TABLE;
+  var stripped = stripPhotos(merged || []);
+  var changed = stripped.filter(function(o){
+    if(!o || !o.id) return false;
+    var c = cloudById && cloudById[o.id];
+    return !c || ctpaObsSig(o) !== ctpaObsSig(stripPhotos([c])[0]);
+  });
+  var delIds = Object.keys(delSet || {});
+  console.log("[CTPA] rowsWrite → changed rows:", changed.length, "| deletes:", delIds.length, "| of", stripped.length);
+  var chunks = []; for(var i = 0; i < changed.length; i += 400) chunks.push(changed.slice(i, i + 400));
+  var chain = Promise.resolve(true);
+  chunks.forEach(function(chunk){
+    chain = chain.then(function(ok){
+      if(!ok) return false;
+      var rows = chunk.map(function(o){ return { id: o.id, site: "bkk22", obs: o, rev: (o.rev || 0) }; });
+      return fetch(base + "?on_conflict=id", { method: "POST",
+        headers: Object.assign({}, cloudHeaders(), { "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
+        body: JSON.stringify(rows), cache: "no-store" })
+      .then(function(r){
+        if(r.ok) return true;
+        return r.text().then(function(t){ __lastCloudSaveErr = "HTTP " + r.status + " | " + String(t).slice(0, 200); console.error("[CTPA] rowsWrite failed:", __lastCloudSaveErr); return false; });
+      });
+    });
+  });
+  delIds.forEach(function(id){
+    chain = chain.then(function(ok){
+      if(!ok) return false;
+      return fetch(base + "?id=eq." + encodeURIComponent(id), { method: "DELETE", headers: cloudHeaders(), cache: "no-store" })
+        .then(function(r){ return r.ok || r.status === 404; });
+    });
+  });
+  return chain.then(function(ok){ if(ok) __lastCloudSaveErr = ""; return ok; })
+    .catch(function(e){ __lastCloudSaveErr = "Network error: " + ((e && e.message) || "unknown"); console.error("[CTPA] rowsWrite NETWORK ERROR:", e); return false; });
+}
+/* ── Phase 3 rollback copy: keep ctpa_state current, at most every 120 s,
+   never blocking and never surfacing its own errors to the user. ── */
+var __ctpaBlobMirrorAt = 0, __ctpaBlobMirrorPending = null, __ctpaBlobMirrorTimer = null;
+function ctpaBlobMirror(merged){
+  __ctpaBlobMirrorPending = merged;
+  function flush(){
+    var arr = __ctpaBlobMirrorPending; __ctpaBlobMirrorPending = null;
+    if(!arr) return;
+    __ctpaBlobMirrorAt = Date.now();
+    var before = __lastCloudSaveErr;
+    try {
+      cloudSave(arr).then(function(ok){
+        if(!ok) __lastCloudSaveErr = before;   /* mirror failures must not raise the sync banner */
+        console.log("[CTPA] blob mirror", ok ? "ok" : "failed (non-blocking)", "|", arr.length, "obs");
+      }).catch(function(){ __lastCloudSaveErr = before; });
+    } catch(_){}
+  }
+  var wait = 120000 - (Date.now() - __ctpaBlobMirrorAt);
+  if(wait <= 0){ flush(); return; }
+  if(!__ctpaBlobMirrorTimer){
+    __ctpaBlobMirrorTimer = setTimeout(function(){ __ctpaBlobMirrorTimer = null; flush(); }, wait);
+  }
 }
 /* cloudMergeSave: read current cloud data → merge localArr into it → write back.
    Prevents one device from overwriting observations added by other devices.
@@ -1410,10 +1556,16 @@ function _cloudMergeSaveInner(localArr, deletedIds){
       console.error("[CTPA][guard] pre-write validation FAILED —", _v.reason);
       return { ok: false, aborted: true, merged: localArr };
     }
-    return cloudSave(merged).then(function(ok){
+    var primaryWrite = CTPA_ROWS_PRIMARY ? ctpaRowsWrite(merged, cloudById, delSet) : cloudSave(merged);
+    return primaryWrite.then(function(ok){
       if(!ok) return { ok: false, merged: merged };
-      /* Phase 2: mirror the successful write into ctpa_observations (non-blocking) */
-      try { ctpaDualWriteObs(merged, delSet); } catch(_){}
+      if(CTPA_ROWS_PRIMARY){
+        /* Phase 3: rows are the source of truth — keep the blob as a throttled rollback copy */
+        try { ctpaBlobMirror(merged); } catch(_){}
+      } else {
+        /* Phase 2: mirror the successful blob write into ctpa_observations (non-blocking) */
+        try { ctpaDualWriteObs(merged, delSet); } catch(_){}
+      }
       /* READ-BACK VERIFICATION: re-read the row and confirm the most recently edited
          record actually landed with its rev. Success is only reported after Supabase
          holds the submitted values; otherwise ok:false so the UI shows a save error
@@ -1421,6 +1573,20 @@ function _cloudMergeSaveInner(localArr, deletedIds){
       var newest = null;
       localArr.forEach(function(l){ if(l && l.id && (l.rev || 0) > ((newest && newest.rev) || 0)) newest = l; });
       if(!newest) return { ok: true, merged: merged };   /* nothing rev-stamped to verify */
+      if(CTPA_ROWS_PRIMARY){
+        /* rows mode: verify with a single-row GET (bytes, not megabytes) */
+        var vu = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CTPA_ROWS_TABLE + "?id=eq." + encodeURIComponent(newest.id) + "&select=rev";
+        return fetch(vu, { headers: cloudHeaders(), cache: "no-store" })
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(rows){
+            var got = rows && rows[0];
+            var verified = !!got && (got.rev || 0) >= (newest.rev || 0);
+            console.log("[CTPA][verify] rows read-back", newest.id, "| submitted rev:", newest.rev, "| cloud rev:", got ? got.rev : "(missing)", "| verified:", verified);
+            if(!verified){ __lastCloudSaveErr = "Verification failed — " + newest.id + " did not persist with the submitted values. Tap ↻ Sync to retry."; }
+            return { ok: verified, merged: merged };
+          })
+          .catch(function(){ __lastCloudSaveErr = "Verification failed — could not confirm " + newest.id + ". Tap ↻ Sync to retry."; return { ok: false, merged: merged }; });
+      }
       return cloudLoad().then(function(row2){
         var arr2 = (row2 && Array.isArray(row2.data)) ? row2.data : [];
         var got = null;
