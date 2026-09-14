@@ -1108,7 +1108,7 @@ function ctpaReadWithRetry(fn, delays){
                                contention on the 3.4 MB blob); ctpa_state is
                                kept as a throttled, non-blocking rollback copy.
    ROLLBACK = set the flag back to false. No data path is destructive. */
-var CTPA_ROWS_PRIMARY = false;
+var CTPA_ROWS_PRIMARY = true;   /* SWITCHED ON 2026-09-14 15:5x ICT (option B, after DB restart) — rollback: set false */
 var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 500;
 function cloudLoad(){ return CTPA_ROWS_PRIMARY ? cloudLoadRows() : cloudLoadBlob(); }
 function cloudLoadRows(){
