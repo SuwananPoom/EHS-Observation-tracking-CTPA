@@ -1110,6 +1110,29 @@ function ctpaReadWithRetry(fn, delays){
    ROLLBACK = set the flag back to false. No data path is destructive. */
 var CTPA_ROWS_PRIMARY = true;   /* SWITCHED ON 2026-09-14 15:5x ICT (option B, after DB restart) — rollback: set false */
 var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 500;
+/* ── fetch with a hard timeout (2026-09-15) ──────────────────────────────────
+   Root cause of the "Cloud: Checking… / Last Read: Never" stuck tab: a cloud
+   request whose socket died silently (DB wedge, laptop sleep/wake) never
+   settled, and the single-flight pull guard then joined every later pull —
+   including manual Sync — to that dead promise forever. Every cloud request
+   now aborts after a bounded time and rejects with an Error whose message
+   contains "timeout", which the existing catch paths already classify as
+   TIMEOUT (writes stay locked until a verified read succeeds).
+   Timeout comes from the 3rd arg or opts.timeoutMs; default 45 s. */
+function ctpaFetch(url, opts, ms){
+  var o = Object.assign({}, opts || {});
+  var limit = ms || o.timeoutMs || 45000;
+  delete o.timeoutMs;
+  var ctrl = (typeof AbortController === "function") ? new AbortController() : null;
+  if(ctrl) o.signal = ctrl.signal;
+  var timer = setTimeout(function(){ try { if(ctrl) ctrl.abort(); } catch(_){} }, limit);
+  return fetch(url, o).then(function(r){ clearTimeout(timer); return r; }, function(e){
+    clearTimeout(timer);
+    if(e && (e.name === "AbortError" || /abort/i.test(String(e && e.message))))
+      throw new Error("timeout after " + limit + "ms: " + String(url).replace(CLOUD.url, "<supabase>"));
+    throw e;
+  });
+}
 function cloudLoad(){ return CTPA_ROWS_PRIMARY ? cloudLoadRows() : cloudLoadBlob(); }
 function cloudLoadRows(){
   if(!cloudOn()) return Promise.resolve(null);
@@ -1122,7 +1145,7 @@ function cloudLoadRows(){
   }
   function page(offset){
     var u = base + "?site=eq.bkk22&select=obs&order=id.asc&limit=" + CTPA_ROWS_PAGE + "&offset=" + offset;
-    return fetch(u, { headers: cloudHeaders(), cache: "no-store" }).then(function(r){
+    return ctpaFetch(u, { headers: cloudHeaders(), cache: "no-store" }, 45000).then(function(r){
       if(!r.ok){
         return r.text().then(function(t){
           var parsed; try { parsed = JSON.parse(t); } catch(_){ parsed = t; }
@@ -1178,7 +1201,7 @@ function cloudLoadBlob(){
   /* NOTE: updated_at does NOT exist in production ctpa_state — select only 'data' */
   var u = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CLOUD.table + "?id=eq." + CLOUD.row + "&select=data";
   console.log("[CTPA] cloudLoad → GET", u.replace(CLOUD.url, "<supabase>"));
-  return fetch(u, { headers: cloudHeaders(), cache: "no-store" })
+  return ctpaFetch(u, { headers: cloudHeaders(), cache: "no-store" }, 45000)
     .then(function(r){
       console.log("[CTPA] cloudLoad ← HTTP", r.status, r.statusText);
       if(!r.ok){
@@ -1318,7 +1341,8 @@ function cloudSave(arr){
     var code = p && p.code ? " | code: " + p.code : "";
     return "HTTP " + status + code + " | " + msg + hint;
   }
-  return fetch(patchUrl, {
+  return ctpaFetch(patchUrl, {
+    timeoutMs: 60000,
     method: "PATCH",
     headers: Object.assign({ "Prefer": "return=minimal" }, cloudHeaders()),
     body: JSON.stringify(payload),
@@ -1331,7 +1355,8 @@ function cloudSave(arr){
       console.error("[CTPA] cloudSave PATCH failed:", patchErr);
       /* PATCH failed — try POST upsert as fallback (row may not exist yet) */
       var upsertUrl = base + "?on_conflict=id";
-      return fetch(upsertUrl, {
+      return ctpaFetch(upsertUrl, {
+        timeoutMs: 60000,
         method: "POST",
         headers: Object.assign({ "Prefer": "resolution=merge-duplicates,return=minimal" }, cloudHeaders()),
         body: JSON.stringify([{ id: CLOUD.row, data: arr }]),
@@ -1435,7 +1460,7 @@ function ctpaRowsWrite(merged, cloudById, delSet){
     chain = chain.then(function(ok){
       if(!ok) return false;
       var rows = chunk.map(function(o){ return { id: o.id, site: "bkk22", obs: o, rev: (o.rev || 0) }; });
-      return fetch(base + "?on_conflict=id", { method: "POST",
+      return ctpaFetch(base + "?on_conflict=id", { timeoutMs: 60000, method: "POST",
         headers: Object.assign({}, cloudHeaders(), { "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
         body: JSON.stringify(rows), cache: "no-store" })
       .then(function(r){
@@ -1447,7 +1472,7 @@ function ctpaRowsWrite(merged, cloudById, delSet){
   delIds.forEach(function(id){
     chain = chain.then(function(ok){
       if(!ok) return false;
-      return fetch(base + "?id=eq." + encodeURIComponent(id), { method: "DELETE", headers: cloudHeaders(), cache: "no-store" })
+      return ctpaFetch(base + "?id=eq." + encodeURIComponent(id), { method: "DELETE", headers: cloudHeaders(), cache: "no-store" }, 20000)
         .then(function(r){ return r.ok || r.status === 404; });
     });
   });
@@ -1576,7 +1601,7 @@ function _cloudMergeSaveInner(localArr, deletedIds){
       if(CTPA_ROWS_PRIMARY){
         /* rows mode: verify with a single-row GET (bytes, not megabytes) */
         var vu = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CTPA_ROWS_TABLE + "?id=eq." + encodeURIComponent(newest.id) + "&select=rev";
-        return fetch(vu, { headers: cloudHeaders(), cache: "no-store" })
+        return ctpaFetch(vu, { headers: cloudHeaders(), cache: "no-store" }, 20000)
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(rows){
             var got = rows && rows[0];
@@ -7510,21 +7535,33 @@ function App(_refApp) {
        realtime change, post-refresh reload) bypasses the throttle but still
        joins an in-flight read instead of starting a second one.
        READ-side only — no write path, no data, no photo is touched. */
-    var _pullInFlight = null, _lastPullAt = 0, PULL_MIN_GAP = 8000;
+    var _pullInFlight = null, _lastPullAt = 0, PULL_MIN_GAP = 8000, _pullStartedAt = 0, PULL_STUCK_MS = 90000;
     var pull = function(opts){
       var isForcePull = opts && opts.force;
       if(!cloudOn()) return Promise.resolve(false);
       if(_pullInFlight){
-        console.log("[CTPA] pull(): joined the read already in flight (no duplicate request)");
-        return _pullInFlight;
+        /* WATCHDOG (2026-09-15): a read that has been "in flight" longer than
+           PULL_STUCK_MS is a dead socket, not a slow query — drop it so this
+           tab cannot stay on "Checking…" forever; a manual Sync also always
+           gets a fresh read once the stale one is past the watchdog. */
+        if((Date.now() - _pullStartedAt) > PULL_STUCK_MS){
+          console.warn("[CTPA] pull(): dropping a read stuck for " + Math.round((Date.now() - _pullStartedAt)/1000) + "s — starting a fresh one");
+          _pullInFlight = null;
+        } else {
+          console.log("[CTPA] pull(): joined the read already in flight (no duplicate request)");
+          return _pullInFlight;
+        }
       }
       if(!isForcePull && (Date.now() - _lastPullAt) < PULL_MIN_GAP){
         console.log("[CTPA] pull(): throttled — a read completed less than " + (PULL_MIN_GAP/1000) + "s ago");
         return Promise.resolve(false);
       }
-      _lastPullAt = Date.now();
-      var _done = function(v){ _pullInFlight = null; _lastPullAt = Date.now(); return v; };
-      return (_pullInFlight = _pullInner(opts).then(_done, function(e){ _done(); throw e; }));
+      _lastPullAt = Date.now(); _pullStartedAt = Date.now();
+      var _mine = null;
+      var _done = function(v){ if(_pullInFlight === _mine) _pullInFlight = null; _lastPullAt = Date.now(); return v; };
+      _mine = _pullInner(opts).then(_done, function(e){ _done(); throw e; });
+      _pullInFlight = _mine;
+      return _mine;
     };
     var _pullInner = function(opts){
       var isForcePull = opts && opts.force;
