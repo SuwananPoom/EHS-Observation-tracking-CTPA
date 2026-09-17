@@ -8150,12 +8150,21 @@ function App(_refApp) {
   };
   /* either approver rejects the closure (observation returns to OPEN; sign-offs cleared) */
   var rejectClosure = function rejectClosure(id, comment) {
-    if (!approver) { toast$("Approver code required", "err"); return; }
-    /* Rejection reason is REQUIRED */
-    if (!comment || !String(comment).trim()) { toast$("Rejection reason is required.", "err"); return; }
-    var who = ctpaUser() || roleLabel(approverRole);
     var target2 = obs.find(function(o){ return o.id === id; });
     var ap2 = target2 ? effAp(target2) : "";
+    /* UX (2026-09-17): every early exit now says WHY, bilingually — a silent
+       no-op made a user believe a rejection had been recorded when it had not.
+       Reject is only meaningful for a record that has been SUBMITTED for
+       closure (GC or PMC stage); an OPEN / IN_PROGRESS record has nothing to
+       reject — deleting its After photo already sends it back to the contractor. */
+    if (ap2 !== "PENDING REVIEW" && ap2 !== "PENDING PMC APPROVAL") {
+      toast$((id || "This record") + " ยังไม่ได้ถูกส่งขอปิดงาน (สถานะ: " + (ap2 || "OPEN") + ") จึง Reject ไม่ได้ — ผู้รับเหมาต้อง Submit for closure ก่อน / Cannot reject: not submitted for closure (status: " + (ap2 || "OPEN") + "). Nothing was changed.", "err");
+      return;
+    }
+    if (!approver) { toast$("ต้องปลดล็อกสิทธิ์ผู้อนุมัติก่อน (Unlock Approver) — ยังไม่มีการ Reject / Approver access required — nothing was changed.", "err"); return; }
+    /* Rejection reason is REQUIRED */
+    if (!comment || !String(comment).trim()) { toast$("ต้องระบุเหตุผลการ Reject — ยังไม่มีการเปลี่ยนแปลง กรุณากด Reject อีกครั้งแล้วใส่เหตุผล / Rejection reason is required — nothing was changed. Tap Reject again and enter a reason.", "err"); return; }
+    var who = ctpaUser() || roleLabel(approverRole);
     /* Stage-scoped authorization — GC stage: contractor's GC Manager/Admin;
        PMC stage: PMC Manager/Admin. */
     if (ap2 === "PENDING REVIEW" && !(canApproveGC() && canApproveGCFor(target2))) { toast$("Not authorized — GC-stage rejection requires the contractor's GC Manager or an Admin.", "err"); return; }
@@ -13072,7 +13081,14 @@ view === "detail" && det && /*#__PURE__*/React.createElement("div", {
             fontWeight: 700,
             cursor: hasAfterPhoto ? "pointer" : "not-allowed"
           }
-        }, "\uD83D\uDCE4 Submit for Closure"));
+        }, "\uD83D\uDCE4 Submit for Closure"),
+        /* UX (2026-09-17): tell approvers up front why there is no Reject here \u2014
+           this record has not been submitted for closure, so there is nothing
+           to reject yet. Purely informational; no data or workflow change. */
+        (typeof canApproveAny === "function" && canApproveAny()) ? /*#__PURE__*/React.createElement("div", {
+          style: { fontSize: 10.5, color: C.slateMid, background: "#F8FAFC", border: "1px solid #E2E8F0", borderRadius: 8, padding: "7px 10px", marginTop: 8, lineHeight: 1.6 }
+        }, "\u2139\uFE0F ", /*#__PURE__*/React.createElement("b", null, ap === "REJECTED" ? "Rejected \u2014 awaiting rework. " : "Not submitted for closure yet. "),
+           "Approve / Reject Closure \u0E08\u0E30\u0E43\u0E0A\u0E49\u0E44\u0E14\u0E49\u0E40\u0E21\u0E37\u0E48\u0E2D\u0E1C\u0E39\u0E49\u0E23\u0E31\u0E1A\u0E40\u0E2B\u0E21\u0E32\u0E01\u0E14 Submit for Closure (\u0E1E\u0E23\u0E49\u0E2D\u0E21\u0E23\u0E39\u0E1B After) \u0E41\u0E25\u0E49\u0E27 record \u0E08\u0E30\u0E40\u0E02\u0E49\u0E32\u0E2A\u0E16\u0E32\u0E19\u0E30 PENDING REVIEW / Approve or Reject becomes available once the contractor submits for closure with an After photo.") : null);
     } else if (ap === "PENDING REVIEW") {
       /* Stage 1: GC Manager must approve. PMC sees waiting message. */
       var isGC = approverRole === "CLIENT" || approverRole === "BOTH";
