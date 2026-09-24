@@ -7815,6 +7815,10 @@ function App(_refApp) {
          rejected records (status OPEN, approvalStatus REJECTED) are
          excluded there too (Issue #2). */
       if (fSt === "OPEN" && effAp(o) === "REJECTED") return false;
+      /* Keep the IN_PROGRESS filter aligned with the Dashboard In Progress card
+         (S.ip): records already in an approval stage belong to that stage. */
+      if (fSt === "IN_PROGRESS") { var _apIp = effAp(o);
+        if (_apIp === "REJECTED" || _apIp === "PENDING REVIEW" || _apIp === "PENDING PMC APPROVAL" || _apIp === "APPROVED CLOSED") return false; }
       if (fRi !== "ALL" && o.risk !== fRi) return false;
       if (fFl !== "ALL") { var _pz = parseZone(o.zone); if (_pz.floor !== fFl) return false; }
       if (fAr !== "ALL") { var _pz2 = parseZone(o.zone); if (_pz2.area !== fAr && _pz2.other !== fAr) return false; }
@@ -9111,15 +9115,11 @@ function App(_refApp) {
     v: odScoped.length,
     c: odScoped.length > 0 ? C.red : C.green,
     bg: odScoped.length > 0 ? C.redBg : "#fff",
-    /* UX (2026-09-24): show where the overdue records sit in the workflow so
-       "Overdue 11" next to "Open 3" is no longer a puzzle — the rest are
-       In Progress, which has no card of its own. Live breakdown of odScoped. */
-    s: odScoped.length === 0 ? "Needs action" : (function(){
-      var op = 0, ip = 0, oth = 0;
-      odScoped.forEach(function(o){ var a = effAp(o), st = effStatus(o);
-        if (st === "IN_PROGRESS") ip++; else if (st === "OPEN" || a === "REJECTED") op++; else oth++; });
-      return op + " Open · " + ip + " In Progress" + (oth ? " · " + oth + " Pending" : "");
-    })()
+    /* UX (2026-09-24, option A): one relation instead of a breakdown —
+       "11 of 13 not closed" reads at a glance; the per-status counts live on
+       their own cards (Open / In Progress / Pending / Rejected). */
+    s: (function(){ var nc = dsObs.filter(function(o){ return effStatus(o) !== "CLOSED"; }).length;
+      return odScoped.length === 0 ? "Needs action" : "of " + nc + " not closed"; })()
   }, {
     l: "Serious Open",
     /* Exact card equivalent: risk SERIOUS + effStatus not CLOSED. noScope: this
@@ -9173,7 +9173,8 @@ function App(_refApp) {
     bg: S.open > 0 ? C.redBg : "#fff",
     /* UX (2026-09-24): surface the In Progress backlog next to strict Open so
        the two not-closed buckets read together (In Progress has no card). */
-    s: S.ip > 0 ? "Open observations · +" + S.ip + " In Progress" : "Open observations"
+    s: (function(){ var nc = dsObs.filter(function(o){ return effStatus(o) !== "CLOSED"; }).length;
+      return nc > S.open ? "of " + nc + " not closed" : "Open observations"; })()
   }, {
     l: "Pending Verify",
     nav: { st: "PENDING_GC" },
@@ -9202,6 +9203,16 @@ function App(_refApp) {
     c: S.apRejected > 0 ? C.red : C.green,
     bg: S.apRejected > 0 ? C.redBg : "#fff",
     s: "Re-work required"
+  }, {
+    /* UX (2026-09-24, option B): In Progress gets its own card so every
+       not-closed status is visible and the row sums to the outstanding total.
+       Same mutually-exclusive bucket as the Closure chart's In Progress slice. */
+    l: "In Progress",
+    nav: { st: "IN_PROGRESS" },
+    v: S.ip,
+    c: S.ip > 0 ? C.amber : C.green,
+    bg: S.ip > 0 ? C.amberBg : "#fff",
+    s: "Corrective action underway"
   }, {
     l: "OBS / 250 WH",
     v: mh > 0 ? (S.n / mh * 250).toFixed(2) : "N/A",
