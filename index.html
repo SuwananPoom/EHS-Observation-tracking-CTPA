@@ -3036,12 +3036,27 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     {h:"GC Approved By",w:16},
     {h:"PMC Approved By",w:16},
     {h:"Hazard Description", w:48},
-    {h:"Corrective Action",  w:48},
-    {h:"Before Photo",  w:22},
-    {h:"After Photo",   w:22}
+    {h:"Corrective Action",  w:48}
   ];
-  var CI_RISK=10, CI_STATUS=11, CI_DESC=18, CI_RECT=19, CI_BEFORE=20, CI_AFTER=21; /* 1-based */
-  var NPHOTO_COLS = 2;
+  /* ── ALL photos (2026-09-25): one column per uploaded Before/After photo.
+     Column count is dynamic — sized to the largest gallery in the export so
+     "Before Photo 1..N" / "After Photo 1..M" line up for every row; every
+     image stays tied to its own OBS ID row. ── */
+  var PHOTO_COL_W = 24, PHOTO_MAX_W = 160, PHOTO_MAX_H = 120;
+  function allSrcs(arr){
+    var out = [];
+    (arr || []).forEach(function(p){ var sx = photoSrc(p); if(sx) out.push(sx); });
+    return out;
+  }
+  var maxB = 1, maxA = 1;
+  rows.forEach(function(o){
+    o.__bSrcs = allSrcs(o.pb); o.__aSrcs = allSrcs(o.pa);
+    if(o.__bSrcs.length > maxB) maxB = o.__bSrcs.length;
+    if(o.__aSrcs.length > maxA) maxA = o.__aSrcs.length;
+  });
+  for(var bi = 1; bi <= maxB; bi++) COLDEF.push({ h: "Before Photo " + bi, w: PHOTO_COL_W });
+  for(var ai = 1; ai <= maxA; ai++) COLDEF.push({ h: "After Photo " + ai,  w: PHOTO_COL_W });
+  var CI_RISK=10, CI_STATUS=11, CI_DESC=18, CI_RECT=19, CI_BEFORE=20, CI_AFTER=20+maxB; /* 1-based */
 
   function obsRowVals(o){
     var pz = parseZone(o.zone || "");
@@ -3060,13 +3075,18 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
          structure is unchanged; the cell is simply blank for such records. */
       v(o.clientApprovedRole ? fmtApprover(o.clientApprovedBy) : ""),
       v(o.lpApprovedRole ? fmtApprover(o.lpApprovedBy) : ""),
-      v(o.desc), v(o.rect),
-      "", ""  /* photo cells filled with images */
-    ];
+      v(o.desc), v(o.rect)
+    ].concat((function(){
+      /* photo cells: images are anchored over them; text only when empty */
+      var cells = [];
+      for(var i = 0; i < maxB; i++) cells.push(i === 0 && o.__bSrcs.length === 0 ? "No Evidence" : "");
+      for(var j = 0; j < maxA; j++) cells.push(j === 0 && o.__aSrcs.length === 0 ? "No Evidence" : "");
+      return cells;
+    })());
   }
 
   /* ── load + downscale one image to a small JPEG (reduces file size) ── */
-  var MAXDIM = 800, JPEG_Q = 0.85;
+  var MAXDIM = 1000, JPEG_Q = 0.85;   /* readable when zoomed, still compact */
   function loadScaled(src){
     return new Promise(function(resolve){
       if(!src){ resolve(null); return; }
@@ -3093,20 +3113,11 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     });
   }
 
-  /* ── resolve first before/after photo source per obs ── */
-  function firstSrc(arr){
-    if(!arr || !arr.length) return null;
-    for(var i=0;i<arr.length;i++){ var s=photoSrc(arr[i]); if(s) return s; }
-    return null;
-  }
-
-  /* ── gather + scale all photos up front (dedupe by src) ── */
+  /* ── gather + scale ALL photos up front (dedupe by src) ── */
   var jobs = [];
   rows.forEach(function(o){
-    o.__bSrc = firstSrc(o.pb);
-    o.__aSrc = firstSrc(o.pa);
-    if(o.__bSrc) jobs.push(o.__bSrc);
-    if(o.__aSrc) jobs.push(o.__aSrc);
+    o.__bSrcs.forEach(function(sx){ jobs.push(sx); });
+    o.__aSrcs.forEach(function(sx){ jobs.push(sx); });
   });
   var uniq = jobs.filter(function(s,i){ return jobs.indexOf(s)===i; });
   var totalJobs = uniq.length;
@@ -3164,8 +3175,14 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
         var rowNum = i + 2;
         var row = ws.getRow(rowNum);
         row.values = vals;
-        var hasPhoto = !!(o.__bSrc || o.__aSrc);
-        row.height = hasPhoto ? 74 : 18;
+        /* row height follows the tallest embedded photo in this row (points ≈ px × 0.75) */
+        var tallest = 0;
+        o.__bSrcs.concat(o.__aSrcs).forEach(function(sx){
+          var m = imgCache[sx]; if(!m) return;
+          var s2 = Math.min(PHOTO_MAX_W / m.w, PHOTO_MAX_H / m.h, 1);
+          tallest = Math.max(tallest, Math.round(m.h * s2));
+        });
+        row.height = tallest > 0 ? Math.ceil(tallest * 0.75) + 8 : 18;
         var even = (i % 2 === 0);
         var baseBg = even ? C.even : C.odd;
         var riskLabel = vals[CI_RISK-1], statLabel = vals[CI_STATUS-1];
@@ -3186,7 +3203,9 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
             cell.fill = fill(baseBg);
             cell.font = { color:{argb:C.txt}, name:"Calibri", size:10 };
             var wrap = (col===CI_DESC || col===CI_RECT);
-            cell.alignment = { vertical:"top", wrapText:wrap };
+            var isPhotoCol = col >= CI_BEFORE;
+            cell.alignment = isPhotoCol ? { vertical:"middle", horizontal:"center" } : { vertical:"top", wrapText:wrap };
+            if(isPhotoCol && cell.value === "No Evidence") cell.font = { italic:true, color:{argb:"FF94A3B8"}, name:"Calibri", size:10 };
           }
         });
 
@@ -3195,17 +3214,17 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
           if(!src) return;
           var id = imgId[src]; if(id===undefined) return;
           var meta = imgCache[src];
-          var maxW = 140, maxH = 92;
+          var maxW = PHOTO_MAX_W, maxH = PHOTO_MAX_H;
           var iw = meta ? meta.w : maxW, ih = meta ? meta.h : maxH;
-          var sc = Math.min(maxW/iw, maxH/ih, 1);
+          var sc = Math.min(maxW/iw, maxH/ih, 1);   /* proportional fit — never cropped or stretched */
           ws.addImage(id, {
             tl: { col: colIdx0 + 0.1, row: (rowNum-1) + 0.08 },
             ext: { width: Math.round(iw*sc), height: Math.round(ih*sc) },
             editAs: "oneCell"
           });
         }
-        place(o.__bSrc, CI_BEFORE-1);
-        place(o.__aSrc, CI_AFTER-1);
+        o.__bSrcs.forEach(function(sx, k){ place(sx, CI_BEFORE-1 + k); });
+        o.__aSrcs.forEach(function(sx, k){ place(sx, CI_AFTER-1 + k); });
       });
 
       ws.autoFilter = { from:{row:1,column:1}, to:{row:1,column:COLDEF.length} };
@@ -3271,7 +3290,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
       a.download = fileName;
       document.body.appendChild(a); a.click();
       setTimeout(function(){ URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 1500);
-      console.log("[CTPA] exportExcel: wrote", fileName, "| rows:", rows.length, "| images:", Object.keys(imgId).length);
+      console.log("[CTPA] exportExcel: wrote", fileName, "| rows:", rows.length, "| images:", Object.keys(imgId).length, "| photo cols:", maxB, "before +", maxA, "after");
     });
   }).catch(function(e){
     var errMsg = "Excel export failed: " + (e && e.message ? e.message : String(e));
