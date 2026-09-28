@@ -3905,8 +3905,26 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
     frect(photoX,20,photoW,H-22,"#F8FAFC");
     draw("#E2E8F0"); doc.rect(photoX,20,photoW,H-22);
 
-    var befSrc2=o.pb&&o.pb.length&&typeof o.pb[0].src==="string"&&o.pb[0].src.length>32?o.pb[0].src:null;
-    var aftSrc2=o.pa&&o.pa.length&&typeof o.pa[0].src==="string"&&o.pa[0].src.length>32?o.pa[0].src:null;
+    /* ALL photos per side (2026-09-28): every uploaded Before/After image with
+       a usable src is laid out as a grid inside the same zone — 1 fills it,
+       2 sit side by side, 3–4 form 2×2, 5–6 form 3×2, '+n more' beyond 6.
+       Each cell is contain-fit (aspect preserved, never cropped). */
+    function pdfSrcs(arr){ var out=[]; (arr||[]).forEach(function(ph){ if(ph && typeof ph.src==="string" && ph.src.length>32) out.push(ph); }); return out; }
+    var befList=pdfSrcs(o.pb), aftList=pdfSrcs(o.pa);
+    var befSrc2=befList.length?befList[0].src:null;
+    var aftSrc2=aftList.length?aftList[0].src:null;
+    function pdfGrid(list, x0, y0, Wb, Hb){
+      var n=Math.min(list.length,6), cols=n<=1?1:n<=4?2:3, rowsN=Math.ceil(n/cols);
+      var gap=1.5, cw=(Wb-gap*(cols-1))/cols, ch=(Hb-gap*(rowsN-1))/rowsN;
+      for(var i=0;i<n;i++){
+        var ph=list[i], cx=x0+(i%cols)*(cw+gap), cy=y0+Math.floor(i/cols)*(ch+gap);
+        try{
+          var ty=ph.src.indexOf("png")>-1?"PNG":"JPEG", ft=containFit(ph._nw, ph._nh, cw, ch);
+          doc.addImage(ph.src,ty,cx+ft.ox,cy+ft.oy,ft.w,ft.h,undefined,"NONE");
+        }catch(e){}
+      }
+      if(list.length>6) txt("+"+(list.length-6)+" more", x0+Wb-1, y0+Hb-1, { size:6, color:"#64748B", align:"right" });
+    }
     var befMeta2=o.pb&&o.pb.length>0;
     var aftMeta2=o.pa&&o.pa.length>0;
 
@@ -3914,11 +3932,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
       frect(photoX+2,22,photoW-4,6,"#1E3A8A");
       txt("BEFORE", photoX+photoW/2, 27, { size:8, bold:true, color:"#FFFFFF", align:"center" });
       /* contain-fit inside the box to preserve original aspect ratio; compression NONE keeps full quality */
-      try {
-        var bt=befSrc2.indexOf("png")>-1?"PNG":"JPEG";
-        var bpb=o.pb[0], bf=containFit(bpb._nw, bpb._nh, photoW-4, photoH);
-        doc.addImage(befSrc2,bt,photoX+2+bf.ox,29+bf.oy,bf.w,bf.h,undefined,"NONE");
-      } catch(e){}
+      pdfGrid(befList, photoX+2, 29, photoW-4, photoH);
     } else if (befMeta2) {
       frect(photoX+2,22,photoW-4,photoH+7,"#F8FAFC");
       txt("Before photo on", photoX+photoW/2, 22+photoH/2-4, { size:7, color:"#94A3B8", align:"center" });
@@ -3933,11 +3947,7 @@ function _doGeneratePDF(rows, dateFrom, dateTo) {
       frect(photoX+2,afy,photoW-4,6,"#00CC79");
       txt("AFTER", photoX+photoW/2, afy+5, { size:8, bold:true, color:"#FFFFFF", align:"center" });
       /* contain-fit inside the box to preserve original aspect ratio; compression NONE keeps full quality */
-      try {
-        var at2=aftSrc2.indexOf("png")>-1?"PNG":"JPEG";
-        var apa=o.pa[0], af2=containFit(apa._nw, apa._nh, photoW-4, photoH-3);
-        doc.addImage(aftSrc2,at2,photoX+2+af2.ox,afy+7+af2.oy,af2.w,af2.h,undefined,"NONE");
-      } catch(e){}
+      pdfGrid(aftList, photoX+2, afy+7, photoW-4, photoH-3);
     } else if (aftMeta2) {
       frect(photoX+2,afy,photoW-4,photoH+5,"#F8FAFC");
       txt("After photo on", photoX+photoW/2, afy+photoH/2-4, { size:7, color:"#94A3B8", align:"center" });
