@@ -3516,19 +3516,25 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
       ["Closed Date",      o.closed  || "—"],
       ["Closed By",        effStatus(o) === "CLOSED" ? (o.closedBy || "—") : "—"]
     ];
-    var detY = 0.82;
+    /* LAYOUT FIX (2026-09-28): 8 rows × 0.54in pushed the description box
+       below the footer (5.5in) and long text overflowed its boxes (default
+       middle-valign grows upward over the label). Rows are now 0.42in, the
+       description box is anchored above the footer, and every free-text box
+       is top-aligned with shrink-to-fit so it can never spill. */
+    var detY = 0.82, ROW_H = 0.42;
     fields.forEach(function(f, fi) {
-      var fy = detY + fi * 0.54;
-      if (fi % 2 === 0) sl.addShape(pptx.ShapeType.rect, { x:0.2, y:fy, w:5.55, h:0.51, fill:{ color:RPT_LIGHT } });
-      sl.addText(f[0] + ":", { x:0.3,  y:fy+0.09, w:1.65, h:0.34, fontSize:8, bold:true, color:RPT_GRAY, fontFace:"Arial" });
-      sl.addText(f[1],        { x:2.0,  y:fy+0.09, w:3.6,  h:0.34, fontSize:9,            color:RPT_TEXT, fontFace:"Arial" });
+      var fy = detY + fi * ROW_H;
+      if (fi % 2 === 0) sl.addShape(pptx.ShapeType.rect, { x:0.2, y:fy, w:5.55, h:ROW_H-0.02, fill:{ color:RPT_LIGHT } });
+      sl.addText(f[0] + ":", { x:0.3,  y:fy+0.05, w:1.65, h:0.32, fontSize:8, bold:true, color:RPT_GRAY, fontFace:"Arial", valign:"middle" });
+      sl.addText(f[1],        { x:2.0,  y:fy+0.05, w:3.6,  h:0.32, fontSize:9,            color:RPT_TEXT, fontFace:"Arial", valign:"middle", fit:"shrink" });
     });
 
-    /* description & corrective action boxes */
-    var descY = detY + fields.length * 0.54 + 0.04;
-    sl.addShape(pptx.ShapeType.rect, { x:0.2, y:descY,      w:5.55, h:0.85, fill:{ color:"EFF6FF" }, line:{ color:"BFDBFE", pt:1 } });
-    sl.addText("DESCRIPTION",        { x:0.3, y:descY+0.06, w:5.3,  h:0.22, fontSize:7, bold:true, color:"1E3A8A", fontFace:"Arial" });
-    sl.addText(o.desc || "—",        { x:0.3, y:descY+0.26, w:5.3,  h:0.55, fontSize:8.5, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+    /* description box: from the last row to just above the footer */
+    var descY = detY + fields.length * ROW_H + 0.06;
+    var descH = 5.42 - descY;
+    sl.addShape(pptx.ShapeType.rect, { x:0.2, y:descY,      w:5.55, h:descH, fill:{ color:"EFF6FF" }, line:{ color:"BFDBFE", pt:1 } });
+    sl.addText("DESCRIPTION",        { x:0.3, y:descY+0.04, w:5.3,  h:0.2, fontSize:7, bold:true, color:"1E3A8A", fontFace:"Arial", valign:"top" });
+    sl.addText(o.desc || "—",        { x:0.3, y:descY+0.24, w:5.3,  h:descH-0.28, fontSize:8.5, color:RPT_TEXT, wrap:true, fontFace:"Arial", valign:"top", fit:"shrink" });
 
     /* photos - right column */
     var photoX = 5.9;
@@ -3584,12 +3590,12 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
         sl.addShape(pptx.ShapeType.rect, { x:ax2, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
         sl.addText("No After Photo", { x:ax2, y:2.3, w:1.82, h:0.5, fontSize:8, color:"CBD5E1", align:"center", fontFace:"Arial" });
       }
-      sl.addText("CORRECTIVE ACTION", { x:photoX+0.1, y:4.33, w:3.7, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
-      sl.addText(o.rect || "—",        { x:photoX+0.1, y:4.62, w:3.7, h:0.8, fontSize:8, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+      sl.addText("CORRECTIVE ACTION", { x:photoX+0.1, y:4.3, w:3.7, h:0.22, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial", valign:"top" });
+      sl.addText(o.rect || "—",        { x:photoX+0.1, y:4.52, w:3.7, h:0.9, fontSize:8, color:RPT_TEXT, wrap:true, fontFace:"Arial", valign:"top", fit:"shrink" });
     } else {
       sl.addText("No Photos",          { x:photoX, y:1.85, w:3.9, h:0.5, fontSize:11, color:"CBD5E1", align:"center", fontFace:"Arial" });
       sl.addText("CORRECTIVE ACTION",  { x:photoX+0.15, y:2.55, w:3.6, h:0.28, fontSize:7, bold:true, color:RPT_GRAY, fontFace:"Arial" });
-      sl.addText(o.rect || "—",        { x:photoX+0.15, y:2.84, w:3.6, h:2.55, fontSize:9, color:RPT_TEXT, wrap:true, fontFace:"Arial" });
+      sl.addText(o.rect || "—",        { x:photoX+0.15, y:2.84, w:3.6, h:2.55, fontSize:9, color:RPT_TEXT, wrap:true, fontFace:"Arial", valign:"top", fit:"shrink" });
     }
 
     /* footer */
