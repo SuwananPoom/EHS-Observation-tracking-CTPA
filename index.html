@@ -3535,8 +3535,23 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
     sl.addShape(pptx.ShapeType.rect, { x:photoX, y:0.72, w:3.9, h:4.8, fill:{ color:RPT_LIGHT }, line:{ color:RPT_BORDER, pt:1 } });
     /* src is stripped from cloud payload to save bandwidth — only devices
        that originally uploaded the photo retain the base64 in localStorage */
-    var befSrc = o.pb && o.pb.length && typeof o.pb[0].src === "string" && o.pb[0].src.length > 32 ? o.pb[0].src : null;
-    var aftSrc = o.pa && o.pa.length && typeof o.pa[0].src === "string" && o.pa[0].src.length > 32 ? o.pa[0].src : null;
+    /* ALL photos per side (2026-09-28): every uploaded Before/After image with
+       a usable src is laid out as a grid inside the same 1.82" × 3.1" zone —
+       1 photo fills it, 2 stack, 3–4 form 2×2, 5–6 form 2×3 (proportional
+       fit, never cropped). Slide layout and all other elements are unchanged. */
+    function srcsOf(arr){ var out=[]; (arr||[]).forEach(function(p){ if(p && typeof p.src==="string" && p.src.length>32) out.push(p.src); }); return out; }
+    var befSrcs = srcsOf(o.pb), aftSrcs = srcsOf(o.pa);
+    var befSrc = befSrcs.length ? befSrcs[0] : null;
+    var aftSrc = aftSrcs.length ? aftSrcs[0] : null;
+    function placeGrid(list, x0, y0, W, H){
+      var n = Math.min(list.length, 6), cols = n <= 1 ? 1 : n === 2 ? 1 : 2, rowsN = Math.ceil(n / cols);
+      var gap = 0.06, cw = (W - gap*(cols-1)) / cols, ch = (H - gap*(rowsN-1)) / rowsN;
+      for(var i=0;i<n;i++){
+        var cx = x0 + (i % cols) * (cw + gap), cy = y0 + Math.floor(i / cols) * (ch + gap);
+        try { sl.addImage({ data:list[i], x:cx, y:cy, w:cw, h:ch, sizing:{ type:"contain", w:cw, h:ch } }); } catch(e) {}
+      }
+      if(list.length > 6) sl.addText("+" + (list.length-6) + " more", { x:x0, y:y0+H-0.22, w:W, h:0.22, fontSize:7, color:"64748B", align:"right", fontFace:"Arial" });
+    }
     var befMeta = o.pb && o.pb.length > 0;   /* photo recorded but src not local */
     var aftMeta = o.pa && o.pa.length > 0;
     var hasPhotos = befMeta || aftMeta;
@@ -3546,7 +3561,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
         sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fill:{ color:"1E3A8A" } });
         sl.addText("BEFORE", { x:photoX+0.1, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
         /* sizing:contain preserves the original aspect ratio (no stretching) and keeps the embedded full-resolution image */
-        try { sl.addImage({ data:befSrc, x:photoX+0.1, y:1.12, w:1.82, h:3.1, sizing:{ type:"contain", w:1.82, h:3.1 } }); } catch(e) {}
+        placeGrid(befSrcs, photoX+0.1, 1.12, 1.82, 3.1);
       } else if (befMeta) {
         sl.addShape(pptx.ShapeType.rect, { x:photoX+0.1, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
         sl.addText("Before photo\nuploaded on\nanother device", { x:photoX+0.1, y:2.1, w:1.82, h:0.8, fontSize:7, color:"94A3B8", align:"center", fontFace:"Arial" });
@@ -3559,7 +3574,7 @@ function _doGeneratePPT(rows, dateFrom, dateTo) {
         sl.addShape(pptx.ShapeType.rect, { x:ax, y:0.82, w:1.82, h:0.29, fill:{ color:G } });
         sl.addText("AFTER", { x:ax, y:0.82, w:1.82, h:0.29, fontSize:8, bold:true, color:"FFFFFF", align:"center", fontFace:"Arial" });
         /* sizing:contain preserves the original aspect ratio (no stretching) */
-        try { sl.addImage({ data:aftSrc, x:ax, y:1.12, w:1.82, h:3.1, sizing:{ type:"contain", w:1.82, h:3.1 } }); } catch(e) {}
+        placeGrid(aftSrcs, ax, 1.12, 1.82, 3.1);
       } else if (aftMeta) {
         var ax2b = befMeta ? photoX+2.05 : photoX+0.1;
         sl.addShape(pptx.ShapeType.rect, { x:ax2b, y:0.82, w:1.82, h:3.4, fill:{ color:"F1F5F9" } });
