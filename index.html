@@ -3010,6 +3010,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     serBg:"FFFEE2E2", serTx:"FFB91C1C", majBg:"FFFEF9C3", majTx:"FFB45309",
     minBg:"FFDCFCE7", minTx:"FF166534", openBg:"FFFFF7ED", openTx:"FFC2410C",
     closeBg:"FFF0FDF4", closeTx:"FF166534", pendBg:"FFEFF6FF", pendTx:"FF1D4ED8",
+    rejBg:"FFFEE2E2", rejTx:"FFB91C1C",
     even:"FFF8FAFC", odd:"FFFFFFFF", txt:"FF1E293B", white:"FFFFFFFF"
   };
   function fill(argb){ return {type:"pattern",pattern:"solid",fgColor:{argb:argb}}; }
@@ -3036,7 +3037,10 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     {h:"GC Approved By",w:16},
     {h:"PMC Approved By",w:16},
     {h:"Hazard Description", w:48},
-    {h:"Corrective Action",  w:48}
+    {h:"Corrective Action",  w:48},
+    /* 2026-09-29: rejection remark — reason, who rejected, stage and date.
+       Read straight from the record's existing rejection fields; export only. */
+    {h:"Rejection Remark",   w:40}
   ];
   /* ── ALL photos (2026-09-25): one column per uploaded Before/After photo.
      Column count is dynamic — sized to the largest gallery in the export so
@@ -3056,7 +3060,21 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
   });
   for(var bi = 1; bi <= maxB; bi++) COLDEF.push({ h: "Before Photo " + bi, w: PHOTO_COL_W });
   for(var ai = 1; ai <= maxA; ai++) COLDEF.push({ h: "After Photo " + ai,  w: PHOTO_COL_W });
-  var CI_RISK=10, CI_STATUS=11, CI_DESC=18, CI_RECT=19, CI_BEFORE=20, CI_AFTER=20+maxB; /* 1-based */
+  var CI_RISK=10, CI_STATUS=11, CI_DESC=18, CI_RECT=19, CI_REJ=20, CI_BEFORE=21, CI_AFTER=21+maxB; /* 1-based */
+  /* Status shown in the export: workflow status, except a rejected closure is
+     reported as "Rejected" (effAp) so it is not hidden inside "Open". */
+  function xlStatus(o){ return effAp(o) === "REJECTED" ? "Rejected" : v((STATUS[effStatus(o)]||{}).label); }
+  function xlRejectRemark(o){
+    if(effAp(o) !== "REJECTED") return "";
+    var parts = [];
+    if(o.approvalComment) parts.push(String(o.approvalComment).trim());
+    var meta = [];
+    if(o.rejectedBy) meta.push("by " + o.rejectedBy);
+    if(o.rejectedStage) meta.push("at " + o.rejectedStage);
+    if(o.rejectedDate) meta.push(o.rejectedDate);
+    if(meta.length) parts.push("(" + meta.join(" · ") + ")");
+    return parts.length ? parts.join(" ") : "Rejected — no reason recorded";
+  }
 
   function obsRowVals(o){
     var pz = parseZone(o.zone || "");
@@ -3067,7 +3085,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
       v(pz.area === "Other" ? pz.other : pz.area),
       v(o.cat), v(o.fc),
       v((RISK[o.risk]||{}).label),
-      v((STATUS[effStatus(o)]||{}).label),
+      xlStatus(o),
       v(o.by), fmtD(o.due), fmtD(o.closed), v(o.closedBy),
       /* Export shows an approver ONLY when a real sign-off ROLE is on record
          (set solely by the GC/PMC Approve buttons). A backfilled/legacy closer
@@ -3075,7 +3093,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
          structure is unchanged; the cell is simply blank for such records. */
       v(o.clientApprovedRole ? fmtApprover(o.clientApprovedBy) : ""),
       v(o.lpApprovedRole ? fmtApprover(o.lpApprovedBy) : ""),
-      v(o.desc), v(o.rect)
+      v(o.desc), v(o.rect), xlRejectRemark(o)
     ].concat((function(){
       /* photo cells: images are anchored over them; text only when empty */
       var cells = [];
@@ -3195,14 +3213,15 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
             cell.fill = fill(rb); cell.font = { bold:true, color:{argb:rt}, name:"Calibri", size:10 };
             cell.alignment = { horizontal:"center", vertical:"middle" };
           } else if(col === CI_STATUS){
-            var sb = statLabel==="Closed"?C.closeBg : statLabel==="Open"?C.openBg : C.pendBg;
-            var st = statLabel==="Closed"?C.closeTx : statLabel==="Open"?C.openTx : C.pendTx;
+            var sb = statLabel==="Closed"?C.closeBg : statLabel==="Rejected"?C.rejBg : statLabel==="Open"?C.openBg : C.pendBg;
+            var st = statLabel==="Closed"?C.closeTx : statLabel==="Rejected"?C.rejTx : statLabel==="Open"?C.openTx : C.pendTx;
             cell.fill = fill(sb); cell.font = { color:{argb:st}, name:"Calibri", size:10, bold:true };
             cell.alignment = { horizontal:"center", vertical:"middle" };
           } else {
             cell.fill = fill(baseBg);
             cell.font = { color:{argb:C.txt}, name:"Calibri", size:10 };
-            var wrap = (col===CI_DESC || col===CI_RECT);
+            var wrap = (col===CI_DESC || col===CI_RECT || col===CI_REJ);
+            if(col===CI_REJ && cell.value){ cell.font = { color:{argb:C.rejTx}, name:"Calibri", size:10 }; }
             var isPhotoCol = col >= CI_BEFORE;
             cell.alignment = isPhotoCol ? { vertical:"middle", horizontal:"center" } : { vertical:"top", wrapText:wrap };
             if(isPhotoCol && cell.value === "No Evidence") cell.font = { italic:true, color:{argb:"FF94A3B8"}, name:"Calibri", size:10 };
@@ -3238,6 +3257,7 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     var nPV=rows.filter(function(o){return effStatus(o)==="PENDING_VERIFY";}).length;
     var nClosed=rows.filter(function(o){return effStatus(o)==="CLOSED";}).length;
     var nOD=rows.filter(function(o){return isOD(o);}).length;
+    var nRej=rows.filter(function(o){return effAp(o)==="REJECTED";}).length;
     var nSer=rows.filter(function(o){return o.risk==="SERIOUS";}).length;
     var nMaj=rows.filter(function(o){return o.risk==="MAJOR";}).length;
     var nMin=rows.filter(function(o){return o.risk==="MINOR";}).length;
@@ -3266,15 +3286,16 @@ function exportExcel(rows, onErr, onProgress, cutoffDate) {
     dataLine(7,"In Progress",nIP);
     dataLine(8,"Pending GC Verify",nPV);
     dataLine(9,"Closed",nClosed);
-    dataLine(10,"Overdue (open past due date)",nOD);
-    section(12,"BY RISK LEVEL");
-    colourLine(13,"Serious",nSer,C.serBg,C.serTx);
-    colourLine(14,"Major",nMaj,C.majBg,C.majTx);
-    colourLine(15,"Minor",nMin,C.minBg,C.minTx);
-    section(17,"BY OBSERVATION TYPE");
-    dataLine(18,"Unsafe Act",nUA);
-    dataLine(19,"Unsafe Condition",nUC);
-    dataLine(20,"Good Observation",nGO);
+    colourLine(10,"Rejected (re-work required)",nRej,C.rejBg,C.rejTx);
+    dataLine(11,"Overdue (open past due date)",nOD);
+    section(13,"BY RISK LEVEL");
+    colourLine(14,"Serious",nSer,C.serBg,C.serTx);
+    colourLine(15,"Major",nMaj,C.majBg,C.majTx);
+    colourLine(16,"Minor",nMin,C.minBg,C.minTx);
+    section(18,"BY OBSERVATION TYPE");
+    dataLine(19,"Unsafe Act",nUA);
+    dataLine(20,"Unsafe Condition",nUC);
+    dataLine(21,"Good Observation",nGO);
 
     /* ═══ Data sheets ═══ */
     buildSheet("Observation Log", rows);
