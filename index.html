@@ -5412,6 +5412,33 @@ function DiagAuthGate(_ref_gate) {
   );
 }
 
+/* ── Profile load with retry (2026-11-03) ─────────────────────────────────
+   A single failed SELECT on ctpa_user_profiles (edge 5xx blip, timeout,
+   sleep/wake) used to silently demote the user to a "viewer" fallback for the
+   whole session — a PMC Manager then saw "Viewer" and lost approval buttons
+   until re-login, although the stored role was correct. Now: 3 attempts with
+   backoff; if all fail the fallback is FLAGGED (__fallback) so the header can
+   warn and a background retry can upgrade the role live. Read-only. */
+function ctpaFetchProfile(client, userId, attempts){
+  var waits = [0, 1500, 3500];
+  var n = Math.min(attempts || 3, waits.length);
+  function tryOnce(i){
+    return new Promise(function(r){ setTimeout(r, waits[i]); }).then(function(){
+      return client.from("ctpa_user_profiles").select("*").eq("id", userId).single();
+    }).then(function(res){
+      if(res && res.data) return res.data;
+      throw new Error((res && res.error && res.error.message) || "empty profile");
+    }).catch(function(e){
+      console.warn("[CTPA Auth] profile fetch attempt " + (i+1) + "/" + n + " failed:", e && e.message);
+      if(i + 1 < n) return tryOnce(i + 1);
+      return null;
+    });
+  }
+  return tryOnce(0);
+}
+function ctpaFallbackProfile(user){
+  return { id: user.id, email: user.email, name: user.email, role: "viewer", company: "DayOne", status: "active", __fallback: true };
+}
 /* ── ReportAuthGate: password prompt for Weekly Report Generator ── */
 function ReportAuthGate(_ref_rgate) {
   var onAuth = _ref_rgate.onAuth, onBack = _ref_rgate.onBack;
@@ -6945,9 +6972,9 @@ function LoginPage(_ref) {
         var session = result.data.session;
         var user    = result.data.user;
         /* Fetch profile from ctpa_user_profiles */
-        supabaseClient.from("ctpa_user_profiles").select("*").eq("id", user.id).single()
-          .then(function(res) {
-            var profile = (res.data) || { id: user.id, email: user.email, name: user.email, role: "viewer", company: "DayOne", status: "active" };
+        ctpaFetchProfile(supabaseClient, user.id, 3)
+          .then(function(data) {
+            var profile = data || ctpaFallbackProfile(user);
             if (profile.status === "disabled") {
               supabaseClient.auth.signOut();
               setErr("บัญชีนี้ถูกระงับ กรุณาติดต่อ Admin");
@@ -7083,6 +7110,25 @@ function LoginPage(_ref) {
 function AuthWrapper() {
   var _useState_session = React.useState(null), authSession = _useState_session[0], setAuthSession = _useState_session[1];
   var _useState_profile = React.useState(null), authProfile = _useState_profile[0], setAuthProfile = _useState_profile[1];
+  /* If we are running on a fallback ("viewer") profile, keep retrying the real
+     one every 20 s and upgrade in place — no re-login needed. */
+  React.useEffect(function(){
+    if (!authProfile || !authProfile.__fallback || !supabaseClient) return;
+    var stop = false;
+    function tick(){
+      if (stop) return;
+      ctpaFetchProfile(supabaseClient, authProfile.id, 1).then(function(data){
+        if (stop || !data) return;
+        console.log("[CTPA Auth] profile recovered — role:", data.role);
+        if (window.CTPA_AUTH) window.CTPA_AUTH.profile = data;
+        try { localStorage.setItem("ctpa_user", data.name || data.email || ""); } catch(_){}
+        setAuthProfile(data);
+      });
+    }
+    var t = setInterval(tick, 20000);
+    tick();
+    return function(){ stop = true; clearInterval(t); };
+  }, [authProfile && authProfile.__fallback, authProfile && authProfile.id]);
   var _useState_loading = React.useState(true), authLoading = _useState_loading[0], setAuthLoading = _useState_loading[1];
 
   React.useEffect(function() {
@@ -7119,12 +7165,10 @@ function AuthWrapper() {
             setAuthSession(session); setAuthProfile(profile); done();
           });
         };
-        var fallbackProfile = { id: session.user.id, email: session.user.email, name: session.user.email, role: "viewer", company: "DayOne", status: "active" };
-        supabaseClient.from("ctpa_user_profiles").select("*").eq("id", session.user.id).single()
-          .then(function(res2) { proceed(res2.data || fallbackProfile); })
+        var fallbackProfile = ctpaFallbackProfile(session.user);
+        ctpaFetchProfile(supabaseClient, session.user.id, 3)
+          .then(function(data) { proceed(data || fallbackProfile); })
           .catch(function(err) {
-            /* network-level rejection (e.g. TypeError: Load failed) — same
-               fallback the res2.error path already used; never hang. */
             console.error("[CTPA Auth] profile fetch failed:", err && err.message, "— using fallback profile");
             proceed(fallbackProfile);
           });
@@ -9017,7 +9061,7 @@ function App(_refApp) {
   },
     /*#__PURE__*/React.createElement("div", { style: { textAlign: "right", lineHeight: 1.3 } },
       /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: C.text, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, authProfile ? (authProfile.name || authProfile.email || "User") : (ctpaUser() || "User")),
-      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#00AA66", fontWeight: 600 } }, authProfile ? ({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[authProfile.role] || (authProfile.role || "").replace(/_/g," ") : "")
+      /*#__PURE__*/React.createElement("div", { style: { fontSize: 9, color: "#00AA66", fontWeight: 600 } }, authProfile ? (authProfile.__fallback ? "\u26A0 \u0E42\u0E2B\u0E25\u0E14\u0E2A\u0E34\u0E17\u0E18\u0E34\u0E4C\u0E44\u0E21\u0E48\u0E2A\u0E33\u0E40\u0E23\u0E47\u0E08 \u2014 \u0E01\u0E33\u0E25\u0E31\u0E07\u0E25\u0E2D\u0E07\u0E43\u0E2B\u0E21\u0E48 / Role not loaded, retrying\u2026" : (({dayone_admin:"DayOne Admin",dayone_user:"DayOne User",ms_user:"Microsoft User",pmc_manager:"PMC Manager",pmc_user:"PMC User",lm_gc:"LM GC Manager",lm_user:"LM User",ritta_gc:"Ritta GC Manager",ritta_user:"Ritta User",viewer:"Viewer"})[authProfile.role] || (authProfile.role || "").replace(/_/g," "))) : "")
     ),
     /*#__PURE__*/React.createElement("button", {
       onClick: onLogout,
