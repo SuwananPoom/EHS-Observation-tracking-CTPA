@@ -9289,6 +9289,9 @@ function App(_refApp) {
     /* UX (2026-09-24): surface the In Progress backlog next to strict Open so
        the two not-closed buckets read together (In Progress has no card). */
     s: (function(){ var nc = dsObs.filter(function(o){ return effStatus(o) !== "CLOSED"; }).length;
+      /* UX (2026-11-10): when nothing is strictly Open but work is still
+         outstanding and all of it is Rejected, say so directly. */
+      if (S.open === 0 && nc > 0 && S.apRejected === nc) return nc + " rejected awaiting re-work";
       return nc > S.open ? "of " + nc + " not closed" : "Open observations"; })()
   }, {
     l: "Pending Verify",
