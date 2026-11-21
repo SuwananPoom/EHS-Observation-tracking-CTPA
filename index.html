@@ -1109,7 +1109,19 @@ function ctpaReadWithRetry(fn, delays){
                                kept as a throttled, non-blocking rollback copy.
    ROLLBACK = set the flag back to false. No data path is destructive. */
 var CTPA_ROWS_PRIMARY = true;   /* SWITCHED ON 2026-09-14 15:5x ICT (option B, after DB restart) — rollback: set false */
-var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 500;
+var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 250;
+/* ── INCREMENTAL READS (2026-11-21) ─────────────────────────────────────────
+   Root cause of the peak-hour 57014 timeouts: every open tab re-read ALL
+   rows (3.5k rows ≈ 6 MB in 7 pages) on every 60 s poll. Now each tab keeps
+   the last full result in memory and later polls ask only for rows whose
+   updated_at is newer than the newest it has seen — a few KB. A full
+   re-read still happens on first load, on a forced Sync, after a failure,
+   and every CTPA_ROWS_FULL_EVERY_MS (so deletions made elsewhere surface). */
+var CTPA_ROWS_FULL_EVERY_MS = 10 * 60 * 1000;
+var __ctpaRowsCache = null;        /* id -> obs (last verified full/merged set) */
+var __ctpaRowsMaxUpd = null;       /* newest updated_at seen (ISO string)       */
+var __ctpaRowsFullAt = 0;          /* time of last FULL read                    */
+function ctpaRowsInvalidate(){ __ctpaRowsCache = null; __ctpaRowsMaxUpd = null; }
 /* ── fetch with a hard timeout (2026-09-15) ──────────────────────────────────
    Root cause of the "Cloud: Checking… / Last Read: Never" stuck tab: a cloud
    request whose socket died silently (DB wedge, laptop sleep/wake) never
@@ -1133,18 +1145,22 @@ function ctpaFetch(url, opts, ms){
     throw e;
   });
 }
-function cloudLoad(){ return CTPA_ROWS_PRIMARY ? cloudLoadRows() : cloudLoadBlob(); }
-function cloudLoadRows(){
+function cloudLoad(opts){ return CTPA_ROWS_PRIMARY ? cloudLoadRows(opts) : cloudLoadBlob(); }
+function cloudLoadRows(opts){
   if(!cloudOn()) return Promise.resolve(null);
   var base = CLOUD.url.replace(/\/$/,"") + "/rest/v1/" + CTPA_ROWS_TABLE;
   var out = [];
+  var delta = !!(opts && opts.delta) && !!__ctpaRowsCache && !!__ctpaRowsMaxUpd
+              && (Date.now() - __ctpaRowsFullAt) < CTPA_ROWS_FULL_EVERY_MS;
+  var sinceParam = delta ? "&updated_at=gt." + encodeURIComponent(__ctpaRowsMaxUpd) : "";
+  var pageMax = null;
   function failKind(r, code){
     return (code === "57014" || r.status === 504 || r.status === 408) ? "TIMEOUT"
          : (r.status === 401 || r.status === 403) ? "AUTH_ERROR"
          : r.status >= 500 ? "SERVER_ERROR" : "UNKNOWN_ERROR";
   }
   function page(offset){
-    var u = base + "?site=eq.bkk22&select=obs&order=id.asc&limit=" + CTPA_ROWS_PAGE + "&offset=" + offset;
+    var u = base + "?site=eq.bkk22&select=obs,updated_at" + sinceParam + "&order=id.asc&limit=" + CTPA_ROWS_PAGE + "&offset=" + offset;
     return ctpaFetch(u, { headers: cloudHeaders(), cache: "no-store" }, 45000).then(function(r){
       if(!r.ok){
         return r.text().then(function(t){
@@ -1160,15 +1176,28 @@ function cloudLoadRows(){
           ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 200, code: "BAD_PAYLOAD", message: "page is not an array" });
           return null;
         }
-        rows.forEach(function(x){ if(x && x.obs && x.obs.id) out.push(x.obs); });
+        rows.forEach(function(x){ if(x && x.obs && x.obs.id){ out.push(x.obs); if(x.updated_at && (!pageMax || x.updated_at > pageMax)) pageMax = x.updated_at; } });
         if(rows.length < CTPA_ROWS_PAGE) return out;
         return page(offset + CTPA_ROWS_PAGE);
       });
     });
   }
-  console.log("[CTPA] cloudLoadRows → GET paginated (" + CTPA_ROWS_PAGE + "/page)");
-  return page(0).then(function(arr){
-    if(!arr) return null;
+  console.log("[CTPA] cloudLoadRows → GET " + (delta ? "DELTA since " + __ctpaRowsMaxUpd : "FULL") + " (" + CTPA_ROWS_PAGE + "/page)");
+  return page(0).then(function(changed){
+    if(!changed) return null;
+    var arr;
+    if(delta){
+      /* merge the changed rows into the cached full set; the cache is the
+         last VERIFIED full read, so the merged result is a verified set too */
+      changed.forEach(function(o){ __ctpaRowsCache[o.id] = o; });
+      arr = Object.keys(__ctpaRowsCache).map(function(k){ return __ctpaRowsCache[k]; });
+      console.log("[CTPA] cloudLoadRows ← delta rows:", changed.length, "| cached total:", arr.length);
+    } else {
+      arr = changed;
+      __ctpaRowsCache = {}; arr.forEach(function(o){ __ctpaRowsCache[o.id] = o; });
+      __ctpaRowsFullAt = Date.now();
+    }
+    if(pageMax && (!__ctpaRowsMaxUpd || pageMax > __ctpaRowsMaxUpd)) __ctpaRowsMaxUpd = pageMax;
     /* same ordering the blob merge produced: newest OBS number first */
     arr.sort(function(a, b){
       var na = parseInt((a.id || "").replace(/[^0-9]/g, ""), 10) || 0, nb = parseInt((b.id || "").replace(/[^0-9]/g, ""), 10) || 0;
@@ -1181,7 +1210,7 @@ function cloudLoadRows(){
       ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE + " integrity check", status: 200, code: "INTEGRITY_DROP", message: CTPA_CLOUD.integrityAlert });
       return { data: arr };
     }
-    if(n === 0){
+    if(n === 0 && !delta){
       /* a populated production table returning 0 rows is an RLS/table fault,
          never a verified empty dataset — keep writes locked */
       ctpaCloudFail("UNKNOWN_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 200, code: "EMPTY_ROWS", message: "0 rows returned — treated as unverified" });
@@ -1192,6 +1221,7 @@ function cloudLoadRows(){
     return { data: arr };
   }).catch(function(e){
     var msg = (e && e.message) || "network failure";
+    ctpaRowsInvalidate();   /* next read must be a full one */
     ctpaCloudFail(/timeout|abort/i.test(msg) ? "TIMEOUT" : "NETWORK_ERROR", { op: "READ " + CTPA_ROWS_TABLE, status: 0, code: "FETCH_FAILED", message: msg });
     return null;
   });
@@ -7687,7 +7717,8 @@ function App(_refApp) {
       return ctpaEnsureFreshSession().then(function(){
       /* Task 7 — READ-only exponential backoff (2s → 5s → 10s → 30s). Reads are
          idempotent and safe to retry; writes are never retried automatically. */
-      return ctpaReadWithRetry(function(){ return cloudLoad(); }); }).then(function(row){
+      if(isForcePull) ctpaRowsInvalidate();   /* manual Sync = fresh full read */
+      return ctpaReadWithRetry(function(){ return cloudLoad({ delta: !isForcePull }); }); }).then(function(row){
         setLastSynced(new Date());
         if (CTPA_CLOUD.status.indexOf("SUCCESS") === 0) setSyncErr(null);
         /* GUARD: do not let a background poll overwrite local edits that are still being
