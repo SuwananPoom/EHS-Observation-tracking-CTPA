@@ -369,7 +369,12 @@ function isAdmin(){ return userRole() === "dayone_admin"; }
    in approveClosure(), which alone sets status CLOSED. No single manager — GC OR PMC —
    may close an observation on their own, so this must NOT include canApproveGC/PMC.
    (Issue 1: status must not become Closed until BOTH approvals are complete.) */
-function canCloseObs(){ return isAdmin(); }
+/* Who may re-save an ALREADY-closed record (incl. its Closed Date / Closed By)?
+   2026-11-24: was Admin-only, which contradicted the error text and blocked the
+   PMC Manager (the role that signs off closures) from correcting closed
+   observations. Now: Admin + PMC Manager. GC USERs and viewers stay excluded.
+   Creating a close from the Edit form is still impossible for every role. */
+function canCloseObs(){ return isAdmin() || canApprovePMC(); }
 /* May this account act as a closure approver AT ALL (GC or PMC stage)? Drives whether
    the approval UI (Approve / Reject / Unlock) is rendered — GC USERs get NONE of it
    (Issue 5). Admin has both GC and PMC authority, so it is covered here too. */
