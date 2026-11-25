@@ -1115,6 +1115,7 @@ function ctpaReadWithRetry(fn, delays){
    ROLLBACK = set the flag back to false. No data path is destructive. */
 var CTPA_ROWS_PRIMARY = true;   /* SWITCHED ON 2026-09-14 15:5x ICT (option B, after DB restart) — rollback: set false */
 var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 250;
+var CTPA_BLOB_MIRROR = false;   /* Phase 4 (2026-11-25): blob mirror off; ctpa_state kept as archive */
 /* ── INCREMENTAL READS (2026-11-21) ─────────────────────────────────────────
    Root cause of the peak-hour 57014 timeouts: every open tab re-read ALL
    rows (3.5k rows ≈ 6 MB in 7 pages) on every 60 s poll. Now each tab keeps
@@ -1626,8 +1627,12 @@ function _cloudMergeSaveInner(localArr, deletedIds){
     return primaryWrite.then(function(ok){
       if(!ok) return { ok: false, merged: merged };
       if(CTPA_ROWS_PRIMARY){
-        /* Phase 3: rows are the source of truth — keep the blob as a throttled rollback copy */
-        try { ctpaBlobMirror(merged); } catch(_){}
+        /* PHASE 4 (2026-11-25, user-approved): the blob mirror is OFF.
+           ctpa_state rows 'bkk22' and the pre-migration backup stay in the
+           database untouched as a read-only archive (nothing deleted). The
+           mirror (~75 × 1.4 MB writes/day) was the last Disk IO hog.
+           Flip CTPA_BLOB_MIRROR back to true to resume mirroring. */
+        if(CTPA_BLOB_MIRROR){ try { ctpaBlobMirror(merged); } catch(_){} }
       } else {
         /* Phase 2: mirror the successful blob write into ctpa_observations (non-blocking) */
         try { ctpaDualWriteObs(merged, delSet); } catch(_){}
