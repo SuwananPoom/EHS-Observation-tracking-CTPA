@@ -1122,7 +1122,7 @@ var CTPA_ROWS_TABLE = "ctpa_observations", CTPA_ROWS_PAGE = 250;
    updated_at is newer than the newest it has seen — a few KB. A full
    re-read still happens on first load, on a forced Sync, after a failure,
    and every CTPA_ROWS_FULL_EVERY_MS (so deletions made elsewhere surface). */
-var CTPA_ROWS_FULL_EVERY_MS = 10 * 60 * 1000;
+var CTPA_ROWS_FULL_EVERY_MS = 20 * 60 * 1000;   /* 2026-11-25: 10 → 20 min (Disk IO); deletes are explicit DELETEs, rarely need the sweep */
 var __ctpaRowsCache = null;        /* id -> obs (last verified full/merged set) */
 var __ctpaRowsMaxUpd = null;       /* newest updated_at seen (ISO string)       */
 var __ctpaRowsFullAt = 0;          /* time of last FULL read                    */
@@ -1559,7 +1559,13 @@ function _cloudMergeSaveInner(localArr, deletedIds){
   var delSet = {};
   (deletedIds || []).forEach(function(id){ if(id) delSet[id] = true; });
   console.log("[CTPA] cloudMergeSave start | local obs:", localArr.length, "| deletedIds:", Object.keys(delSet));
-  return cloudLoad().then(function(row){
+  /* DISK-IO FIX (2026-11-25): the pre-read used to be a FULL table read on
+     every save (~8 MB, 15 pages) — 5,000+ full pages/day and the main Disk IO
+     consumer. In rows mode a delta read returns the same verified full set
+     (last full read + rows changed since), so every guard below (abort on
+     unverified base, newest-wins, mass-deletion) sees identical data. The
+     cache is invalidated on any failure, which forces a full read next time. */
+  return cloudLoad({ delta: true }).then(function(row){
     /* ═══ SAVE-ABORT GUARD (post-incident 2026-08-13) ═══════════════════════
        The 13 Aug data loss happened when a pre-read failed during a service
        outage and an (almost) empty merge base overwrote the full dataset.
@@ -8828,8 +8834,9 @@ function App(_refApp) {
     } else {
       toast$("Generating ID…");
       /* Fetch latest from Supabase first so ID is based on the true global max,
-         not just this device's local state — prevents duplicate IDs across devices. */
-      (cloudOn() ? cloudLoad() : Promise.resolve(null)).then(function(row) {
+         not just this device's local state — prevents duplicate IDs across devices.
+         Delta read (2026-11-25): the merged verified set carries the global max. */
+      (cloudOn() ? cloudLoad({ delta: true }) : Promise.resolve(null)).then(function(row) {
         var cloudList = (row && row.data && row.data.length > 0) ? ctpaMigrate(row.data) : [];
         /* find max across cloud + local — whichever has higher numbers wins */
         var mx = 0;
